@@ -4030,7 +4030,12 @@ def descubrir(categoria, solo_extras=False, grupo=None, solo_tiendas=None):
             # Antes que nada, que sea la página general y no la de un solo público (niños, teen...).
             puntos = (not RE_SEGMENTO.search(urlparse(u).path), not temporal, n_antes * 3 + n)
             # Menos de MIN_LISTADO productos es una ficha suelta, no un listado de ofertas.
-            if n >= MIN_LISTADO and puntos > mejor_n:
+            # A igualdad de lo demás, la página general gana a una más estrecha que apenas la supera
+            # (Zalando, 17/11/2026: /rebajas/nike/ con 115 productos ganaba a /rebajas/ con 114). Las
+            # candidatas van de la dirección más corta a la más larga: la siguiente tiene que superar
+            # a la elegida en más de un 10 %.
+            supera = puntos[:2] > mejor_n[:2] or (puntos[:2] == mejor_n[:2] and puntos[2] > mejor_n[2] * 1.1)
+            if n >= MIN_LISTADO and supera:
                 mejor, mejor_n = u, puntos
             if n >= MIN_LISTADO and n_antes >= 1 and not RE_SEGMENTO.search(urlparse(u).path):
                 probadas.append((n_antes * 3 + n, u))
