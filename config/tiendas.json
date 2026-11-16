@@ -27,7 +27,7 @@
   "antes_min_eur": "Precio original mínimo (juegos): GOG rebaja al 90 % juegos de 5 €.",
   "historial_propio_dias": "Sin precio de mercado, solo se envía lo que baja al menos bajada_min_propia (10 %) de lo más barato que el vigilante le ha visto, con 14 días de seguimiento o más. Lo nuevo y el 'antes' de la tienda no cuentan.",
   "solo_tiendas_con_demanda": "Solo se leen las tiendas con al menos demanda_min_hot posts calientes (300° o más) en Chollometro en demanda_dias días (copia local en vistos.db, tabla cm). siempre_leer: tiendas que se leen igualmente.",
-  "descuento_real_min": "Regla de Instinct: BUENA = al menos un 25 % de descuento REAL, sobre referencias independientes (mercado del mismo modelo, histórico de PCComTracker, mínimo visto por el vigilante o precio inicial de una oferta que ya fue caliente). El 'antes' de la tienda solo no cuenta. Gratis y errores de precio, exentos."
+  "descuento_real_min": "Modo Clásico (16/11/2026): SUBIENDO = al menos un 20 % de descuento REAL (antes 25 %, regla de BUENA), sobre referencias independientes (mercado del mismo modelo, histórico de PCComTracker, mínimo visto por el vigilante o precio inicial de una oferta que ya fue caliente). El 'antes' de la tienda solo no cuenta. Gratis y errores de precio, exentos."
  },
  "horario": {
   "inicio": "08:00",
@@ -140,7 +140,7 @@
    "nike.com/es"
   ],
   "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
-  "descuento_real_min": 0.25
+  "descuento_real_min": 0.2
  },
  "navegador": {
   "visible": false,

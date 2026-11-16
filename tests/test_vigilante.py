@@ -861,6 +861,8 @@ class Rondas(Base):
             v.leer_ficha = orig
         real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
         self.assertIs(real["confirmar_ficha"], True)
+        # Una sola vara con la habilidad: SUBIENDO empieza en el 20 % real (Modo Clásico, 16/11/2026).
+        self.assertEqual(real["descuento_real_min"], 0.2)
 
     def test_validar_ficha(self):
         # Manual de Instinct: 200 con página genérica, shell de JS o muro antibot = "sin validar".

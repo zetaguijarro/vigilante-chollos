@@ -279,3 +279,5 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Tallas de Chollometro (2 en ropa, 3 en calzado) y tallas en el título. Portes no descartan solos.
   - **Sin tocar, y choca:** `descuento_real_min` 0.25 en `tiendas.json` corta en la ronda lo que esté entre el 20 % y el 25 %, así que el SUBIENDO del 20 % no llega a Hermes. Y moda sin precio de mercado sigue exigiendo un 70 % impreso. Decide Zeta.
   - La habilidad en marcha es la copiada en la carpeta de Hermes: esta no se usa hasta pasar a producción.
+
+- **Descuento real mínimo de la ronda: del 25 % al 20 % (16/11, autorizado por Zeta).** `descuento_real_min` 0.2, para que mande la misma vara que el SUBIENDO de la habilidad. Llegarán más avisos del tramo 20-25 %. Moda sin precio de mercado sigue en el 70 % impreso: no se ha tocado.
