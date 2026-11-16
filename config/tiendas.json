@@ -125,7 +125,7 @@
    "elcorteingles.es",
    "lidl.es",
    "adidas.es",
-   "aeg.com.es",
+   "www.aeg.com.es",
    "footlocker.es",
    "pccomponentes.com",
    "coolmod.com",
@@ -147,7 +147,8 @@
    "zalando-prive.es",
    "showroomprive.es",
    "privalia.com",
-   "privatesportshop.es"
+   "privatesportshop.es",
+   "precioreal.com"
   ],
   "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
   "descuento_real_min": 0.2
@@ -298,7 +299,7 @@
   "electro_marcas": {
    "cada_min": 15,
    "tiendas": [
-    "aeg.com.es",
+    "www.aeg.com.es",
     "dyson.es",
     "ninjakitchen.es",
     "sharkclean.es",
@@ -516,8 +517,7 @@
     "decimas.es",
     "futbolemotion.com",
     "basketballemotion.com",
-    "runningemotion.com",
-    "nbastore.eu"
+    "runningemotion.com"
    ],
    "navegador": [
     "adidas.es",
@@ -525,7 +525,8 @@
     "sprinter.es",
     "motocard.com",
     "sportsdirect.com",
-    "privatesportshop.es"
+    "privatesportshop.es",
+    "nbastore.eu"
    ],
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,

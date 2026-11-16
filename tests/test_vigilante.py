@@ -937,8 +937,13 @@ class Rondas(Base):
         for t in siempre:
             self.assertIn(t, leidas, t)
             self.assertNotIn(t, apartadas, t)
-        for t in ("aeg.com.es", "runningemotion.com", "nbastore.eu", "amazon.es", "mediamarkt.es"):
+        for t in ("www.aeg.com.es", "runningemotion.com", "nbastore.eu", "amazon.es", "mediamarkt.es"):
             self.assertIn(t, siempre)
+        # Primera ronda real (16/11/2026): aeg.com.es sin www no responde; NBA Store da 403 por descarga;
+        # y el radar (PrecioReal no es una tienda de Chollometro) se quedaba fuera por "sin demanda".
+        self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
+        self.assertIn("nbastore.eu", cats["deporte"]["navegador"])
+        self.assertIn("precioreal.com", siempre)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
         # Ventas privadas (16/11/2026, tras el `login` de Zeta): se leen con navegador, con su sesión.
         for t in ("zalando-prive.es", "showroomprive.es", "privalia.com"):
@@ -955,8 +960,8 @@ class Rondas(Base):
         con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)",
                         [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
         con.commit()
-        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["aeg.com.es", "nbastore.eu", "prenatal.es"]),
-                         ["aeg.com.es", "nbastore.eu"])
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["www.aeg.com.es", "nbastore.eu", "prenatal.es"]),
+                         ["www.aeg.com.es", "nbastore.eu"])
         con.close()
 
     def test_demanda_probada(self):
@@ -1379,6 +1384,24 @@ class Descubrir(Base):
             v.descubrir("tecnologia")
         urls = json.loads(v.URLS.read_text(encoding="utf-8"))
         self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/ofertas")
+
+    def test_no_elige_la_pagina_de_ninos(self):
+        # Spartoo, Fútbol Emotion, Women'secret (16/11/2026): la página de ofertas de niños tiene más
+        # rebajas y ganaba a la general. Gana la general aunque tenga menos productos.
+        ninos = tienda_html([{"n": f"Zapatilla infantil {i}", "p": 19.0, "a": 39.0} for i in range(30)])
+        general = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0, "a": 129.0} for i in range(5)])
+        portada = '<a href="/ofertas-ninos.php">Ofertas niños</a><a href="/ofertas">Ofertas</a>'
+        paginas = {"/ofertas-ninos.php": ninos, "/ofertas": general}
+        v.descargar = lambda url, timeout=20, reintentos=1: (paginas.get(v.urlparse(url).path, portada), url)
+        with redirect_stdout(io.StringIO()):
+            v.descubrir("tecnologia")
+        urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+        self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/ofertas")
+        for ruta in ("/Ofertas-st-11977-0-ninos.php", "/es/categoria/ninos/oferta", "/promociones/favoritos/teen",
+                     "/rebajas/bebe", "/outlet/kids"):
+            self.assertTrue(v.RE_SEGMENTO.search(ruta), ruta)
+        for ruta in ("/ofertas", "/outlet/hombre", "/promociones/teenage-engineering", "/ofertas/kidsroom"):
+            self.assertFalse(v.RE_SEGMENTO.search(ruta), ruta)
 
     def test_prueba_muestra_cada_tienda(self):
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 129.0}]}
