@@ -117,6 +117,7 @@ class Base(unittest.TestCase):
         cfg["filtros_codigo"]["max_por_tienda_y_ronda"] = 1000  # las pruebas de cupos usan una sola tienda
         cfg["filtros_codigo"]["respetar_robots"] = True  # las pruebas de robots.txt miran el modo estricto
         cfg["filtros_codigo"]["confirmar_ficha"] = False  # la red simulada no tiene fichas; tiene su prueba
+        cfg["filtros_codigo"]["ofertas_refresco_dias"] = 0  # el refresco semanal de campañas tiene su prueba
         # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
@@ -1398,6 +1399,41 @@ class Descubrir(Base):
         for ruta in ("/ofertas", "/outlet/hombre", "/promociones/teenage-engineering", "/ofertas/kidsroom"):
             self.assertFalse(v.RE_SEGMENTO.search(ruta), ruta)
 
+    def test_descubrir_guarda_tambien_las_campanas(self):
+        # Zeta (17/11/2026): una sola página por tienda se queda corta. Principal permanente + campañas activas.
+        bf = tienda_html([{"n": f"Samsung TV {i}", "p": 399.0, "a": 599.0} for i in range(20)])
+        perm = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0, "a": 129.0} for i in range(4)])
+        outlet = tienda_html([{"n": f"Sony WH {i}", "p": 199.0, "a": 299.0} for i in range(6)])
+        sin_rebajas = tienda_html([{"n": f"Cable {i}", "p": 9.0} for i in range(9)])
+        portada = ('<a href="/promocion-black-friday.html">Black Friday</a><a href="/ofertas">Ofertas</a>'
+                   '<a href="/outlet">Outlet</a><a href="/promociones">Promociones</a>')
+        paginas = {"/promocion-black-friday.html": bf, "/ofertas": perm, "/outlet": outlet, "/promociones": sin_rebajas}
+        v.descargar = lambda url, timeout=20, reintentos=1: (paginas.get(v.urlparse(url).path, portada), url)
+        with redirect_stdout(io.StringIO()):
+            v.descubrir("tecnologia")
+        urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+        self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/outlet", "permanente con más rebajas")
+        self.assertEqual(urls["mediamarkt.es+"], ["https://www.mediamarkt.es/promocion-black-friday.html",
+                                                  "https://www.mediamarkt.es/ofertas"], "sin la que no tiene rebajas")
+        # Refresco automático: la campaña ha terminado. La principal no cambia; las adicionales, sí.
+        paginas["/promocion-black-friday.html"] = "<p>terminada</p>"
+        con = v.bd()
+        cfg = {"filtros_codigo": {"ofertas_refresco_dias": 7}}
+        v._REFRESCO_HECHO[0] = False
+        try:
+            self.assertTrue(v.refrescar_extras(con, cfg, "tecnologia", "descarga", {"mediamarkt.es"}))
+            urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+            self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/outlet")
+            self.assertEqual(urls["mediamarkt.es+"], ["https://www.mediamarkt.es/ofertas"])
+            self.assertFalse(v.refrescar_extras(con, cfg, "moviles", "descarga", {"mediamarkt.es"}), "una por ronda")
+            v._REFRESCO_HECHO[0] = False
+            self.assertFalse(v.refrescar_extras(con, cfg, "tecnologia", "descarga", {"mediamarkt.es"}), "una vez por semana")
+            cfg["filtros_codigo"]["ofertas_refresco_dias"] = 0
+            self.assertFalse(v.refrescar_extras(con, cfg, "moviles", "descarga", {"mediamarkt.es"}), "apagado")
+        finally:
+            v._REFRESCO_HECHO[0] = False
+            con.close()
+
     def test_prueba_muestra_cada_tienda(self):
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 129.0}]}
         self.red.caidas.add("pccomponentes")
@@ -1700,6 +1736,8 @@ class ModoTelegram(Base):
         self.ronda()
         self.assertEqual(len(self.enviados), 6)
         self.assertIn("FRENO telegram", v.LOG.read_text(encoding="utf-8"))
+        if datetime.now().hour < 1:
+            return  # entre las 00:00 y la 01:00 no existe "hoy, hace más de una hora": el resto no se puede simular
         # Pasada la pausa: sale lo pendiente hasta el tope del día (8) y avisa del tope diario.
         con = sqlite3.connect(v.DB)
         con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='freno_telegram'")
@@ -2322,12 +2360,95 @@ class Catalogo(Base):
         c = self.ronda()
         self.assertEqual([x["n"] for x in c], ["JBL Live 770NC"], "un producto nuevo de la categoría es candidato")
 
+    def test_la_ronda_lee_las_paginas_adicionales(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        red, campana = self.red, [{"n": "JBL Tune 520BT", "m": "JBL", "p": 30, "a": 60}]
+
+        def falso(url, timeout=20):
+            if "/campana/" in url:
+                red.pedidas.append(url)
+                return (tienda_html(campana), url) if "page=" not in url else ("<html></html>", url)
+            return red(url, timeout)
+        v.descargar = falso
+        v.DATOS.mkdir(exist_ok=True)
+        v.URLS.write_text(json.dumps({"mediamarkt.es+": ["https://www.mediamarkt.es/es/campana/black"]}), encoding="utf-8")
+        self.ronda()  # siembra la principal y la campaña
+        self.assertIn("https://www.mediamarkt.es/es/campana/black", self.red.pedidas)
+        con = sqlite3.connect(v.DB)
+        con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='extra_ultimo:mediamarkt.es'")
+        con.commit()
+        con.close()
+        campana.append({"n": "JBL Live 770NC", "m": "JBL", "p": 50.0, "a": 150.0})
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Live 770NC"], "un producto nuevo de la campaña es candidato")
+
     def test_varias_por_ronda_y_turno_circular(self):
         con = v.bd()
         v.guardar_catalogo({"a.es": ["u1", "u2", "u3", "u4", "u5"]})
         cfg = {"catalogo_por_tienda": {"a.es": {"cada_min": 0, "por_ronda": 2}}}
         vistos = [u for _ in range(3) for _, u in v.catalogo_turno(con, cfg, ["a.es"])]
         self.assertEqual(vistos, ["u1", "u2", "u3", "u4", "u5", "u1"])
+        con.close()
+
+    def test_familias_y_peso_por_demanda(self):
+        # Zeta (17/11/2026): no pesa lo mismo una categoría de móviles que una de impresoras.
+        for texto, fam in (("Xiaomi Redmi Note 14 Pro 5G 256GB", "moviles"), ("/es/category/smartphones-263.html", "moviles"),
+                           ("https://pccomtracker.com/categoria/impresoras-laser", "impresoras"),
+                           ("HP DeskJet 2820e Impresora multifunción", "impresoras"),
+                           ("Zapatillas adidas Gazelle", "calzado"), ("LEGO Technic 42171", "lego"),
+                           ("Mando DualSense PS5 Galactic Purple", "consolas"), ("/portatiles-gaming", "portatiles")):
+            self.assertEqual(v.familia_de(texto), fam, texto)
+        self.assertIsNone(v.familia_de("Tarjeta regalo 50 EUR"))
+        con = v.bd()
+        self.assertIsNone(v.pesos_demanda(con, {}), "sin datos en la copia de Chollometro: todo pesa igual")
+        self.assertEqual(v.peso_de(None, "Impresora HP"), 1.0)
+        hace = lambda d: int(time.time() - d * 86400)
+        filas, n = [], 0
+        for titulo, total, calientes in (("Xiaomi Redmi Note 14 smartphone", 300, 180), ("Impresora HP DeskJet", 100, 10),
+                                         ("Tarjeta regalo", 200, 50)):
+            for i in range(total):
+                n += 1
+                filas.append((n, f"{titulo} {i}", 10.0, "X", "x.es", 500.0 if i < calientes else 20.0, hace(i % 60), 0, ""))
+        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        con.commit()
+        pesos = v.pesos_demanda(con, {})
+        # Media: 240 de 600 = 40 %. Móviles 60 % -> 1,5. Impresoras 10 % -> 0,25, que se queda en el mínimo 0,3.
+        self.assertEqual(pesos["moviles"], 1.5)
+        self.assertEqual(pesos["impresoras"], v.PESO_MIN)
+        self.assertEqual(v.peso_de(pesos, "Samsung Galaxy S25 smartphone"), 1.5)
+        self.assertEqual(v.peso_de(pesos, "Tarjeta regalo"), 1.0, "sin familia: neutro")
+        self.assertIsNone(v.pesos_demanda(con, {"filtros_codigo": {"peso_por_demanda": False}}), "se apaga")
+        # Catálogo: móviles sale más veces por vuelta que impresoras, y ninguna se queda sin leer.
+        lista = ["https://t.es/c/impresoras", "https://t.es/c/smartphones", "https://t.es/c/varios"]
+        orden = v.orden_catalogo(lista, pesos)
+        self.assertEqual(orden.count("https://t.es/c/impresoras"), 1)
+        self.assertEqual(orden.count("https://t.es/c/smartphones"), 4, "tope de 4 turnos por vuelta")
+        self.assertEqual(orden.count("https://t.es/c/varios"), 3)
+        self.assertEqual(v.orden_catalogo(lista, None), lista, "sin pesos, el turno circular de siempre")
+        v.guardar_catalogo({"t.es": lista})
+        cfg = {"catalogo_por_tienda": {"t.es": {"cada_min": 0, "por_ronda": 2}}}
+        vuelta = [u for _ in range(8) for _, u in v.catalogo_turno(con, cfg, ["t.es"])]
+        self.assertGreater(vuelta.count(lista[1]), vuelta.count(lista[0]) * 2)
+        self.assertIn(lista[0], vuelta)
+        for a, b in zip(vuelta[::2], vuelta[1::2]):
+            self.assertNotEqual(a, b, "la misma categoría no sale dos veces en una ronda")
+        con.close()
+
+    def test_paginas_de_ofertas_adicionales(self):
+        con = v.bd()
+        urls = {"a.es": "https://a.es/ofertas", "a.es+": ["https://a.es/black", "https://a.es/outlet"], "b.es": "https://b.es/"}
+        self.assertEqual(v.ofertas_extra_turno(con, {}, urls, ["a.es", "b.es"]),
+                         [("a.es", "https://a.es/black"), ("a.es", "https://a.es/outlet")])
+        self.assertEqual(v.ofertas_extra_turno(con, {}, urls, ["a.es", "b.es"]), [], "como mucho cada 15 min por tienda")
+        con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='extra_ultimo:a.es'")
+        self.assertEqual(len(v.ofertas_extra_turno(con, {}, urls, ["a.es"])), 2)
+        # Campaña terminada: la página daba 120 productos y ahora da 3. Avisa una vez al día.
+        self.assertIsNone(v.pagina_caida(con, "a.es|u", 120))
+        self.assertIsNone(v.pagina_caida(con, "a.es|u", 90), "baja, pero no se hunde")
+        self.assertEqual(v.pagina_caida(con, "a.es|u", 3), 120)
+        self.assertIsNone(v.pagina_caida(con, "a.es|u", 3), "una vez al día")
+        self.assertIsNone(v.pagina_caida(con, "b.es|u", 5))
+        self.assertIsNone(v.pagina_caida(con, "b.es|u", 0), "páginas pequeñas (menos de 10) no avisan")
         con.close()
 
     def test_enlace_del_comparador_sin_visitar_goto(self):

@@ -300,3 +300,13 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - **NBA Store:** 403 por descarga. Pasa a `navegador`.
   - Nike da antibot por descarga y queda en pausa: nada que hacer. Ninja y Shark dan 0 productos en portada: pasarán solas a Chrome tras dos rondas vacías.
   - Normal: 0 "nuevos o más baratos" a las 23:47; los precios no cambian de una ronda a la siguiente a esa hora.
+
+- **Varias páginas de ofertas por tienda y prioridad por demanda (17/11, a petición de Zeta: "no pesa lo mismo una categoría de móviles que de impresoras").**
+  - **Páginas adicionales.** `descubrir` guarda, además de la principal, hasta `ofertas_extra_max` (2) páginas con rebajas por tienda (campañas activas, outlet) con la clave `"tienda+"` en `urls_ofertas.json`. La ronda las lee como mucho cada `ofertas_extra_cada_min` (15) por tienda (`ofertas_extra_turno`), con el mismo mecanismo que el catálogo. Se pueden editar a mano.
+  - **Refresco semanal** (`refrescar_extras`, `ofertas_refresco_dias` 7): una vez por semana y por categoría, dentro de la propia ronda, vuelve a mirar la portada de las tiendas que se leen y renueva solo las adicionales. La principal no se toca. Como mucho una categoría por ronda; esa ronda tarda más. No crea ni cambia tareas programadas.
+  - **Campaña terminada** (`pagina_caida`): si una página daba 10 productos o más y ahora da menos del 30 %, lo apunta en el log y en el diario ("OJO"), una vez al día.
+  - **Peso por demanda** (`FAMILIAS`, `familia_de`, `pesos_demanda`, `peso_de`): 32 familias de producto. El peso de cada una es su tasa de hilos que llegan a 200° en la copia local de Chollometro (120 días) dividida por la media, entre 0,3 y 3; con menos de 20 hilos pesa 1. Caché de 6 h. Se recalcula solo.
+    - Catálogo: `orden_catalogo` da más turnos por vuelta a las categorías con más peso (hasta 4 por cada turno de la que menos), sin dejar ninguna sin leer. Sirve sobre todo para las 613 subcategorías de PCComTracker.
+    - Candidatos: el peso entra en el `score` (de −0,35 a +1), así que con el mismo descuento un móvil va antes que una impresora cuando hay tope por tienda o por tanda.
+  - Sin datos suficientes en la copia (menos de 500 hilos) todo pesa igual, como antes.
+  - **Sin probar con tiendas reales.** Prueba `test_freno_si_llegan_muchos_de_golpe`: entre las 00:00 y la 01:00 su último tramo no se puede simular y se salta (fallaba a esa hora desde antes).

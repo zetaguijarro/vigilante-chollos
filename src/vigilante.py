@@ -35,7 +35,7 @@ from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 from http.cookiejar import CookieJar
 import threading
 import ssl
@@ -1299,6 +1299,105 @@ def estado_chollometro(p, copia=None):
     return "no" if copia["fresca"] else "?"
 
 
+# Familias de producto: no pesa lo mismo una categoría de móviles que una de impresoras (Zeta, 17/11/2026).
+# El peso de cada familia sale de la copia local de Chollometro: qué parte de sus hilos se calienta frente
+# a la media. Gana la primera que encaje, así que van de lo más concreto a lo más general.
+FAMILIAS = [
+    ("consolas", r"\bps[45]\b|playstation|nintendo switch|switch 2|\bxbox\b|steam deck|dualsense|joy-?con"),
+    ("videojuegos", r"videojuegos?|\bjuegos?\b|\bsteam\b|\bepic\b|\bgog\b|eshop"),
+    ("moviles", r"smartphones?|m[oó]vil(?:es)?\b|iphone|\bgalaxy [sazm]\d|redmi|\bpoco [xfmc]\d|\bpixel \d|telefon[ií]a"),
+    ("tablets", r"tablets?\b|\bipad\b|e-?readers?|kindle"),
+    ("portatiles", r"port[aá]til(?:es)?|macbook|notebooks?|ultrabook|chromebook"),
+    ("monitores", r"monitor(?:es)?\b"),
+    ("componentes", r"\bssd\b|disco duro|tarjetas? gr[aá]ficas?|\brtx ?\d|\bryzen\b|procesador(?:es)?|placas? base|"
+                    r"memoria ram|\bram\b|fuentes? de alimentaci[oó]n|componentes"),
+    ("impresoras", r"impresoras?|t[oó]ner|cartuchos?|esc[aá]ner"),
+    ("redes", r"routers?\b|\bwifi\b|repetidor(?:es)?|\bmesh\b|switch de red"),
+    ("perifericos", r"teclados?\b|rat[oó]n(?:es)?\b|webcams?|alfombrillas?|perif[eé]ricos"),
+    ("televisores", r"televisor(?:es)?|smart ?tv|\btv\b|\boled\b|\bqled\b|proyector(?:es)?"),
+    ("audio", r"auriculares|altavo(?:z|ces)|barras? de sonido|airpods|earbuds|soundbar"),
+    ("relojes", r"smartwatch(?:es)?|reloj(?:es)?\b|pulseras? de actividad|\bgarmin\b|amazfit"),
+    ("aspiracion", r"aspirador(?:a|es|as)?\b|robots? aspirador|roomba|roborock|\bdreame\b|\bconga\b"),
+    ("cocina_pequena", r"freidoras?|air ?fryer|cafeteras?|batidoras?|robots? de cocina|microondas|tostador|hervidor|"
+                       r"peque[nñ]o electrodom[eé]stico"),
+    ("gran_electro", r"lavadoras?|lavavajillas|frigor[ií]ficos?|secadoras?\b|horno[s]?\b|congelador|placas? de inducci[oó]n|"
+                     r"electrodom[eé]sticos"),
+    ("calzado", r"zapatillas?|zapatos?|bota[s]?\b|botines|sneakers?|sandalias?|calzado|deportivas"),
+    ("ropa", r"camisetas?|sudaderas?|chaquetas?|pantal[oó]n(?:es)?|abrigos?|vaqueros?|jers[eé]is?|jersey|chalecos?|"
+             r"vestidos?|camisas?|plum[ií]feros?|parkas?|cazadoras?|\bropa\b|moda\b"),
+    ("bolsos", r"mochilas?|bolsos?|maletas?|carteras?\b|ri[nñ]oneras?"),
+    ("lego", r"\blego\b"),
+    ("juguetes", r"juguetes?|playmobil|mu[nñ]ec[ao]s?|funko|puzzles?|hot wheels|barbie|\bnerf\b|peluches?"),
+    ("perfumes", r"perfumes?|colonias?|eau de (?:toilette|parfum)|fragancias?"),
+    ("higiene", r"detergente|pa[nñ]ales?|toallitas|\bgel\b|champ[uú]|pasta de dientes|papel higi[eé]nico|suavizante|"
+                r"desodorante|maquinillas?|cepillos? el[eé]ctricos?|droguer[ií]a|higiene"),
+    ("bebidas", r"cervezas?|\bvinos?\b|whisky|ginebra|\bron\b|refrescos?|caf[eé]\b|c[aá]psulas"),
+    ("alimentacion", r"aceite|chocolate|leche\b|snacks?|at[uú]n|pizza|galletas?|turr[oó]n|jam[oó]n|alimentaci[oó]n|supermercado"),
+    ("herramientas", r"taladros?|atornillador|herramientas?|sierras?\b|destornillador|multiherramienta|compresor|bricolaje"),
+    ("descanso", r"colch[oó]n(?:es)?|almohadas?|edred[oó]n|n[oó]rdicos?|s[aá]banas?"),
+    ("muebles", r"sof[aá]s?|sillas?\b|mesas?\b|camas?\b|estanter[ií]as?|armarios?|muebles?|escritorios?"),
+    ("menaje", r"sart[eé]n(?:es)?|ollas?\b|cuchillos?|vajillas?|menaje|l[aá]mparas?|decoraci[oó]n"),
+    ("bicicletas", r"bicicletas?|patinetes?"),
+    ("fitness", r"pesas|mancuernas?|cintas? de correr|esterillas?|prote[ií]nas?|creatina|suplementos?"),
+    ("libros", r"libros?\b|ebooks?|c[oó]mics?|manga\b|blu-?ray|vinilos?"),
+]
+_RE_FAMILIAS = [(n, re.compile(r, re.I)) for n, r in FAMILIAS]
+PESO_MIN, PESO_MAX = 0.3, 3.0
+
+
+def familia_de(texto):
+    """Familia de producto de un nombre, un título o la dirección de una categoría; None si no encaja."""
+    t = re.sub(r"[-_/+.]+", " ", unquote(texto or ""))
+    for nombre, rx in _RE_FAMILIAS:
+        if rx.search(t):
+            return nombre
+    return None
+
+
+def pesos_demanda(con, cfg=None, horas=6):
+    """{familia: peso}: tasa de hilos que llegan a `peso_grados` (200) en esa familia, dividida por la tasa
+    media. 1.0 = como la media; móviles puede salir a 1,3 e impresoras a 0,5. Sale de la copia local de
+    Chollometro (últimos `demanda_dias`), con caché de 6 h. None si aún no hay datos suficientes o está
+    apagado (`peso_por_demanda` false): entonces todo pesa lo mismo, como antes."""
+    f = (cfg or {}).get("filtros_codigo", {})
+    if not f.get("peso_por_demanda", True):
+        return None
+    fila = con.execute("SELECT v FROM meta WHERE k='pesos_demanda'").fetchone()
+    if fila:
+        try:
+            guardado = json.loads(fila[0])
+            if datetime.fromisoformat(guardado["t"]) > datetime.now() - timedelta(hours=horas):
+                return guardado["p"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    grados = f.get("peso_grados", 200)
+    desde = (datetime.now() - timedelta(days=f.get("demanda_dias", 120))).timestamp()
+    filas = con.execute("SELECT titulo, temp FROM cm WHERE publicado>=?", (desde,)).fetchall()
+    calientes = sum(1 for _, temp in filas if (temp or 0) >= grados)
+    if len(filas) < 500 or not calientes:
+        return None
+    media = calientes / len(filas)
+    total, hot = Counter(), Counter()
+    for titulo, temp in filas:
+        fam = familia_de(titulo)
+        if fam:
+            total[fam] += 1
+            hot[fam] += (temp or 0) >= grados
+    pesos = {fam: round(max(PESO_MIN, min(PESO_MAX, hot[fam] / n / media)), 2)
+             for fam, n in total.items() if n >= f.get("peso_min_hilos", 20)}
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('pesos_demanda', ?)",
+                (json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": pesos}),))
+    con.commit()
+    return pesos
+
+
+def peso_de(pesos, texto):
+    """Peso de demanda de un producto o de una categoría; 1.0 si no hay datos o no encaja en ninguna familia."""
+    if not pesos:
+        return 1.0
+    return pesos.get(familia_de(texto), 1.0)
+
+
 def dominio_tienda(t):
     """'gog.com/es' -> 'gog.com' ; 'store.acer.com/es-es' -> 'store.acer.com'"""
     return t.split("/")[0].lower().removeprefix("www.")
@@ -2153,9 +2252,32 @@ def quitar_de_catalogo(tienda, url, motivo):
         log(f"catálogo {tienda}: fuera {url[:90]} ({motivo[:60]})")
 
 
+def orden_catalogo(lista, pesos, max_turnos=4):
+    """Orden de lectura de las categorías de una tienda. Sin pesos, la lista tal cual (turno circular).
+    Con pesos, la categoría con más demanda sale más veces por vuelta (hasta `max_turnos` por cada vez
+    que sale la de menos demanda), repartida y sin dejar a ninguna sin leer."""
+    if not pesos or len(lista) < 2:
+        return list(lista)
+    w = {u: peso_de(pesos, urlparse(u).path or u) for u in lista}
+    minimo = min(w.values())
+    veces = {u: max(1, min(max_turnos, round(w[u] / minimo))) for u in lista}
+    if len(set(veces.values())) == 1:
+        return list(lista)
+    total, credito, salida = sum(veces.values()), dict.fromkeys(lista, 0), []
+    for _ in range(total):  # reparto suave: cada paso suma su parte a todas y sale la que más lleva
+        for u in lista:
+            credito[u] += veces[u]
+        u = max(lista, key=lambda x: credito[x])
+        credito[u] -= total
+        salida.append(u)
+    return salida
+
+
 def catalogo_turno(con, cfg, tiendas):
     """[(tienda, url)] de las categorías que tocan en esta ronda: una por tienda, por turnos, y solo si
-    hace más de 'catalogo_cada_min' (60 por defecto) que se leyó la anterior de esa tienda."""
+    hace más de 'catalogo_cada_min' (60 por defecto) que se leyó la anterior de esa tienda.
+    Las categorías con más demanda en Chollometro tienen más turnos (`orden_catalogo`)."""
+    pesos = pesos_demanda(con, cfg)
     cada_def = int((cfg or {}).get("catalogo_cada_min", 60))
     por_tienda = (cfg or {}).get("catalogo_por_tienda", {})  # {"pccomponentes.com": {"cada_min": 15, "por_ronda": 3}}
     cat = urls_catalogo()
@@ -2165,8 +2287,9 @@ def catalogo_turno(con, cfg, tiendas):
         lista = cat.get(t) or []
         if not lista:
             continue
+        lista = orden_catalogo(lista, pesos)
         cada = int(por_tienda.get(t, {}).get("cada_min", cada_def))
-        cuantas = min(len(lista), max(1, int(por_tienda.get(t, {}).get("por_ronda", 1))))
+        cuantas = min(len(set(lista)), max(1, int(por_tienda.get(t, {}).get("por_ronda", 1))))
         fila = con.execute("SELECT v FROM meta WHERE k=?", (f"cat_ultimo:{t}",)).fetchone()
         if fila and datetime.fromisoformat(fila[0]) > ahora - timedelta(minutes=cada):
             continue
@@ -2175,7 +2298,33 @@ def catalogo_turno(con, cfg, tiendas):
         con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"cat_turno:{t}", str((i + cuantas) % len(lista))))
         con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
                     (f"cat_ultimo:{t}", ahora.isoformat(timespec="minutes")))
-        salida += [(t, lista[(i + k) % len(lista)]) for k in range(cuantas)]
+        elegidas = []
+        for k in range(len(lista)):  # con turnos repetidos, la misma categoría no sale dos veces en una ronda
+            u = lista[(i + k) % len(lista)]
+            if u not in elegidas:
+                elegidas.append(u)
+            if len(elegidas) == cuantas:
+                break
+        salida += [(t, u) for u in elegidas]
+    con.commit()
+    return salida
+
+
+def ofertas_extra_turno(con, cfg, urls, tiendas):
+    """[(tienda, url)] de las páginas de ofertas adicionales de cada tienda (campañas activas, outlet...),
+    guardadas por `descubrir` en urls_ofertas.json con la clave "tienda+". Como mucho cada
+    `ofertas_extra_cada_min` (15) por tienda, para no multiplicar las peticiones de la ronda rápida."""
+    cada = int((cfg or {}).get("filtros_codigo", {}).get("ofertas_extra_cada_min", 15))
+    ahora, salida = datetime.now(), []
+    for t in tiendas:
+        extras = urls.get(f"{t}+") or []
+        if not extras:
+            continue
+        fila = con.execute("SELECT v FROM meta WHERE k=?", (f"extra_ultimo:{t}",)).fetchone()
+        if fila and datetime.fromisoformat(fila[0]) > ahora - timedelta(minutes=cada):
+            continue
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"extra_ultimo:{t}", ahora.isoformat(timespec="minutes")))
+        salida += [(t, u) for u in extras]
     con.commit()
     return salida
 
@@ -3142,6 +3291,55 @@ def entregar(n):
     return ok
 
 
+def pagina_caida(con, pagina, n):
+    """Si una página de ofertas da de pronto muchos menos productos (menos del 30 % de su máximo, que era
+    de 10 o más), devuelve ese máximo: suele ser una campaña que ha terminado. Avisa una vez al día."""
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (f"pmax:{pagina}",)).fetchone()
+    maximo = int(fila[0]) if fila else 0
+    if n > maximo:
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pmax:{pagina}", str(n)))
+        return None
+    if maximo < 10 or n > maximo * 0.3:
+        return None
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    avisado = con.execute("SELECT v FROM meta WHERE k=?", (f"pcaida:{pagina}",)).fetchone()
+    if avisado and avisado[0] == hoy:
+        return None
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pcaida:{pagina}", hoy))
+    return maximo
+
+
+_REFRESCO_HECHO = [False]
+
+
+def refrescar_extras(con, cfg, categoria, grupo, tiendas):
+    """Una vez cada `ofertas_refresco_dias` (7) por categoría y grupo, vuelve a mirar la portada de las
+    tiendas que se están leyendo y renueva sus páginas de ofertas adicionales (campañas nuevas entran,
+    las terminadas salen). No cambia la página principal. Como mucho una categoría por ronda.
+    Devuelve True si ha actualizado urls_ofertas.json."""
+    dias = (cfg or {}).get("filtros_codigo", {}).get("ofertas_refresco_dias", 7)
+    if not dias or _REFRESCO_HECHO[0] or not tiendas:
+        return False
+    clave = f"extras_fecha:{categoria}:{grupo or 'todo'}"
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+    if fila and datetime.fromisoformat(fila[0]) > datetime.now() - timedelta(days=dias):
+        return False
+    # Se apunta antes de empezar: si falla, no se reintenta en cada ronda.
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
+    con.commit()
+    _REFRESCO_HECHO[0] = True
+    import contextlib
+    import io
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            descubrir(categoria, solo_extras=True, grupo=grupo, solo_tiendas=tiendas)
+        log(f"{categoria}: páginas de ofertas adicionales renovadas ({len(tiendas)} tiendas)")
+        return True
+    except Exception as e:
+        log(f"{categoria}: no se pudieron renovar las páginas adicionales: {str(e)[:120]}")
+        return False
+
+
 def recordar(n, veredicto, motivo):
     """Guarda el veredicto de un modelo para no investigarlo otra vez (30 días)."""
     con = bd()
@@ -3439,7 +3637,10 @@ def ronda(categoria, solo=None):
     con_pausa = set(tiendas) | set(navegador)
     tiendas, navegador = filtrar_por_demanda(con, cfg, tiendas), filtrar_por_demanda(con, cfg, navegador)
     sin_demanda = con_pausa - set(tiendas) - set(navegador)
-    turno = catalogo_turno(con, cfg, tiendas + navegador)
+    if refrescar_extras(con, cfg, categoria, solo, set(tiendas) | set(navegador)):
+        urls = urls_ofertas()
+    extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador)
+    turno = catalogo_turno(con, cfg, tiendas + navegador) + extras
     todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
     if rec:
         recorrido(f"--- {categoria} ({solo or 'todo'}): {len(tiendas)} por descarga, {len(navegador)} con navegador, "
@@ -3459,6 +3660,8 @@ def ronda(categoria, solo=None):
                     quitar_de_catalogo(tienda, url_cat, error)
                 else:
                     log(f"catálogo {tienda} {url_cat[:80]}: {error[:80]}")
+                if rec:
+                    recorrido(f"    {tienda} [catálogo o campaña] {url_cat[:90]} -> ERROR: {str(error)[:100]}")
             else:
                 lecturas.append((tienda, url_cat, productos, None))
 
@@ -3521,6 +3724,12 @@ def ronda(categoria, solo=None):
                             "socio": bool(cfg.get("reglas_tienda", {}).get(tienda, {}).get("socio"))})
         if not sembrada and productos:
             con.execute("INSERT OR IGNORE INTO sembradas VALUES (?)", (pagina,))
+        caida = pagina_caida(con, pagina, len(productos))
+        if caida:
+            log(f"{tienda}: la página da {len(productos)} productos y daba {caida}; puede que la campaña haya "
+                f"terminado ({(url_leida or '')[:90]}). Vuelve a pasar: descubrir {categoria}")
+            if rec:
+                recorrido(f"    OJO {tienda}: daba {caida} productos y ahora {len(productos)}; campaña terminada?")
         if rec:
             con_antes = sum(1 for x in productos if x.get("precio_antes"))
             nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
@@ -3562,6 +3771,7 @@ def ronda(categoria, solo=None):
     if lote:  # copia local al día (como mucho una lectura cada 4 min, compartida por todas las categorías)
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
+    pesos = pesos_demanda(con, cfg)
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
         d = p["d"]
@@ -3615,8 +3825,11 @@ def ronda(categoria, solo=None):
             p["idealo"] = mejor
             # Ordena por lo bueno que es: descuento + ventaja frente al mercado + error + demanda en Chollometro.
             hot = (p.get("_cm_hot") or {}).get("temp", 0)
+            # Y por la demanda de su familia: un móvil va antes que una impresora con el mismo descuento.
+            p["peso"] = peso_de(pesos, p["nombre"])
             p["score"] = ((d or 0) + ((mejor - p["precio"]) / mejor if mejor else 0)
-                          + (1 if p.get("error_precio") else 0) + min(hot, 3000) / 3000)
+                          + (1 if p.get("error_precio") else 0) + min(hot, 3000) / 3000
+                          + max(-0.35, min(1.0, (p["peso"] - 1) * 0.5)))
             finales.append(p)
     con.commit()
 
@@ -3762,10 +3975,21 @@ RE_TEMPORAL = re.compile(r"black.?friday|cyber.?monday|black.?week|semanas?.?bla
 RE_SEGMENTO = re.compile(r"(?<![a-z])(?:ni[nñ][oa]s?|kids?|teens?|beb[eé]s?|baby|infantil(?:es)?|junior)(?![a-z])", re.I)
 
 
-def descubrir(categoria):
+def descubrir(categoria, solo_extras=False, grupo=None, solo_tiendas=None):
+    """Busca la página de ofertas de cada tienda y, además, hasta `ofertas_extra_max` (2) páginas adicionales
+    con rebajas (campañas activas, outlet), que se guardan con la clave "tienda+".
+    solo_extras: no cambia la página principal ya guardada. grupo: 'descarga' o 'navegador'.
+    solo_tiendas: limita a esas tiendas (las que se están leyendo)."""
     cfg = cargar_config()
     tiendas, navegador = tiendas_de(cfg, categoria)
+    if grupo == "descarga":
+        navegador = []
+    elif grupo == "navegador":
+        tiendas = []
+    if solo_tiendas is not None:
+        tiendas, navegador = [t for t in tiendas if t in solo_tiendas], [t for t in navegador if t in solo_tiendas]
     urls = urls_ofertas()
+    max_extras = int(cfg.get("filtros_codigo", {}).get("ofertas_extra_max", 2))
 
     def trabajo(tienda, lector):
         try:
@@ -3791,7 +4015,7 @@ def descubrir(categoria):
             opciones.setdefault(guardada, "guardada")
         # Prueba cada candidata y se queda con la que más productos da (una sola vez, sin IA).
         print(f"\n{tienda}{' (navegador)' if lector is not _descargar3 else ''}:")
-        mejor, mejor_n = None, (False, False, 0)
+        mejor, mejor_n, probadas = None, (False, False, 0), []
         for u in orden:
             try:
                 ps = extraer(*lector(u))
@@ -3808,9 +4032,22 @@ def descubrir(categoria):
             # Menos de MIN_LISTADO productos es una ficha suelta, no un listado de ofertas.
             if n >= MIN_LISTADO and puntos > mejor_n:
                 mejor, mejor_n = u, puntos
+            if n >= MIN_LISTADO and n_antes >= 1 and not RE_SEGMENTO.search(urlparse(u).path):
+                probadas.append((n_antes * 3 + n, u))
+        if solo_extras:
+            mejor = guardada or url_tienda(tienda)  # la principal no se toca en el refresco automático
         if mejor:
-            urls[tienda] = mejor
+            if not solo_extras:
+                urls[tienda] = mejor
             print(f"   -> elegida: {mejor}")
+            # Además de la principal, las otras páginas con rebajas (campañas activas, outlet...).
+            extras = [u for _, u in sorted(probadas, reverse=True) if u != mejor][:max_extras]
+            if extras:
+                urls[f"{tienda}+"] = extras
+                for u in extras:
+                    print(f"   -> además: {u}")
+            else:
+                urls.pop(f"{tienda}+", None)
         else:
             print("   -> ninguna página da productos: usa 'volcar' para ver por qué")
 
