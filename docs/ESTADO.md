@@ -243,3 +243,11 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Pendiente: AirPods Max a 130 € y Oral-B Kids a 8 € (PCComTracker) siguen pasando por quedar justo por encima del 40 %.
 
 - **Veredicto 'caducada' (8/11).** #114 (plancha Philips en Amazon a 219 €, mercado 305 €) subió a 329,99 € a los 16 min: oferta flash acabada, no producto malo. 'dudosa' lo bloqueaba 30 días; 'caducada' no: `vuelve_oferta_caducada` lo vuelve a enviar (estado 'vuelve') si baja desde un precio mayor a ≤ el precio del aviso. SKILL.md explica cuándo usar cada uno.
+
+- **Tiendas del ranking de Chollometro (16/11, a petición de Zeta).** Ranking de 5.627 hilos del 10 al 14/11 (`docs/SPEC.md`, apartado 3).
+  - Nuevas: `aeg.com.es` (electro_marcas), `runningemotion.com` y `nbastore.eu` (deporte). **Las tres sin probar**: pasar `descubrir` y `prueba` de su categoría. Los dominios de Running Emotion y NBA Store no se pudieron comprobar desde fuera.
+  - `privatesportshop.es`: apartada en deporte hasta que Zeta haga `login`; añadida a `requiere_login` y `logins`.
+  - `siempre_leer` con las 27 tiendas del ranking que ya se leen: el filtro de demanda (300° en 120 días) no las puede sacar.
+  - Del ranking siguen sin leerse: Decathlon y ASICS (antibot), Privé, Showroomprivé y Privalia (falta `login`) y Xbox (excluido; decisión pendiente).
+  - No se ha quitado ninguna tienda. Las de peor tasa (Veepee 11 %, Deporte-Outlet 19 %, Action 20 %, Zalando 22 %, Primor 9 %) siguen como estaban.
+  - Solo en este proyecto: la copia en marcha de Hermes no cambia hasta pasar a producción.

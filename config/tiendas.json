@@ -102,7 +102,36 @@
   "solo_tiendas_con_demanda": true,
   "demanda_dias": 120,
   "demanda_min_hot": 2,
-  "siempre_leer": [],
+  "siempre_leer": [
+   "amazon.es",
+   "mediamarkt.es",
+   "aliexpress.com",
+   "miravia.es",
+   "carrefour.es",
+   "elcorteingles.es",
+   "lidl.es",
+   "adidas.es",
+   "aeg.com.es",
+   "footlocker.es",
+   "pccomponentes.com",
+   "coolmod.com",
+   "nbastore.eu",
+   "ninjakitchen.es",
+   "sharkclean.es",
+   "toysrus.es",
+   "fnac.es",
+   "runningemotion.com",
+   "samsung.com/es",
+   "aldi.es",
+   "game.es",
+   "sportsdirect.com",
+   "store.playstation.com/es-es",
+   "nintendo.com/es-es",
+   "humblebundle.com",
+   "sprinter.es",
+   "nike.com/es"
+  ],
+  "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
   "descuento_real_min": 0.25
  },
  "navegador": {
@@ -251,6 +280,7 @@
   "electro_marcas": {
    "cada_min": 15,
    "tiendas": [
+    "aeg.com.es",
     "dyson.es",
     "ninjakitchen.es",
     "sharkclean.es",
@@ -467,7 +497,9 @@
     "bstn.com",
     "decimas.es",
     "futbolemotion.com",
-    "basketballemotion.com"
+    "basketballemotion.com",
+    "runningemotion.com",
+    "nbastore.eu"
    ],
    "navegador": [
     "adidas.es",
@@ -480,6 +512,7 @@
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Con filtro de marca (casi todo es Nike, Adidas, Asics...); sin precio de mercado, 50 %.",
    "apartadas": {
+    "privatesportshop.es": "Necesita tu sesión: ejecuta 'vigilante.py login privatesportshop.es' y vuelve a ponerla en la lista. Añadida el 16/11/2026 por el ranking de Chollometro (10 de 20 hilos a 200 grados).",
     "decathlon.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "vans.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "thenorthface.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
@@ -589,13 +622,15 @@
   "zalando-prive.es",
   "showroomprive.es",
   "privalia.com",
-  "veepee.es"
+  "veepee.es",
+  "privatesportshop.es"
  ],
  "logins": {
   "zalando-prive.es": "https://www.zalando-prive.es/",
   "showroomprive.es": "https://www.showroomprive.es/",
   "privalia.com": "https://www.privalia.com/",
-  "veepee.es": "https://www.veepee.es/"
+  "veepee.es": "https://www.veepee.es/",
+  "privatesportshop.es": "https://www.privatesportshop.es/"
  },
  "historicos": {
   "defecto": "precioreal",

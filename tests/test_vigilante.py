@@ -879,6 +879,35 @@ class Rondas(Base):
         self.assertTrue(v.con_demanda("mi.com", {"mi.com": 1}))
         self.assertFalse(v.con_demanda("mi.com", {"xiaomi.com": 5}))
 
+    def test_tiendas_del_ranking_de_chollometro(self):
+        # 16/11/2026: las tiendas del ranking de Chollometro (docs/SPEC.md) se leen siempre. Una tienda de
+        # `siempre_leer` que no esté en ninguna lista, o que esté apartada, no se leería nunca sin avisar.
+        cfg = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        cats = cfg["categorias"]
+        leidas = {t for c in cats.values() for k in ("tiendas", "navegador") for t in c.get(k, [])}
+        apartadas = {t for c in cats.values() for t in c.get("apartadas", {})}
+        siempre = cfg["filtros_codigo"]["siempre_leer"]
+        self.assertEqual(len(siempre), len(set(siempre)), "sin repetidas")
+        for t in siempre:
+            self.assertIn(t, leidas, t)
+            self.assertNotIn(t, apartadas, t)
+        for t in ("aeg.com.es", "runningemotion.com", "nbastore.eu", "amazon.es", "mediamarkt.es"):
+            self.assertIn(t, siempre)
+        self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
+        # Con sesión: apartada hasta que Zeta haga `login`, y con su dirección de entrada.
+        self.assertIn("privatesportshop.es", cats["deporte"]["apartadas"])
+        self.assertIn("privatesportshop.es", cfg["requiere_login"])
+        self.assertIn("privatesportshop.es", cfg["logins"])
+        # La lista manda sobre el filtro de demanda aunque la copia de Chollometro no las cuente.
+        con = v.bd()
+        hace = lambda d: int(time.time() - d * 86400)
+        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)",
+                        [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
+        con.commit()
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["aeg.com.es", "nbastore.eu", "prenatal.es"]),
+                         ["aeg.com.es", "nbastore.eu"])
+        con.close()
+
     def test_demanda_probada(self):
         # Sin comparador ni histórico, pero ya fue chollo caliente (850°) a 36 €: a 34,99 € sí se envía.
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
