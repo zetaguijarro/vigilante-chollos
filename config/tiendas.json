@@ -143,7 +143,11 @@
    "nintendo.com/es-es",
    "humblebundle.com",
    "sprinter.es",
-   "nike.com/es"
+   "nike.com/es",
+   "zalando-prive.es",
+   "showroomprive.es",
+   "privalia.com",
+   "privatesportshop.es"
   ],
   "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
   "descuento_real_min": 0.2
@@ -471,12 +475,12 @@
     "oysho.com/es",
     "outlet-pc.es",
     "esdemarca.com",
-    "asos.com/es"
+    "asos.com/es",
+    "zalando-prive.es",
+    "showroomprive.es",
+    "privalia.com"
    ],
    "apartadas": {
-    "zalando-prive.es": "Necesita tu sesión: ejecuta 'vigilante.py login zalando-prive.es' y vuelve a ponerla en la lista.",
-    "showroomprive.es": "Necesita tu sesión: ejecuta 'vigilante.py login showroomprive.es' y vuelve a ponerla en la lista.",
-    "privalia.com": "Necesita tu sesión: ejecuta 'vigilante.py login privalia.com' y vuelve a ponerla en la lista.",
     "veepee.es": "Necesita tu sesión: ejecuta 'vigilante.py login veepee.es' y vuelve a ponerla en la lista.",
     "levi.com/ES/es_ES": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "uniqlo.com/es/es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
@@ -520,13 +524,13 @@
     "footlocker.es",
     "sprinter.es",
     "motocard.com",
-    "sportsdirect.com"
+    "sportsdirect.com",
+    "privatesportshop.es"
    ],
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Con filtro de marca (casi todo es Nike, Adidas, Asics...); sin precio de mercado, 50 %.",
    "apartadas": {
-    "privatesportshop.es": "Necesita tu sesión: ejecuta 'vigilante.py login privatesportshop.es' y vuelve a ponerla en la lista. Añadida el 16/11/2026 por el ranking de Chollometro (10 de 20 hilos a 200 grados).",
     "decathlon.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "vans.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "thenorthface.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",

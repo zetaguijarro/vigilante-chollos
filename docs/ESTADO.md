@@ -292,3 +292,5 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Una línea por tienda: método, página leída, productos, con precio anterior, nuevos o más baratos y los que pasan los filtros de tienda; o el error.
   - `AVISO` por cada candidato enviado y un resumen: lecturas, productos, pasan filtros, con contraste real, avisos y segundos.
   - En vivo: `Get-Content data\recorrido.txt -Wait -Tail 40`.
+
+- **Ventas privadas activadas (16/11, noche; requiere el `login` de Zeta antes).** Zalando Privé, Showroomprivé y Privalia pasan de `apartadas` a `navegador` en moda; Private Sport Shop, a `navegador` en deporte. Las cuatro en `siempre_leer`. Veepee sigue apartada (11 % de éxito). Si una da 0 productos dos rondas seguidas, `vigilar_sesiones` avisa por Telegram para repetir el `login`.

@@ -940,10 +940,15 @@ class Rondas(Base):
         for t in ("aeg.com.es", "runningemotion.com", "nbastore.eu", "amazon.es", "mediamarkt.es"):
             self.assertIn(t, siempre)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
-        # Con sesión: apartada hasta que Zeta haga `login`, y con su dirección de entrada.
-        self.assertIn("privatesportshop.es", cats["deporte"]["apartadas"])
-        self.assertIn("privatesportshop.es", cfg["requiere_login"])
-        self.assertIn("privatesportshop.es", cfg["logins"])
+        # Ventas privadas (16/11/2026, tras el `login` de Zeta): se leen con navegador, con su sesión.
+        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com"):
+            self.assertIn(t, cats["moda"]["navegador"])
+        self.assertIn("privatesportshop.es", cats["deporte"]["navegador"])
+        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com", "privatesportshop.es"):
+            self.assertIn(t, cfg["requiere_login"])
+            self.assertIn(t, cfg["logins"])
+            self.assertIn(t, siempre)
+        self.assertIn("veepee.es", cats["moda"]["apartadas"], "Veepee sigue apartada: 11 % de éxito")
         # La lista manda sobre el filtro de demanda aunque la copia de Chollometro no las cuente.
         con = v.bd()
         hace = lambda d: int(time.time() - d * 86400)
