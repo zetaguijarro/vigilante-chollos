@@ -310,3 +310,5 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
     - Candidatos: el peso entra en el `score` (de −0,35 a +1), así que con el mismo descuento un móvil va antes que una impresora cuando hay tope por tienda o por tanda.
   - Sin datos suficientes en la copia (menos de 500 hilos) todo pesa igual, como antes.
   - **Sin probar con tiendas reales.** Prueba `test_freno_si_llegan_muchos_de_golpe`: entre las 00:00 y la 01:00 su último tramo no se puede simular y se salta (fallaba a esa hora desde antes).
+
+- **`descubrir moda` real (17/11, 00:09).** Zalando elegía `/rebajas/nike/` (115 productos) en vez de `/rebajas/` (114): ahora una página más estrecha tiene que superar a la general en más de un 10 %. Sin productos con navegador: Mango Outlet, Zara, Pull&Bear, Bershka, Stradivarius, Lefties y Bimba y Lola (webs que pintan el listado con JavaScript y el extractor no lo encuentra); H&M, 403. Ninguna está en el ranking de Chollometro: no se les dedica esfuerzo por ahora.

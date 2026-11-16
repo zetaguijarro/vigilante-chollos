@@ -1434,6 +1434,19 @@ class Descubrir(Base):
             v._REFRESCO_HECHO[0] = False
             con.close()
 
+    def test_la_pagina_general_gana_a_la_de_una_marca(self):
+        # Zalando (17/11/2026): /rebajas/nike/ (115 productos) ganaba a /rebajas/ (114) por un producto.
+        general = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0, "a": 129.0} for i in range(20)])
+        marca = tienda_html([{"n": f"Nike Air {i}", "p": 59.0, "a": 99.0} for i in range(21)])
+        portada = '<a href="/rebajas/nike/">Nike rebajas</a><a href="/rebajas/">Rebajas</a>'
+        paginas = {"/rebajas/": general, "/rebajas/nike/": marca}
+        v.descargar = lambda url, timeout=20, reintentos=1: (paginas.get(v.urlparse(url).path, portada), url)
+        with redirect_stdout(io.StringIO()):
+            v.descubrir("tecnologia")
+        urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+        self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/rebajas/")
+        self.assertEqual(urls["mediamarkt.es+"], ["https://www.mediamarkt.es/rebajas/nike/"], "la de marca queda de adicional")
+
     def test_prueba_muestra_cada_tienda(self):
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 129.0}]}
         self.red.caidas.add("pccomponentes")
