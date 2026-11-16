@@ -2213,7 +2213,9 @@ def categorias_de_portada(html, base_url, maximo=12):
         partes = urlparse(url)
         if partes.scheme not in ("http", "https") or not partes.netloc.replace("www.", "").endswith(host):
             continue
-        ruta = partes.path.rstrip("/")
+        # La misma ruta puede venir escrita con tildes o codificada (MediaMarkt: "electrodomésticos-553"
+        # y "electrodom%C3%A9sticos-553"): es una sola categoría.
+        ruta = unquote(partes.path).rstrip("/")
         segmentos = [s for s in ruta.split("/") if s]
         texto = " ".join(unescape(re.sub(r"<[^>]+>", " ", m.group(2))).split())
         if not segmentos or len(segmentos) > 4 or len(texto) > 40 or ruta.lower() in rutas:
@@ -2346,8 +2348,25 @@ def catalogo(*nombres):
     con.close()
     guardado = urls_catalogo()
 
-    def apuntar(t, html, final):
-        lista = [u for u in categorias_de_portada(html, final) if permitido(u)]
+    def apuntar(t, html, final, bajar=None):
+        # catalogo_por_tienda: {"niveles": 2, "max": 40} entra también en cada categoría de la portada y
+        # recoge sus subcategorías (MediaMarkt: la portada solo enlaza 12, y varias son índices).
+        por = cfg.get("catalogo_por_tienda", {}).get(t, {})
+        maximo = int(por.get("max", 12))
+        lista = [u for u in categorias_de_portada(html, final, maximo=min(12, maximo)) if permitido(u)]
+        if bajar and int(por.get("niveles", 1)) >= 2:
+            vistas = {unquote(urlparse(u).path).rstrip("/").lower() for u in lista}
+            for u in list(lista):
+                if len(lista) >= maximo:
+                    break
+                res = _seguro(bajar, u)
+                if isinstance(res, Exception):
+                    continue
+                for sub in categorias_de_portada(res[0], res[1], maximo=40):
+                    clave = unquote(urlparse(sub).path).rstrip("/").lower()
+                    if clave not in vistas and permitido(sub) and len(lista) < maximo:
+                        vistas.add(clave)
+                        lista.append(sub)
         if lista:
             guardado[t] = lista
         print(f"{t:30} {len(lista):3} categorías")
@@ -2358,7 +2377,7 @@ def catalogo(*nombres):
             if isinstance(res, Exception):
                 print(f"{t:30} no se lee: {str(res)[:70]}")
             else:
-                apuntar(t, *res)
+                apuntar(t, res[0], res[1], bajar=descargar)
     navs = [t for t in elegidas if t in con_nav]
     if navs:
         try:
