@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 146 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 147 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -29,7 +29,7 @@ Lo hace `scripts\pasar_a_produccion.ps1`, que tiene que lanzar Zeta: el sistema 
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
-Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot, captcha ni robots.txt; formato móvil de 5 mensajes; nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
+Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot ni captcha (robots.txt no se mira desde el 16/11/2026, salvo en Chollometro: `respetar_robots` y `robots_siempre`); formato móvil de 5 mensajes; nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
 
 ## Análisis de Instinct (16/11/2026)
 

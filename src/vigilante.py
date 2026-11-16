@@ -207,10 +207,34 @@ def robots_pendiente_de_navegador(url):
     return base, (base in _ROBOTS_MEM and _ROBOTS_MEM[base] is None)
 
 
+_ROBOTS_CFG = [None, None]  # (mtime de tiendas.json, (respetar, hosts que se respetan siempre))
+
+
+def robots_activo(host):
+    """¿Se mira el robots.txt de este host? Decisión de Zeta (16/11/2026): no se mira
+    (`filtros_codigo.respetar_robots` false), salvo en los hosts de `robots_siempre`. Sin configuración
+    legible se respeta, que es lo prudente. Esto NO toca antibot ni captcha: eso sigue sin saltarse."""
+    try:
+        marca = CONFIG.stat().st_mtime
+        if _ROBOTS_CFG[0] != (str(CONFIG), marca):
+            f = cargar_config().get("filtros_codigo", {})
+            _ROBOTS_CFG[:] = [(str(CONFIG), marca), (f.get("respetar_robots", True),
+                                                    [h.lower() for h in f.get("robots_siempre", [])])]
+        respetar, siempre = _ROBOTS_CFG[1]
+    except (OSError, ValueError):
+        return True
+    if respetar:
+        return True
+    host = (host or "").lower().removeprefix("www.")
+    return any(host == h or host.endswith("." + h) for h in siempre)
+
+
 def permitido(url):
     """¿Deja el robots.txt de la web leer esta URL?"""
     u = urlparse(url)
     if u.hostname in ("localhost", "127.0.0.1") or u.path.endswith("/robots.txt"):
+        return True
+    if not robots_activo(u.hostname):
         return True
     reglas = _reglas_de_host(f"{u.scheme}://{u.netloc}")
     if reglas is None:

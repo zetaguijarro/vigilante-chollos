@@ -17,7 +17,7 @@ vigilante-chollos/
 │   ├── tiendas.json          tiendas por categoría, filtros, apartadas, horario, entrega
 │   └── marcas.txt            marcas admitidas (tecnología, generalistas, móviles)
 ├── data/                     base de datos, cachés y perfil de Chrome (fuera de git)
-├── tests/test_vigilante.py   146 pruebas, sin red real
+├── tests/test_vigilante.py   147 pruebas, sin red real
 ├── tareas/                   lo que lanza el Programador de tareas (lo genera `wrappers`)
 ├── hermes/
 │   ├── skills/verifica-chollo/SKILL.md   habilidad «verifica N»
@@ -73,6 +73,6 @@ La versión **en marcha** sigue en `C:\Users\Zeus\AppData\Local\hermes\scripts`:
 
 ## Reglas que no se rompen
 
-- No se salta ningún antibot, captcha ni robots.txt. Las tiendas bloqueadas van a `apartadas` con su motivo.
+- No se salta ningún antibot ni captcha. robots.txt no se mira desde el 16/11/2026 por decisión de Zeta (`filtros_codigo.respetar_robots`), salvo en los hosts de `robots_siempre`. Las tiendas bloqueadas van a `apartadas` con su motivo.
 - No se compra, no se reserva y no se mete nada en carritos.
 - Cambios de filtros: siempre con su prueba en `tests/`.

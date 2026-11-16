@@ -102,6 +102,11 @@
   "solo_tiendas_con_demanda": true,
   "demanda_dias": 120,
   "demanda_min_hot": 2,
+  "respetar_robots": false,
+  "robots_siempre": [
+   "chollometro.com"
+  ],
+  "_nota_robots": "Decisión de Zeta (16/11/2026): no se mira robots.txt (uso personal, sin ánimo de lucro). robots_siempre: hosts donde sí se respeta; Chollometro se queda porque ahí está la cuenta PorLa_Jeta y la copia local ya cubre los duplicados. Antibot y captcha siguen sin saltarse.",
   "siempre_leer": [
    "amazon.es",
    "mediamarkt.es",

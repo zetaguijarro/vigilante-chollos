@@ -251,3 +251,10 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Del ranking siguen sin leerse: Decathlon y ASICS (antibot), Privé, Showroomprivé y Privalia (falta `login`) y Xbox (excluido; decisión pendiente).
   - No se ha quitado ninguna tienda. Las de peor tasa (Veepee 11 %, Deporte-Outlet 19 %, Action 20 %, Zalando 22 %, Primor 9 %) siguen como estaban.
   - Solo en este proyecto: la copia en marcha de Hermes no cambia hasta pasar a producción.
+
+- **robots.txt deja de mirarse (16/11, decisión de Zeta: uso personal, sin ánimo de lucro).** Sustituye a "robots.txt obligatorio por código" del 7/11.
+  - `filtros_codigo.respetar_robots` false: `permitido` devuelve True sin pedir el robots.txt (`robots_activo`). Sin la clave, se respeta.
+  - `robots_siempre` ["chollometro.com"]: ahí sí se respeta. Es donde está la cuenta PorLa_Jeta, y la copia local ya cubre los duplicados sin abrir /search. Para quitarlo, vaciar la lista.
+  - **No cambia:** antibot y captcha siguen sin saltarse; una tienda con muro sigue fuera 24 h.
+  - Lo que estaba apartado por robots.txt (Reddit, CheapShark, Decimas, /api/ de PCComTracker) NO se ha reactivado: sigue en `apartadas` o sin código que lo use. Reddit además responde 403.
+  - Riesgo aceptado: sin robots.txt se leen rutas que la tienda pide no leer; si una tienda responde bloqueando la IP, afecta también a la navegación normal desde casa.

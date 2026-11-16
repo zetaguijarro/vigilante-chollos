@@ -115,6 +115,7 @@ class Base(unittest.TestCase):
         # para ellas vale la regla antigua del descuento mínimo. La nueva tiene su propia prueba.
         cfg["filtros_codigo"]["exigir_precio_mercado"] = False
         cfg["filtros_codigo"]["max_por_tienda_y_ronda"] = 1000  # las pruebas de cupos usan una sola tienda
+        cfg["filtros_codigo"]["respetar_robots"] = True  # las pruebas de robots.txt miran el modo estricto
         # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
@@ -1116,6 +1117,20 @@ User-agent: ChatGPT-User
 Disallow: /
 """
 
+    def setUp(self):
+        # Configuración propia en una carpeta temporal y en modo estricto: estas pruebas no dependen de
+        # lo que diga el tiendas.json real ni lo tocan.
+        self.cfg_tmp = Path(tempfile.mkdtemp())
+        self._config = v.CONFIG
+        v.CONFIG = self.cfg_tmp / "tiendas.json"
+        v.CONFIG.write_text(json.dumps({"filtros_codigo": {"respetar_robots": True}}), encoding="utf-8")
+        v._ROBOTS_CFG[:] = [None, None]
+
+    def tearDown(self):
+        v.CONFIG = self._config
+        v._ROBOTS_CFG[:] = [None, None]
+        shutil.rmtree(self.cfg_tmp, ignore_errors=True)
+
     def test_reglas(self):
         r = v.reglas_robots(self.TEXTO)
         self.assertTrue(v.robots_permite(r, "/nuevas"))
@@ -1125,6 +1140,45 @@ Disallow: /
         self.assertFalse(v.robots_permite(r, "/api/1.0/games?id=1"))
         self.assertTrue(v.robots_permite(r, "/api/1.0/publico"), "la regla más larga gana")
         self.assertEqual(v.reglas_robots("User-agent: *\nDisallow:\n"), [], "Disallow vacío = todo permitido")
+
+    def test_robots_desactivado_por_configuracion(self):
+        # 16/11/2026, decisión de Zeta: no se mira robots.txt, salvo en los hosts de `robots_siempre`.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"respetar_robots": False, "robots_siempre": ["chollometro.com"]})
+        v.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        v._ROBOTS_CFG[:] = [None, None]
+        tmp = Path(tempfile.mkdtemp())
+        orig = v.DATOS, v._descargar
+        v._ROBOTS_MEM.clear()
+        pedidas = []
+
+        def falsa(url, timeout):
+            pedidas.append(url)
+            if url.endswith("/robots.txt"):
+                return self.TEXTO, url
+            return "<html>ok</html>", url
+        try:
+            v.DATOS, v._descargar = tmp, falsa
+            self.assertFalse(v.robots_activo("web.es"))
+            self.assertTrue(v.robots_activo("www.chollometro.com"))
+            self.assertEqual(v.descargar("https://web.es/search?q=x")[0], "<html>ok</html>")
+            self.assertNotIn("https://web.es/robots.txt", pedidas, "ni se pide el robots.txt")
+            with self.assertRaises(v.BloqueadoPorRobots):
+                v.descargar("https://www.chollometro.com/search?q=x")
+            # Sin la clave en la configuración se respeta: es lo prudente.
+            cfg["filtros_codigo"].pop("respetar_robots")
+            v.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+            v._ROBOTS_CFG[:] = [None, None]
+            self.assertTrue(v.robots_activo("web.es"))
+        finally:
+            v.DATOS, v._descargar = orig
+            v._ROBOTS_MEM.clear()
+            v._ROBOTS_CFG[:] = [None, None]
+            shutil.rmtree(tmp, ignore_errors=True)
+        # El archivo real lleva la decisión: desactivado, con Chollometro como excepción.
+        real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
+        self.assertIs(real["respetar_robots"], False)
+        self.assertIn("chollometro.com", real["robots_siempre"])
 
     def test_descargar_respeta_robots(self):
         tmp = Path(tempfile.mkdtemp())
