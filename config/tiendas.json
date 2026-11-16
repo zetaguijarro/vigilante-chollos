@@ -176,7 +176,7 @@
  },
  "catalogo_cada_min": 60,
  "paginas_catalogo": {"descarga": 5, "navegador": 3},
- "catalogo_por_tienda": {
+ "catalogo_por_tienda": {"mediamarkt.es": {"cada_min": 10, "por_ronda": 2, "_nota": "17/11/2026: sus páginas de campaña solo traen unos 13 productos en el HTML (el resto carga con JavaScript al hacer scroll). Se compensa leyendo 2 categorías del catálogo cada 10 min, con más turnos para las de más demanda (móviles, consolas, portátiles...)."}, 
   "pccomponentes.com": {"cada_min": 15, "por_ronda": 6, "_nota": "613 subcategorías de PCComTracker (solo los 40 primeros de cada una: el resto va por /api/, prohibido en su robots.txt). Vuelta completa en ~1 día."}
  },
  "entrega": {
