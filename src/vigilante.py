@@ -2650,6 +2650,26 @@ def validar_ficha(ficha, candidato):
     if e1 and e2 and e1.lstrip("0") != e2.lstrip("0"):
         return False, f"EAN distinto ({e2} en la ficha, {e1} en el listado)"
     return True, "ficha real con título y precio"
+def confirmar_en_ficha(p, tolerancia=0.02):
+    """Antes de avisar, el código abre la ficha del producto y comprueba que es ese producto y a ese
+    precio. Caso real (16/11/2026): Hermes descartaba al verificar lo que el listado leía mal (mochila
+    adidas a 36 € en el listado de Spartoo y a 73,51 € en su ficha, con datos de otra marca; robot
+    Cecotec a 81 € en el listado y a 229 € en la ficha). -> (True | False | None, motivo).
+    None = la ficha no se pudo leer (antibot, error, sin precio): no confirma ni desmiente."""
+    try:
+        ficha = leer_ficha(p["url"])
+    except Exception as e:
+        return None, f"ficha no leída: {str(e)[:80]}"
+    if ficha.get("error") or ficha.get("antibot") or not ficha.get("precio_ahora"):
+        return None, "la ficha no se pudo leer o no muestra precio"
+    titulo = ficha.get("titulo") or ""
+    if titulo and not mismo_post(p["nombre"], titulo) and parecido(titulo, p["nombre"]) < 0.5:
+        return False, f"la ficha es de otro producto ({titulo[:60]})"
+    if ficha["precio_ahora"] > p["precio"] * (1 + tolerancia):
+        return False, f"la ficha marca {ficha['precio_ahora']} € y el listado {p['precio']} €"
+    return True, "producto y precio confirmados en la ficha"
+
+
 RE_META_DESC = re.compile(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{20,})', re.I)
 RE_AGOTADO = re.compile(r"agotado|sin stock|no disponible|out of stock|avísame cuando", re.I)
 RE_ENVIO = re.compile(r"[^.<>\n]{0,60}(?:env[ií]o|entrega)[^.<>\n]{0,80}", re.I)
@@ -3580,6 +3600,11 @@ def ronda(categoria, solo=None):
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
             continue  # 'vuelve' (oferta caducada que regresa) se reenvía a propósito
         if por_tienda[p["tienda"]] < max_tienda and len(enviar) < hueco:
+            if f.get("confirmar_ficha") and not p.get("gratis"):
+                p["ficha_ok"], motivo = confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02))
+                if p["ficha_ok"] is False:
+                    log(f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
+                    continue
             por_tienda[p["tienda"]] += 1
             enviar.append(p)
     for p in finales:

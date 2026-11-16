@@ -17,7 +17,7 @@ vigilante-chollos/
 │   ├── tiendas.json          tiendas por categoría, filtros, apartadas, horario, entrega
 │   └── marcas.txt            marcas admitidas (tecnología, generalistas, móviles)
 ├── data/                     base de datos, cachés y perfil de Chrome (fuera de git)
-├── tests/test_vigilante.py   147 pruebas, sin red real
+├── tests/test_vigilante.py   150 pruebas, sin red real
 ├── tareas/                   lo que lanza el Programador de tareas (lo genera `wrappers`)
 ├── hermes/
 │   ├── skills/verifica-chollo/SKILL.md   habilidad «verifica N»

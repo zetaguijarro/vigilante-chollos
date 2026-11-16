@@ -116,6 +116,7 @@ class Base(unittest.TestCase):
         cfg["filtros_codigo"]["exigir_precio_mercado"] = False
         cfg["filtros_codigo"]["max_por_tienda_y_ronda"] = 1000  # las pruebas de cupos usan una sola tienda
         cfg["filtros_codigo"]["respetar_robots"] = True  # las pruebas de robots.txt miran el modo estricto
+        cfg["filtros_codigo"]["confirmar_ficha"] = False  # la red simulada no tiene fichas; tiene su prueba
         # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
@@ -827,6 +828,35 @@ class Rondas(Base):
                '<option value="2" disabled>M - Agotado</option></select>')
         self.assertEqual(v.variantes_de([], dom), ["S: seleccionable", "M: agotada"])
 
+    def test_confirmar_en_ficha(self):
+        # 16/11/2026: Hermes descartaba al verificar lo que el listado leía mal. Ahora lo mira el código.
+        orig = v.leer_ficha
+        p = {"nombre": "Mochila adidas Backpack Mini", "precio": 36.0, "url": "https://spartoo.es/p/1", "tienda": "spartoo.es"}
+        try:
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini", "precio_ahora": 73.51}
+            ok, motivo = v.confirmar_en_ficha(p)
+            self.assertIs(ok, False, "36 € en el listado y 73,51 € en la ficha")
+            self.assertIn("73.51", motivo)
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Rains Bolso bandolera impermeable", "precio_ahora": 36.0}
+            self.assertIs(v.confirmar_en_ficha(p)[0], False, "la ficha es de otro producto")
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini", "precio_ahora": 36.5}
+            self.assertIs(v.confirmar_en_ficha(p)[0], True, "dentro de la tolerancia del 2 %")
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini", "precio_ahora": 29.99}
+            self.assertIs(v.confirmar_en_ficha(p)[0], True, "más barato en la ficha no es motivo de descarte")
+            v.leer_ficha = lambda url, nav=None: {"antibot": True}
+            self.assertIsNone(v.confirmar_en_ficha(p)[0], "sin poder leer, ni confirma ni desmiente")
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini"}
+            self.assertIsNone(v.confirmar_en_ficha(p)[0], "ficha sin precio")
+
+            def rota(url, nav=None):
+                raise OSError("HTTP 403")
+            v.leer_ficha = rota
+            self.assertIsNone(v.confirmar_en_ficha(p)[0])
+        finally:
+            v.leer_ficha = orig
+        real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
+        self.assertIs(real["confirmar_ficha"], True)
+
     def test_validar_ficha(self):
         # Manual de Instinct: 200 con página genérica, shell de JS o muro antibot = "sin validar".
         c = {"n": "JBL Charge 5 Altavoz Bluetooth Negro", "p": 99.0, "e": "6925281900002"}
@@ -1478,6 +1508,34 @@ class ModoTelegram(Base):
     def tearDown(self):
         v.enviar_telegram, v.token_telegram = self._orig_tg
         super().tearDown()
+
+    def test_la_ronda_no_avisa_si_la_ficha_lo_desmiente(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["confirmar_ficha"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        orig = v.leer_ficha
+        try:
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Xiaomi Redmi Buds 6 Pro Negro", "precio_ahora": 79.99}
+            self.ronda()  # la primera ronda solo siembra
+            self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+            self.ronda()
+            self.assertEqual(self.enviados, [], "el listado decía 34,99 € y la ficha 79,99 €: no se avisa")
+        finally:
+            v.leer_ficha = orig
+
+    def test_la_ronda_avisa_si_la_ficha_confirma_o_no_se_lee(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["confirmar_ficha"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        orig = v.leer_ficha
+        try:
+            v.leer_ficha = lambda url, nav=None: {"antibot": True}
+            self.ronda()
+            self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+            self.ronda()
+            self.assertEqual(len(self.enviados), 1, "sin poder leer la ficha, el aviso sale como antes")
+        finally:
+            v.leer_ficha = orig
 
     def test_boton_para_verificar(self):
         # Un botón "Verificar #N" debajo de CADA aviso (Zeta: "si no, es un lío"). Lo atiende el plugin

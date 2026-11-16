@@ -258,3 +258,9 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - **No cambia:** antibot y captcha siguen sin saltarse; una tienda con muro sigue fuera 24 h.
   - Lo que estaba apartado por robots.txt (Reddit, CheapShark, Decimas, /api/ de PCComTracker) NO se ha reactivado: sigue en `apartadas` o sin código que lo use. Reddit además responde 403.
   - Riesgo aceptado: sin robots.txt se leen rutas que la tienda pide no leer; si una tienda responde bloqueando la IP, afecta también a la navegación normal desde casa.
+
+- **El código confirma en la ficha antes de avisar (16/11).** Hermes descartaba al verificar lo que el listado leía mal: #184 mochila adidas a 36 € en el listado de Spartoo y a 73,51 € en su ficha, con datos de otra marca; #169 robot Cecotec a 81 € en el listado y a 229 € en la ficha. Cada descarte gastaba una pulsación de Zeta y tokens.
+  - `confirmar_en_ficha` (`filtros_codigo.confirmar_ficha` true, `ficha_tolerancia` 0.02): justo antes de mandar el aviso, abre la ficha por descarga. Descarta si el título es de otro producto o si la ficha marca más de un 2 % por encima del listado. Queda en el log ("ficha no confirma").
+  - Si la ficha no se puede leer (antibot, error, sin precio), el aviso sale como antes: ni confirma ni desmiente. Las tiendas que solo se leen con navegador quedan así de momento.
+  - Una petición más por candidato que se va a enviar, 0 tokens. Los gratis no se comprueban.
+  - **Sin probar con tiendas reales.** Riesgo conocido: `analizar_ficha` toma el primer producto de la página; si es un "relacionado" con otro precio, descartaría uno bueno. Mirar el log los primeros días.

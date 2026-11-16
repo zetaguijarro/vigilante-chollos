@@ -102,6 +102,9 @@
   "solo_tiendas_con_demanda": true,
   "demanda_dias": 120,
   "demanda_min_hot": 2,
+  "confirmar_ficha": true,
+  "ficha_tolerancia": 0.02,
+  "_nota_confirmar_ficha": "Antes de avisar, el código abre la ficha y descarta si es otro producto o si marca un precio más alto que el listado (más de ficha_tolerancia). Si la ficha no se puede leer, el aviso sale igual. Una petición más por candidato, 0 tokens.",
   "respetar_robots": false,
   "robots_siempre": [
    "chollometro.com"
