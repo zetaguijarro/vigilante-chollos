@@ -17,7 +17,7 @@ Objetivo: ofertas online en España validadas con rigor. **Nada sin verificar.**
 - Amazon DE/FR/IT: avisa "envío a España no verificado" y suma unos 8 € de envío estimado.
 
 PY = C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe
-V = C:\Users\Zeus\AppData\Local\hermes\scripts\vigilante.py
+V = C:\Users\Zeus\proyectos\vigilante-chollos\src\vigilante.py
 
 ## 1. Datos
 Ejecuta `PY V dossier N M ...`, con todos los números a la vez.
@@ -119,7 +119,7 @@ EXCEPCIONAL > OJO OJITO > MUY BUENA > BUENA.
 - Incluye siempre la hora de la comprobación (comprobado).
 
 ## 4. Entrega (formato móvil, siempre)
-Si pasa, escribe el archivo C:\Users\Zeus\AppData\Local\hermes\scripts\vigilante_data\entrega_N.json, en UTF-8, con estas 5 claves:
+Si pasa, escribe el archivo C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8, con estas 5 claves:
 
 - "titulo": [EXCEPCIONAL], [OJO OJITO], [MUY BUENA] o [BUENA] + título sobrio: marca, modelo y especificación clave. Sin precio, sin emojis y sin tienda.
 - "precios": "Precio inicial publicado: X €\nPrecio actual: Y €\nReferencia: Z € (fuente)\nEnvío: E €\nTotal: T € (orientativo, cesta no probada)"
