@@ -945,6 +945,9 @@ class Rondas(Base):
         self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
         self.assertIn("nbastore.eu", cats["deporte"]["navegador"])
         self.assertIn("precioreal.com", siempre)
+        # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
+        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 2)
+        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
         # Con sesión: apartada hasta que Zeta haga `login`, y con su dirección de entrada.
         self.assertIn("privatesportshop.es", cats["deporte"]["apartadas"])
