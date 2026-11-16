@@ -24,6 +24,7 @@ vigilante-chollos/
 │   └── plugins/vigilante-botones/        botón «Verificar» de Telegram
 └── docs/
     ├── ESTADO.md             historial de decisiones y estado (antiguo CLAUDE.md)
+    ├── SPEC.md               análisis de Instinct, conflictos y cambios propuestos
     ├── LECCIONES_INSTINCT.md reglas aprendidas del chat con Instinct
     └── prompt_vigilante.md   formato compacto de candidatos para la IA
 ```

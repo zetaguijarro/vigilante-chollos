@@ -31,7 +31,17 @@ Lo hace `scripts\pasar_a_produccion.ps1`, que tiene que lanzar Zeta: el sistema 
 
 Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot, captcha ni robots.txt; formato móvil de 5 mensajes; nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
 
+## Análisis de Instinct (16/11/2026)
+
+`docs/SPEC.md` une el análisis del bot de Instinct (chat, base de datos y 5.627 hilos de Chollometro) con este proyecto. Léelo antes de proponer cambios de filtros, tiendas o base de datos. Resumen:
+
+- El reglamento escrito para Instinct no se copia aquí: el vigilante ya hace casi todo y es más estricto.
+- Hay 8 conflictos con "Decisiones de Zeta" (apartado 4 del SPEC). Mientras Zeta no decida, manda `docs/ESTADO.md`. No los resuelvas por tu cuenta.
+- Los cambios del apartado 5 están propuestos, no autorizados.
+
 ## Siguiente trabajo propuesto (16/11/2026)
+
+Orden del apartado 5 de `docs/SPEC.md`: resultados de lo publicado (`publicadas`), demanda por tasa, cobertura de Amazon, MediaMarkt, AliExpress y Miravia, cambios de precio con fecha, recopilaciones y reglas de tallas en el dossier. Después:
 
 - Partir `src/vigilante.py` (~3.400 líneas) en módulos. Las pruebas sustituyen funciones del módulo (`v.descargar`, `v.extraer`, `v.Navegador`, `v.enviar_telegram`...), así que hay que hacerlo por fases y ajustar esas sustituciones en cada paso.
 - Cobertura: ~45 % de lo que se calienta en Chollometro es Amazon y AliExpress, y el vigilante apenas los lee. Opciones: sesión en las ventas privadas (`login`), Keepa (de pago) o CamelCamelCamel (mirar robots.txt), aprender de las publicaciones de Zeta.
