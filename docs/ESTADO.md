@@ -286,3 +286,9 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - **Idealo vuelve a no pedirse.** Con robots.txt desactivado, `idealo_red` pedía una búsqueda a Idealo en cada ronda para recibir un 403 (antes su robots.txt con 403 lo cortaba una vez al día). `idealo.es` añadido a `robots_siempre`.
   - **La confirmación en ficha no insiste contra muros.** `ficha_se_intenta`: no se intenta en las tiendas de navegador ni en `ficha_no_leer` (PcComponentes). Sin esto se pedía la ficha de PcComponentes por descarga en cada candidato, contra su antibot. En esas tiendas el aviso sale como antes, también los errores de precio.
   - Consecuencia que queda: con robots.txt desactivado, las tiendas cuyo robots.txt daba 401/403 se vuelven a pedir por descarga. Si responden 403, `registrar_fallos` las pausa (30 min a los 3 fallos, doblando hasta 24 h).
+
+- **Diario del recorrido (16/11, a petición de Zeta).** `recorrido()` escribe en `data/recorrido.txt`, aparte de `log.txt`. Se apaga con `filtros_codigo.log_recorrido` false. Rota a los 2 MB.
+  - Cabecera por categoría: cuántas tiendas por descarga, con navegador, fuentes y categorías de catálogo; las que no se leen por estar en pausa o por no tener demanda.
+  - Una línea por tienda: método, página leída, productos, con precio anterior, nuevos o más baratos y los que pasan los filtros de tienda; o el error.
+  - `AVISO` por cada candidato enviado y un resumen: lecturas, productos, pasan filtros, con contraste real, avisos y segundos.
+  - En vivo: `Get-Content data\recorrido.txt -Wait -Tail 40`.

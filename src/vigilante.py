@@ -67,6 +67,17 @@ def log(msg):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
 
 
+def recorrido(msg):
+    """Diario del recorrido de tiendas (data/recorrido.txt): qué se lee en cada ronda y qué sale de ahí.
+    Aparte de log.txt, que queda para errores y decisiones. Se activa con filtros_codigo.log_recorrido."""
+    DATOS.mkdir(exist_ok=True)
+    archivo = DATOS / "recorrido.txt"
+    if archivo.exists() and archivo.stat().st_size > 2_000_000:
+        archivo.replace(archivo.with_suffix(".old.txt"))
+    with archivo.open("a", encoding="utf-8") as f:
+        f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
+
+
 _COOKIES = threading.local()
 
 
@@ -3421,10 +3432,22 @@ def ronda(categoria, solo=None):
         con.close()
         print(SILENCIO)
         return
+    rec, t0 = f.get("log_recorrido"), time.time()
+    antes = set(tiendas) | set(navegador) | set(fuentes)
     tiendas, navegador, fuentes = (en_pausa_fuera(con, x) for x in (tiendas, navegador, fuentes))
+    en_pausa = antes - set(tiendas) - set(navegador) - set(fuentes)
+    con_pausa = set(tiendas) | set(navegador)
     tiendas, navegador = filtrar_por_demanda(con, cfg, tiendas), filtrar_por_demanda(con, cfg, navegador)
+    sin_demanda = con_pausa - set(tiendas) - set(navegador)
     turno = catalogo_turno(con, cfg, tiendas + navegador)
     todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
+    if rec:
+        recorrido(f"--- {categoria} ({solo or 'todo'}): {len(tiendas)} por descarga, {len(navegador)} con navegador, "
+                  f"{len(fuentes)} fuentes, {len(turno)} categorías de catálogo")
+        if en_pausa:
+            recorrido(f"    en pausa por fallos, no se leen: {', '.join(sorted(en_pausa))}")
+        if sin_demanda:
+            recorrido(f"    sin demanda en Chollometro, no se leen: {', '.join(sorted(sin_demanda))}")
     de_catalogo = set(turno)
     lecturas = [x for x in todas if (x[0], x[1]) not in de_catalogo]
     registrar_fallos(con, lecturas)
@@ -3444,9 +3467,13 @@ def ronda(categoria, solo=None):
     vigilar_sesiones(con, cfg, lecturas)
     for tienda, url_leida, productos, error in lecturas:
         estadistica(con, tienda, leidos=len(productos), errores=1 if error else 0)
+        modo = "navegador" if tienda in navegador else "descarga"
         if error:
             log(f"{categoria} {tienda}: {error}")
+            if rec:
+                recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> ERROR: {str(error)[:100]}")
             continue
+        n_cambios, n_previos = 0, len(previos)
         # Se siembra por página leída: una URL nueva de la misma tienda no inunda de avisos.
         pagina = f"{tienda}|{url_leida}"
         sembrada = con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
@@ -3456,6 +3483,7 @@ def ronda(categoria, solo=None):
                 estado = "vuelve"
             if not sembrada or not estado:
                 continue  # primera lectura de la tienda: solo memoriza
+            n_cambios += 1
             r = reglas_de(cfg, categoria, tienda)
             if p["precio"] > r["precio_max"] or excluido(p, tienda, cfg):
                 continue
@@ -3493,6 +3521,12 @@ def ronda(categoria, solo=None):
                             "socio": bool(cfg.get("reglas_tienda", {}).get(tienda, {}).get("socio"))})
         if not sembrada and productos:
             con.execute("INSERT OR IGNORE INTO sembradas VALUES (?)", (pagina,))
+        if rec:
+            con_antes = sum(1 for x in productos if x.get("precio_antes"))
+            nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
+            recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> {len(productos)} productos, "
+                      f"{con_antes} con precio anterior, {n_cambios} nuevos o más baratos, "
+                      f"{len(previos) - n_previos} pasan los filtros de tienda{nota}")
     limpiar(con)
     con.commit()
 
@@ -3633,6 +3667,12 @@ def ronda(categoria, solo=None):
     for p in enviar:
         estadistica(con, p["tienda"], enviados=1)
     con.commit()
+    if rec:
+        for p in enviar:
+            recorrido(f"    AVISO {p['tienda']}: {p['nombre'][:70]} a {p['precio']} € (Chollometro: {p.get('ch')})")
+        recorrido(f"=== {categoria}: {len(lecturas)} lecturas, {sum(len(x[2]) for x in lecturas)} productos, "
+                  f"{len(previos)} pasan filtros de tienda, {len(finales)} con contraste real, "
+                  f"{len(enviar)} avisos, {time.time() - t0:.0f} s")
 
     if modo_telegram:
         # Modo mixto: el código te manda la lista (0 tokens); tú pides "verifica N" a Hermes.

@@ -1580,6 +1580,28 @@ class ModoTelegram(Base):
         finally:
             v.leer_ficha = orig
 
+    def test_diario_del_recorrido(self):
+        # Zeta (16/11/2026): un log de los recorridos de las tiendas y de lo que se lee.
+        self.ronda()
+        texto = (v.DATOS / "recorrido.txt").read_text(encoding="utf-8")
+        self.assertIn("mediamarkt.es [descarga]", texto)
+        self.assertIn("1 productos, 1 con precio anterior, 0 nuevos o más baratos", texto)
+        self.assertIn("primera lectura de esta página: solo memoriza", texto)
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        texto = (v.DATOS / "recorrido.txt").read_text(encoding="utf-8")
+        self.assertIn("1 nuevos o más baratos, 1 pasan los filtros de tienda", texto)
+        self.assertIn("AVISO mediamarkt.es: Xiaomi Redmi Buds 6 Pro Negro a 34.99 €", texto)
+        self.assertRegex(texto, r"=== tecnologia: \d+ lecturas, \d+ productos, 1 pasan filtros de tienda, "
+                                r"1 con contraste real, 1 avisos, \d+ s")
+        # Se apaga por configuración.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["log_recorrido"] = False
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        (v.DATOS / "recorrido.txt").unlink()
+        self.ronda()
+        self.assertFalse((v.DATOS / "recorrido.txt").exists())
+
     def test_boton_para_verificar(self):
         # Un botón "Verificar #N" debajo de CADA aviso (Zeta: "si no, es un lío"). Lo atiende el plugin
         # de Hermes vigilante-botones, que entrega "verifica N" como si lo hubiera escrito Zeta.

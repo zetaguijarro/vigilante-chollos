@@ -6,6 +6,7 @@ Qué se crea aquí:
 
 - `vistos.db`: base SQLite (productos vistos, avisos enviados, veredictos, copia local de Chollometro, estadísticas).
 - `log.txt`: registro de rondas y errores.
+- `recorrido.txt`: diario del recorrido: una línea por tienda y ronda con lo que se lee y un resumen por categoría (`filtros_codigo.log_recorrido`).
 - `robots.json`: caché de 24 h de los robots.txt.
 - `urls_ofertas.json`: página de ofertas de cada tienda (la genera `descubrir`).
 - `urls_catalogo.json`: categorías de cada tienda (la genera `catalogo`).
