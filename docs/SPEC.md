@@ -96,7 +96,7 @@ Cuatro días y medio con el 11.11 en medio (infla AliExpress, Miravia y MediaMar
 | 1 | Xbox excluido (`excluir`) | Xbox es la marca con mejor tasa: 74% | Quitar la exclusión |
 | 2 | `solo_tiendas_con_demanda`: ~117 tiendas no se leen | 15/11: "no quiero que se queden tiendas paradas" | Leerlas cada 3 h y solo ofertas, en vez de nunca. Más peticiones, cero tokens |
 | 3 | Verificación a mano: botón "Verificar #N" | 15/11: "que no me pregunte si sacar una oferta" | Mantener el botón. Verificar solo lo que pase con prueba fuerte cuesta tokens de Haiku por cada candidato |
-| 4 | Etiquetas BUENA, MUY BUENA, OJO OJITO, EXCEPCIONAL | Con Instinct usaba SUBIENDO, DESTACADOS, EXCEPCIONAL | Dejar las del repo; es solo el nombre |
+| 4 | Etiquetas BUENA, MUY BUENA, OJO OJITO, EXCEPCIONAL | Con Instinct usaba SUBIENDO, DESTACADOS, EXCEPCIONAL | **Resuelto el 16/11:** Zeta eligió las de Instinct con el Modo Clásico; están en `SKILL.md` |
 | 5 | Caliente = 300° (`CM_HOT`) | Chollometro marca popular hacia 200° | Dejar 300° para "ya fue chollo" y medir resultados propios con 200° |
 | 6 | Viajes apagados | Viajes 41%; Skyscanner y BuscoUnChollo 59% | Dejarlos apagados: 11 avisos, todos dudosos, y el soporte exige fechas |
 | 7 | Moda sin mercado: 70% de descuento | En Chollometro, moda con 30 a 40% acierta igual que con 40 a 50% | Dejar el 70%: el dato es del descuento impreso, y aquí ya se vio que el "antes" está inflado |

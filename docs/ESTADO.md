@@ -270,3 +270,12 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - **Duplicado de la misma tienda: regla de Chollometro.** #163: DualSense en Amazon a 54,90 € con hilo de Amazon a 56,99 €. `ya_publicado_igual_o_mas_barato` con `misma:X` solo deja pasar si baja más de un 5 % y más de 1 €. Antes bastaba con ser más barato. Otra tienda no cambia.
   - **Agotado en la ficha:** `confirmar_en_ficha` descarta si la disponibilidad de la ficha dice que no hay stock. "Posiblemente agotado" (texto suelto) no descarta.
   - Sin resolver: Amazon enseña dos precios en la misma ficha (54,90 € y 9,47 €) y se lee con navegador, así que la confirmación en ficha por descarga no lo cubre.
+
+- **Filtros del Modo Clásico en la habilidad (16/11, noche; Zeta: "adapta lo que te he enviado con tus cambios").** Solo `hermes/skills/verifica-chollo/SKILL.md`.
+  - Etiquetas nuevas: SUBIENDO, DESTACADOS, EXCEPCIONAL (sustituyen a BUENA, MUY BUENA, OJO OJITO). Tabla de porcentajes por categoría; moda SUBIENDO al 30 %; EXCEPCIONAL = mínimo histórico verificado y más barato que el resto.
+  - Cierre obligatorio: enviado, descartado o sin validar, con el motivo en números. Sin "ventaja moderada" ni "no priorizada".
+  - Histórico con tres salidas: favorable sigue; precio habitual descarta siempre; sin histórico hace falta otra tienda confirmada más cara o `hot`.
+  - Habitual = 7 días o más antes de la bajada; bajada de 14 días o menos.
+  - Tallas de Chollometro (2 en ropa, 3 en calzado) y tallas en el título. Portes no descartan solos.
+  - **Sin tocar, y choca:** `descuento_real_min` 0.25 en `tiendas.json` corta en la ronda lo que esté entre el 20 % y el 25 %, así que el SUBIENDO del 20 % no llega a Hermes. Y moda sin precio de mercado sigue exigiendo un 70 % impreso. Decide Zeta.
+  - La habilidad en marcha es la copiada en la carpeta de Hermes: esta no se usa hasta pasar a producción.

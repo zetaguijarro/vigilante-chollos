@@ -42,6 +42,8 @@ Por cada candidato devuelve:
 
 Principio: una oferta es una hipótesis hasta que pasa todos los filtros. Precisión, no volumen. Mejor cero ofertas que una mala.
 
+**Cierre obligatorio.** Cada candidato acaba en "enviado", "descartado" o "sin validar". No existen "ventaja moderada", "no priorizada" ni "pendiente". Todo descarte lleva el motivo con números: qué umbral se exigía y qué valor tenía ("descartado: baja un 12 % sobre el habitual y se exige 20 %"). No haber terminado de comprobar no es un motivo: si se acaban las 2 búsquedas sin prueba, es "descartado: sin prueba de ventaja".
+
 No vuelvas a comprobar lo que ya trae.
 
 ## 2. Cómo verificar (máximo 2 búsquedas por candidato)
@@ -69,8 +71,14 @@ Histórico: si el dossier trae "historico", úsalo y NO busques (solo comprueba 
 - PS Store y Nintendo eShop: psdeals.
 - Juegos de PC (Steam, Epic, GOG, Fanatical, Humble, Instant Gaming...): IsThereAnyDeal.
 - Resto: PrecioReal. Si PrecioReal no tiene el producto, comparaloo.es. No consultes los dos si el primero ya responde.
-- Debe ser mínimo o casi. Si es el precio habitual de esa tienda, descarta: Chollometro rechaza esas ofertas.
 - Indica en "info" qué verificador usaste.
+
+Qué hacer con el histórico (tres salidas, sin zona gris):
+- **Hay histórico y es favorable:** el precio cumple el filtro de su categoría (apartado "Filtros"). Sigue.
+- **Hay histórico y marca precio habitual:** descarta siempre, aunque el descuento impreso sea enorme. Es lo que mira el soporte de Chollometro: 13 de 15 rechazos fueron por esto.
+- **No hay histórico:** no descarta por sí solo, pero entonces hace falta una de estas dos pruebas: (a) el mismo modelo exacto, nuevo y comprable ahora en otra tienda española, confirmado leyendo esa tienda, más caro en el porcentaje del filtro; o (b) `hot`: ya fue chollo caliente en Chollometro a este precio o más. Sin ninguna de las dos: "descartado: sin prueba de ventaja".
+- Precio habitual = el que se mantuvo al menos 7 días antes de la bajada. La bajada tiene que tener 14 días o menos; un precio que lleva más tiempo igual ya es el habitual. Si el histórico no enseña fechas, vale su veredicto (mínimo o buen precio) junto a un precio anterior visible.
+- Un resultado de búsqueda o un precio antiguo no es una alternativa comprable confirmada.
 
 Calidad (solo si no hay memoria):
 - Modelo descontinuado.
@@ -81,16 +89,17 @@ Calidad (solo si no hay memoria):
 
 Por tienda:
 - AliExpress: se admiten vendedores terceros, pero mira las ventas y las valoraciones de la TIENDA y del producto. Pocas ventas o mala nota: descarta. Indica vendedor, nota, ventas, plazo de envío a España e IVA.
-- Amazon: solo si lo vende Amazon o un vendedor con buenas valoraciones y ventas. Admite la etiqueta [BUENA].
+- Amazon: solo si lo vende Amazon o un vendedor con buenas valoraciones y ventas.
 - Steam, Epic, Android e iOS: descuento del 80 % o más y juegos populares. Indica la valoración y el número de reseñas.
-- Ropa y calzado: solo si quedan varias tallas en stock. Indica el rango de tallas.
+- Ropa y calzado: regla de Chollometro, al menos 2 tallas con stock en ropa y 3 en calzado al precio de oferta. Con menos, descarta. Las tallas disponibles van en el título.
+- Portes: se indican y se cuentan al comparar, pero no descartan por sí solos.
 - socio=1 (Costco, clubs): es precio para socios. Dilo claramente en "info" y explica qué hace falta para conseguirlo.
 - Viajes: solo si es un chollo de verdad (Europa 60–110 €, larga distancia 400–450 €). Título en MAYÚSCULAS con gancho, por ejemplo: "¡4 DÍAS en BUDAPEST! VUELOS + HOTEL + DESAYUNO por solo 85€". En la descripción: duración, vuelos directos o no, ciudades de salida, alojamiento y régimen (si es un hostal compartido, dilo) y fechas. Indica que es precio por persona y que el hotel es un ejemplo.
 
 Chollometro (sin buscar: lo mira el script en su copia local):
 - "?": la copia no estaba al día. Indícalo y que Zeta lo compruebe con buscar_chollometro.
-- "otra:X": vale si ahora es más barato; indícalo.
-- "misma:X": puede estar caducado. Avisa y que decida Zeta.
+- "otra:X": vale si ahora es más barato; indícalo. Otra tienda no es duplicado, salvo El Corte Inglés e Hipercor, que cuentan como una.
+- "misma:X": misma tienda. Con hilo de menos de un mes solo vale si baja más de un 5 % Y más de 1 € (el script ya lo filtra). Con más de un mes, vale si el precio es distinto o el anterior se agotó. Si el hilo agotado era de Zeta, avísale para que pida reactivarlo en vez de publicar otro.
 - hot: si ya fue chollo caliente, dilo en "info" (da confianza en el precio y en la demanda).
 
 Promoción:
@@ -103,15 +112,23 @@ Promoción:
 
 ## 3. Memoria
 Ejecuta `PY V recordar N buena "motivo corto"`, o `dudosa` en vez de `buena`. El motivo va sin comillas dentro.
-- `dudosa`: el producto o el chollo no valen (datos contradictorios, sin ficha, no llega al 25 % real...). Bloquea el modelo 30 días.
+- `dudosa`: el producto o el chollo no valen (datos contradictorios, sin ficha, no llega al filtro de SUBIENDO, precio habitual...). Bloquea el modelo 30 días.
 - `caducada`: el aviso era bueno (precio de entonces por debajo del mercado), pero al verificar el precio ya ha subido o se ha agotado. Así el modelo no se bloquea: el vigilante avisa otra vez si vuelve a ese precio o menos.
 
-## Escala (etiquetas honestas, nunca infladas)
-EXCEPCIONAL > OJO OJITO > MUY BUENA > BUENA.
-- BUENA: al menos un 25 % de descuento real sobre comparables exactos actuales o sobre un precio inicial publicado y verificado. Por debajo, no es oferta: descarta.
-- Subir de categoría solo con pruebas: mínimo histórico independiente, escasez real del producto en el mercado, gran diferencia frente a TODOS los comparables exactos, stock suficiente y condiciones limpias.
-- MUY BUENA: una de esas pruebas. OJO OJITO: varias, y con demanda (hot en Chollometro). EXCEPCIONAL: error de precio o mínimo histórico aplastante en un producto muy buscado.
-- Ante la duda, la categoría inferior.
+## Filtros (Modo Clásico, todas las categorías)
+Los porcentajes son "al menos", no "alrededor de", y no sustituyen la comparación: se miden contra el precio habitual del histórico o contra comparables exactos, nunca contra el PVP tachado, que es solo "referencia de la tienda".
+
+| Etiqueta | Tecnología, hogar y deporte | Consumibles | Moda y calzado |
+|---|---|---|---|
+| SUBIENDO | 20 % bajo el habitual; como mucho un 15 % sobre el mínimo | 20 % por unidad | 30 % de descuento y 15 % frente a otras tiendas |
+| DESTACADOS | 25 %; mejor precio con envío y como mucho un 8 % sobre el mínimo | 30 % por unidad o regalo útil | 50 % de descuento y 25 % frente a otras tiendas; 4 tallas en calzado o 3 en ropa |
+| EXCEPCIONAL | Mínimo histórico verificado con fuente independiente Y más barato que todas las demás tiendas | igual | igual |
+
+- Juegos digitales: 80 % de rebaja y popularidad o reseñas.
+- Por debajo de SUBIENDO no es oferta: "descartado", con el porcentaje que tiene y el que se exige.
+- Sin histórico, lo aceptado por otra tienda más cara o por `hot` es siempre SUBIENDO.
+- Subir de etiqueta solo con la prueba de su fila. Ante la duda, la inferior.
+- No hay veto por "no tiene gancho", ni modo morralla, ni reglas especiales por tienda.
 
 ## Redacción
 - Datos verificados separados de impresiones: el veredicto es opinión y se marca como tal ("Opinión: ...").
@@ -121,7 +138,7 @@ EXCEPCIONAL > OJO OJITO > MUY BUENA > BUENA.
 ## 4. Entrega (formato móvil, siempre)
 Si pasa, escribe el archivo C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8, con estas 5 claves:
 
-- "titulo": [EXCEPCIONAL], [OJO OJITO], [MUY BUENA] o [BUENA] + título sobrio: marca, modelo y especificación clave. Sin precio, sin emojis y sin tienda.
+- "titulo": [EXCEPCIONAL], [DESTACADOS] o [SUBIENDO] + título sobrio: marca, modelo y especificación clave. En ropa y calzado, las tallas disponibles. Sin precio, sin emojis y sin tienda.
 - "precios": "Precio inicial publicado: X €\nPrecio actual: Y €\nReferencia: Z € (fuente)\nEnvío: E €\nTotal: T € (orientativo, cesta no probada)"
 - "info": INFO ADICIONAL: comprobado (hora), stock y variantes, vendedor, comparables exactos con portes (y similares aparte), mínimo histórico (solo si es independiente, con fecha y fuente), cupón con condiciones, vigencia (o "no publicada"), devolución, estado en Chollometro, "PENDIENTE antes de publicar: buscar en Chollometro <enlaces>" y "Opinión: merece la pena / dudosa", con el porqué en una línea, comparado con la alternativa.
 - "enlace": el enlace u, solo.
@@ -136,5 +153,5 @@ Si la foto de la ficha es mejor que img, añade "foto": url.
 Después ejecuta `PY V entregar N`. El script manda los 5 mensajes: el primero con la foto, y los otros cuatro con los precios, la información, el enlace y la descripción.
 
 Tu respuesta final es solo: "#N enviado".
-Si no pasa: "#N descartado: motivo", en una línea, sin archivo.
+Si no pasa: "#N descartado: motivo con números", en una línea, sin archivo.
 Si no se puede validar algo esencial (ficha, precio, stock): "#N sin validar: motivo. Retenido", sin archivo. Nada de compras ni suscripciones.
