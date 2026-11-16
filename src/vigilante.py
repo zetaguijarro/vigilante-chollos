@@ -2667,6 +2667,8 @@ def confirmar_en_ficha(p, tolerancia=0.02):
         return False, f"la ficha es de otro producto ({titulo[:60]})"
     if ficha["precio_ahora"] > p["precio"] * (1 + tolerancia):
         return False, f"la ficha marca {ficha['precio_ahora']} € y el listado {p['precio']} €"
+    if ficha.get("stock") == "no":
+        return False, "la ficha lo da por agotado"
     return True, "producto y precio confirmados en la ficha"
 
 
@@ -3164,13 +3166,17 @@ def ahorro_suficiente(p, mejor, cat_cfg, f):
 
 
 def ya_publicado_igual_o_mas_barato(ch, precio):
-    """'otra:X' o 'misma:X' con X <= precio: alguien ya lo publicó igual o más barato en Chollometro."""
+    """'otra:X' o 'misma:X' con X <= precio: alguien ya lo publicó igual o más barato en Chollometro.
+    Misma tienda: regla de duplicados de Chollometro, solo vale si baja más de un 5 % y más de 1 €
+    (caso real, 16/11/2026: DualSense en Amazon a 54,90 € con hilo de Amazon a 56,99 €)."""
     if not isinstance(ch, str) or ":" not in ch:
         return False
     try:
         x = float(ch.split(":", 1)[1])
     except ValueError:
         return False
+    if ch.startswith("misma:"):
+        return not (precio < x * 0.95 and x - precio > 1)
     return x <= precio * 1.02
 
 
@@ -3604,6 +3610,11 @@ def ronda(categoria, solo=None):
                 p["ficha_ok"], motivo = confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02))
                 if p["ficha_ok"] is False:
                     log(f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
+                    continue
+                if p.get("error_precio") and p["ficha_ok"] is not True:
+                    # Un "error de precio" se salta el contraste de mercado: sin ficha que lo confirme
+                    # suele ser un fallo de lectura (HP EliteBook de PCBox, 16/11/2026).
+                    log(f"error de precio sin confirmar en ficha, no se envía: {p['tienda']} {p['nombre'][:60]}")
                     continue
             por_tienda[p["tienda"]] += 1
             enviar.append(p)

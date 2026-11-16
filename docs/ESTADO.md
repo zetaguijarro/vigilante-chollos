@@ -264,3 +264,9 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Si la ficha no se puede leer (antibot, error, sin precio), el aviso sale como antes: ni confirma ni desmiente. Las tiendas que solo se leen con navegador quedan así de momento.
   - Una petición más por candidato que se va a enviar, 0 tokens. Los gratis no se comprueban.
   - **Sin probar con tiendas reales.** Riesgo conocido: `analizar_ficha` toma el primer producto de la página; si es un "relacionado" con otro precio, descartaría uno bueno. Mirar el log los primeros días.
+
+- **Más descartes de Hermes convertidos en código (16/11, noche).** Casos #161 y #163.
+  - **Error de precio sin ficha confirmada no se envía.** #161: HP EliteBook de PCBox a 2.941,99 €, "posible error de precio", sin histórico ni referencia y con la ficha de un Samsung Galaxy Book6. El error de precio se salta el contraste de mercado, así que ahora exige que `confirmar_en_ficha` dé True; si la ficha no se lee, no sale.
+  - **Duplicado de la misma tienda: regla de Chollometro.** #163: DualSense en Amazon a 54,90 € con hilo de Amazon a 56,99 €. `ya_publicado_igual_o_mas_barato` con `misma:X` solo deja pasar si baja más de un 5 % y más de 1 €. Antes bastaba con ser más barato. Otra tienda no cambia.
+  - **Agotado en la ficha:** `confirmar_en_ficha` descarta si la disponibilidad de la ficha dice que no hay stock. "Posiblemente agotado" (texto suelto) no descarta.
+  - Sin resolver: Amazon enseña dos precios en la misma ficha (54,90 € y 9,47 €) y se lee con navegador, así que la confirmación en ficha por descarga no lo cubre.

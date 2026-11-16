@@ -845,6 +845,11 @@ class Rondas(Base):
             self.assertIs(v.confirmar_en_ficha(p)[0], True, "más barato en la ficha no es motivo de descarte")
             v.leer_ficha = lambda url, nav=None: {"antibot": True}
             self.assertIsNone(v.confirmar_en_ficha(p)[0], "sin poder leer, ni confirma ni desmiente")
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini", "precio_ahora": 36.0, "stock": "no"}
+            self.assertIs(v.confirmar_en_ficha(p)[0], False, "agotado en la ficha")
+            v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini", "precio_ahora": 36.0,
+                                                  "stock": "posiblemente agotado"}
+            self.assertIs(v.confirmar_en_ficha(p)[0], True, "'posiblemente' sale de un texto suelto: no descarta")
             v.leer_ficha = lambda url, nav=None: {"titulo": "Mochila adidas Backpack Mini"}
             self.assertIsNone(v.confirmar_en_ficha(p)[0], "ficha sin precio")
 
@@ -960,6 +965,11 @@ class Rondas(Base):
         self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:2", 1.99))
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:6", 0.99), "ahora más barato: sí")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("no", 5))
+        # Misma tienda: regla de Chollometro, más de un 5 % y más de 1 € de bajada.
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:56.99", 54.90), "DualSense: baja un 3,7 %")
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("misma:56.99", 49.90), "baja un 12 % y 7 €")
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:10", 9.20), "baja un 8 % pero menos de 1 €")
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:56.99", 54.90), "otra tienda: no es duplicado")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("?", 5))
         self.preparar()
         self.ronda()
@@ -1534,6 +1544,29 @@ class ModoTelegram(Base):
             self.red.tiendas["mediamarkt"][0]["p"] = 34.99
             self.ronda()
             self.assertEqual(len(self.enviados), 1, "sin poder leer la ficha, el aviso sale como antes")
+        finally:
+            v.leer_ficha = orig
+
+    def test_error_de_precio_necesita_ficha_confirmada(self):
+        # HP EliteBook de PCBox (16/11/2026): "posible error de precio" sin histórico ni referencia y con la
+        # ficha de otro producto. Un error de precio se salta el contraste: sin ficha confirmada no sale.
+        self.red.idealo = {}
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 100.0, "a": 149.0})
+        self.ronda()  # siembra los dos
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        orig = v.leer_ficha
+        try:
+            v.leer_ficha = lambda url, nav=None: {"antibot": True}
+            cfg["filtros_codigo"]["confirmar_ficha"] = True
+            v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+            self.red.tiendas["mediamarkt"][0]["p"] = 9.99  # baja a la cuarta parte: "error de precio"
+            self.ronda()
+            self.assertEqual(self.enviados, [], "con la ficha sin leer, el error de precio no se envía")
+            cfg["filtros_codigo"]["confirmar_ficha"] = False
+            v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+            self.red.tiendas["mediamarkt"][1]["p"] = 20.0
+            self.ronda()
+            self.assertEqual(len(self.enviados), 1, "sin la comprobación de ficha, el mismo caso sí sale")
         finally:
             v.leer_ficha = orig
 
