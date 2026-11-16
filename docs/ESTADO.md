@@ -292,3 +292,11 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Una línea por tienda: método, página leída, productos, con precio anterior, nuevos o más baratos y los que pasan los filtros de tienda; o el error.
   - `AVISO` por cada candidato enviado y un resumen: lecturas, productos, pasan filtros, con contraste real, avisos y segundos.
   - En vivo: `Get-Content data\recorrido.txt -Wait -Tail 40`.
+
+- **Primera ronda real con el diario (16/11, 23:47).** Lee bien: 639 productos en deporte, 268 en hogar, 206 en videojuegos. Lo que enseñó y lo corregido:
+  - **Páginas de ofertas mal elegidas.** Spartoo leía la de niños (431 productos), Fútbol Emotion `/ninos/oferta` y Women'secret `/nuestros-favoritos/teen`; en moda y deporte lo infantil se descarta, así que esas tiendas no podían dar nada. `descubrir` ya no elige páginas de un solo público (`RE_SEGMENTO`). **Pendiente de Zeta:** volver a pasar `descubrir deporte` y `descubrir moda` y revisar a mano. También a revisar: IKEA (una categoría de armarios), Dyson (solo cuidado del aire, 3 productos), DeLonghi (categoría, no ofertas).
+  - **El radar estaba muerto:** `precioreal.com` se quedaba fuera por "sin demanda" (no es una tienda de Chollometro). Añadido a `siempre_leer`.
+  - **AEG:** `aeg.com.es` sin www no responde (tiempo agotado). La clave pasa a `www.aeg.com.es`.
+  - **NBA Store:** 403 por descarga. Pasa a `navegador`.
+  - Nike da antibot por descarga y queda en pausa: nada que hacer. Ninja y Shark dan 0 productos en portada: pasarán solas a Chrome tras dos rondas vacías.
+  - Normal: 0 "nuevos o más baratos" a las 23:47; los precios no cambian de una ronda a la siguiente a esa hora.

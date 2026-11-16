@@ -3756,6 +3756,12 @@ RE_TEMPORAL = re.compile(r"black.?friday|cyber.?monday|black.?week|semanas?.?bla
                          r"rebajas.?de.?(?:enero|verano)|galaxy.?day|(?<!\d)20[2-3]\d(?!\d)", re.I)
 
 
+# Páginas de un solo público (niños, bebé, teen): tienen muchas rebajas y ganaban a la página general.
+# Caso real (16/11/2026): Spartoo leía "Ofertas ... ninos.php", Fútbol Emotion "/ninos/oferta" y Women'secret
+# "/nuestros-favoritos/teen"; en moda y deporte lo infantil se descarta, así que no salía nada.
+RE_SEGMENTO = re.compile(r"(?<![a-z])(?:ni[nñ][oa]s?|kids?|teens?|beb[eé]s?|baby|infantil(?:es)?|junior)(?![a-z])", re.I)
+
+
 def descubrir(categoria):
     cfg = cargar_config()
     tiendas, navegador = tiendas_de(cfg, categoria)
@@ -3777,15 +3783,15 @@ def descubrir(categoria):
             absoluta = urljoin(final, href).split("#")[0]
             if urlparse(absoluta).netloc.endswith(host) and "/blog" not in absoluta and "help." not in absoluta:
                 opciones.setdefault(absoluta, texto[:50])
-        orden = sorted(opciones, key=lambda u: (bool(RE_TEMPORAL.search(u)), not RE_OFERTA.search(urlparse(u).path),
-                                                len(u)))[:6]
+        orden = sorted(opciones, key=lambda u: (bool(RE_SEGMENTO.search(urlparse(u).path)), bool(RE_TEMPORAL.search(u)),
+                                                not RE_OFERTA.search(urlparse(u).path), len(u)))[:6]
         guardada = urls.get(tienda)
         if guardada and guardada not in orden:
             orden.insert(0, guardada)  # la que ya tenías también compite
             opciones.setdefault(guardada, "guardada")
         # Prueba cada candidata y se queda con la que más productos da (una sola vez, sin IA).
         print(f"\n{tienda}{' (navegador)' if lector is not _descargar3 else ''}:")
-        mejor, mejor_n = None, (False, 0)
+        mejor, mejor_n = None, (False, False, 0)
         for u in orden:
             try:
                 ps = extraer(*lector(u))
@@ -3797,7 +3803,8 @@ def descubrir(categoria):
                   + ("  (campaña)" if temporal else ""))
             # Primero, que sea permanente (las páginas de campaña caducan); después, los puntos:
             # un listado de ofertas tiene rebajas; una ficha, no.
-            puntos = (not temporal, n_antes * 3 + n)
+            # Antes que nada, que sea la página general y no la de un solo público (niños, teen...).
+            puntos = (not RE_SEGMENTO.search(urlparse(u).path), not temporal, n_antes * 3 + n)
             # Menos de MIN_LISTADO productos es una ficha suelta, no un listado de ofertas.
             if n >= MIN_LISTADO and puntos > mejor_n:
                 mejor, mejor_n = u, puntos
