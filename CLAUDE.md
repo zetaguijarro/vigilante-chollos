@@ -10,7 +10,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
 - Pruebas: `& $py -m unittest discover -s tests`. Son 145 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
-- git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Repositorio solo local, sin remoto.
+- git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
 ## Dos copias del código (importante)
 
