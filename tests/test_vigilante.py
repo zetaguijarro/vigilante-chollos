@@ -859,6 +859,14 @@ class Rondas(Base):
             self.assertIsNone(v.confirmar_en_ficha(p)[0])
         finally:
             v.leer_ficha = orig
+        # Solo por descarga: ni tiendas de navegador ni las de antibot conocido (no insistir contra su muro).
+        cfg_real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        self.assertTrue(v.ficha_se_intenta(cfg_real, "spartoo.es"))
+        self.assertTrue(v.ficha_se_intenta(cfg_real, "mediamarkt.es"))
+        self.assertFalse(v.ficha_se_intenta(cfg_real, "amazon.es"), "se lee con navegador")
+        self.assertFalse(v.ficha_se_intenta(cfg_real, "pccomponentes.com"), "antibot: ficha_no_leer")
+        # Idealo da 403 hasta en su robots.txt: sigue sin pedirse aunque robots.txt esté desactivado.
+        self.assertIn("idealo.es", cfg_real["filtros_codigo"]["robots_siempre"])
         real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
         self.assertIs(real["confirmar_ficha"], True)
         # Una sola vara con la habilidad: SUBIENDO empieza en el 20 % real (Modo Clásico, 16/11/2026).

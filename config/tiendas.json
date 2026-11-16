@@ -104,12 +104,16 @@
   "demanda_min_hot": 2,
   "confirmar_ficha": true,
   "ficha_tolerancia": 0.02,
-  "_nota_confirmar_ficha": "Antes de avisar, el código abre la ficha y descarta si es otro producto o si marca un precio más alto que el listado (más de ficha_tolerancia). Si la ficha no se puede leer, el aviso sale igual. Una petición más por candidato, 0 tokens.",
+  "ficha_no_leer": [
+   "pccomponentes.com"
+  ],
+  "_nota_confirmar_ficha": "Antes de avisar, el código abre la ficha y descarta si es otro producto o si marca un precio más alto que el listado (más de ficha_tolerancia). Si la ficha no se puede leer, el aviso sale igual. No se intenta en las tiendas de navegador ni en las de ficha_no_leer (antibot). Una petición más por candidato, 0 tokens.",
   "respetar_robots": false,
   "robots_siempre": [
-   "chollometro.com"
+   "chollometro.com",
+   "idealo.es"
   ],
-  "_nota_robots": "Decisión de Zeta (16/11/2026): no se mira robots.txt (uso personal, sin ánimo de lucro). robots_siempre: hosts donde sí se respeta; Chollometro se queda porque ahí está la cuenta PorLa_Jeta y la copia local ya cubre los duplicados. Antibot y captcha siguen sin saltarse.",
+  "_nota_robots": "Decisión de Zeta (16/11/2026): no se mira robots.txt (uso personal, sin ánimo de lucro). robots_siempre: hosts donde sí se respeta; Chollometro se queda porque ahí está la cuenta PorLa_Jeta y la copia local ya cubre los duplicados; Idealo, porque su robots.txt da 403 y sin esto se le pediría una búsqueda en cada ronda para recibir otro 403. Antibot y captcha siguen sin saltarse.",
   "siempre_leer": [
    "amazon.es",
    "mediamarkt.es",

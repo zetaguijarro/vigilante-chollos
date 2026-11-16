@@ -281,3 +281,8 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - La habilidad en marcha es la copiada en la carpeta de Hermes: esta no se usa hasta pasar a producción.
 
 - **Descuento real mínimo de la ronda: del 25 % al 20 % (16/11, autorizado por Zeta).** `descuento_real_min` 0.2, para que mande la misma vara que el SUBIENDO de la habilidad. Llegarán más avisos del tramo 20-25 %. Moda sin precio de mercado sigue en el 70 % impreso: no se ha tocado.
+
+- **Repaso antes de producción (16/11, noche): dos efectos secundarios corregidos.**
+  - **Idealo vuelve a no pedirse.** Con robots.txt desactivado, `idealo_red` pedía una búsqueda a Idealo en cada ronda para recibir un 403 (antes su robots.txt con 403 lo cortaba una vez al día). `idealo.es` añadido a `robots_siempre`.
+  - **La confirmación en ficha no insiste contra muros.** `ficha_se_intenta`: no se intenta en las tiendas de navegador ni en `ficha_no_leer` (PcComponentes). Sin esto se pedía la ficha de PcComponentes por descarga en cada candidato, contra su antibot. En esas tiendas el aviso sale como antes, también los errores de precio.
+  - Consecuencia que queda: con robots.txt desactivado, las tiendas cuyo robots.txt daba 401/403 se vuelven a pedir por descarga. Si responden 403, `registrar_fallos` las pausa (30 min a los 3 fallos, doblando hasta 24 h).

@@ -2650,6 +2650,16 @@ def validar_ficha(ficha, candidato):
     if e1 and e2 and e1.lstrip("0") != e2.lstrip("0"):
         return False, f"EAN distinto ({e2} en la ficha, {e1} en el listado)"
     return True, "ficha real con título y precio"
+def ficha_se_intenta(cfg, tienda):
+    """La confirmación en ficha va por descarga normal: no se intenta en las tiendas que solo se leen con
+    navegador ni en las de `ficha_no_leer` (PcComponentes: antibot; pedirle la ficha en cada candidato
+    sería insistir contra su muro). En esas el aviso sale como antes y lo mira Hermes."""
+    if any(tienda in c.get("navegador", []) for c in cfg.get("categorias", {}).values()):
+        return False
+    d = dominio_tienda(tienda)
+    return not any(d == h or d.endswith("." + h) for h in cfg.get("filtros_codigo", {}).get("ficha_no_leer", []))
+
+
 def confirmar_en_ficha(p, tolerancia=0.02):
     """Antes de avisar, el código abre la ficha del producto y comprueba que es ese producto y a ese
     precio. Caso real (16/11/2026): Hermes descartaba al verificar lo que el listado leía mal (mochila
@@ -3606,7 +3616,7 @@ def ronda(categoria, solo=None):
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
             continue  # 'vuelve' (oferta caducada que regresa) se reenvía a propósito
         if por_tienda[p["tienda"]] < max_tienda and len(enviar) < hueco:
-            if f.get("confirmar_ficha") and not p.get("gratis"):
+            if f.get("confirmar_ficha") and not p.get("gratis") and ficha_se_intenta(cfg, p["tienda"]):
                 p["ficha_ok"], motivo = confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02))
                 if p["ficha_ok"] is False:
                     log(f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
