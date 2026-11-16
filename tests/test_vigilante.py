@@ -2355,6 +2355,32 @@ class Catalogo(Base):
                          ["https://www.tienda.es/es/zapatillas-hombre", "https://www.tienda.es/es/ropa-mujer/",
                           "https://www.tienda.es/es/electrodomesticos"])
 
+    def test_catalogo_sin_repetidas_y_con_subcategorias(self):
+        # MediaMarkt (17/11/2026): la portada daba 12, con "electrodomésticos-553" dos veces (con tildes y
+        # codificada), y faltaban auriculares, consolas o tablets, que cuelgan de los índices.
+        portada = ('<a href="/es/category/electrodomésticos-553.html">Electrodomésticos</a>'
+                   '<a href="/es/category/electrodom%C3%A9sticos-553.html">Electrodomésticos</a>'
+                   '<a href="/es/category/informática-9.html">Informática</a>')
+        self.assertEqual(len(v.categorias_de_portada(portada, "https://www.mediamarkt.es/")), 2, "sin la repetida")
+        indice = ('<a href="/es/category/portátiles-153.html">Portátiles</a><a href="/es/category/tablets-300.html">Tablets</a>'
+                  '<a href="/es/category/informática-9.html">Informática</a>')
+
+        def red(url, timeout=20, reintentos=1):
+            return (indice if "informática-9" in v.unquote(url) else portada if url.endswith(".es/") else "<p></p>"), url
+        v.descargar = red
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["catalogo_por_tienda"] = {"mediamarkt.es": {"niveles": 2, "max": 40}}
+        cfg["filtros_codigo"]["respetar_robots"] = False  # sin red real no hay robots.txt que consultar
+        v._ROBOTS_CFG[:] = [None, None]
+        v.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            v.catalogo("mediamarkt.es")
+        rutas = [v.unquote(v.urlparse(u).path) for u in v.urls_catalogo()["mediamarkt.es"]]
+        self.assertEqual(rutas, ["/es/category/electrodomésticos-553.html", "/es/category/informática-9.html",
+                                 "/es/category/portátiles-153.html", "/es/category/tablets-300.html"])
+        real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["catalogo_por_tienda"]["mediamarkt.es"]
+        self.assertEqual((real["niveles"], real["max"]), (2, 40))
+
     def test_lee_una_categoria_por_turno(self):
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
         red, catalogo = self.red, [{"n": "JBL Tune 520BT", "m": "JBL", "p": 30, "a": 60}]
