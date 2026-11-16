@@ -20,6 +20,8 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 ## Pasar a producción (solo con autorización de Zeta)
 
+Lo hace `scripts\pasar_a_produccion.ps1`, que tiene que lanzar Zeta: el sistema de permisos bloquea a Claude desactivar o cambiar las tareas programadas (16/11/2026). La habilidad del proyecto ya tiene las rutas nuevas. Pasos que hace el script:
+
 1. Copiar `vigilante_data/` de Hermes a `data/` (o fijar `VIGILANTE_DATOS` a esa carpeta).
 2. Cambiar las dos tareas programadas para que lancen `tareas\vig_rapidas.py` y `tareas\vig_navegador.py` de este proyecto.
 3. Cambiar en `hermes/skills/verifica-chollo/SKILL.md` la ruta de `vigilante.py` y copiarla a `C:\Users\Zeus\AppData\Local\hermes\skills\verifica-chollo\`.
