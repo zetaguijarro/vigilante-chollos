@@ -1,0 +1,2451 @@
+"""Pruebas del vigilante. Ejecutar desde la raíz:  python -m unittest discover -s tests -v"""
+import sys
+from pathlib import Path
+
+AQUI = Path(__file__).resolve().parent
+RAIZ = AQUI.parent
+CONF = RAIZ / "config"
+sys.path.insert(0, str(RAIZ / "src"))
+
+import gzip
+import io
+import os
+import json
+import shutil
+import sqlite3
+import tempfile
+import threading
+import re
+import time
+import zlib
+import unittest
+from collections import Counter
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import vigilante as v
+
+
+def escape_attr(s):
+    return s.replace("&", "&amp;").replace('"', "&quot;")
+
+
+def tienda_html(productos):
+    """Página de tienda con JSON-LD (tipo MediaMarkt) + __NEXT_DATA__ (tipo PcComponentes) + ruido."""
+    ld = [{"@type": "Product", "name": p["n"], "brand": {"name": p.get("m", "")},
+           "gtin13": p.get("e", ""), "url": p.get("u", "/p/" + p["n"].replace(" ", "-")),
+           "image": "/img.jpg",
+           "offers": {"price": str(p["p"]).replace(".", ","),
+                      "priceSpecification": {"priceType": "https://schema.org/StrikethroughPrice",
+                                             "price": str(p["a"]).replace(".", ",")} if p.get("a") else None}}
+          for p in productos if p.get("ld", True)]
+    nxt = [{"title": p["n"], "price": {"value": p["p"], "listPrice": p.get("a")},
+            "pdpUrl": p.get("u", "/p/" + p["n"].replace(" ", "-"))}
+           for p in productos if not p.get("ld", True)]
+    ruido = [{"name": "Peso", "value": "2,5 kg"}, {"name": "Valoración", "ratingValue": 4.5}]
+    return (f'<script type="application/ld+json">{json.dumps({"@type": "ItemList", "itemListElement": ld})}</script>'
+            f'<script id="__NEXT_DATA__" type="application/json">{json.dumps({"p": {"items": nxt, "f": ruido}})}</script>'
+            '<script>var x = 1;</script>')
+
+
+def hilo(titulo, tienda="Amazon", precio=10.0, temp=50, dias=0, caducado=False):
+    """Un post de Chollometro como viene en sus páginas."""
+    return {"threadId": zlib.crc32(f"{titulo}|{tienda}|{precio}".encode()), "title": titulo, "price": precio,
+            "temperature": temp, "publishedAt": int(time.time() - dias * 86400), "isExpired": caducado,
+            "merchant": {"merchantName": tienda}, "linkHost": f"www.{tienda.lower().replace(' ', '')}.es"}
+
+
+def cm_html(hilos):
+    return '<script type="application/json">' + json.dumps({"threads": hilos}) + "</script>"
+
+
+RELLENO_CM = hilo("Cafetera Nespresso Vertuo Pop", "Amazon", 59.0)  # /nuevos nunca está vacío
+
+
+class Red:
+    """Simula Internet: tiendas, Idealo y Chollometro. Cuenta las llamadas."""
+
+    def __init__(self):
+        self.tiendas = {}      # dominio -> lista de productos
+        self.idealo = {}       # texto que aparece en la consulta -> precio
+        self.chollometro = []  # posts que salen en /nuevos y en la portada (ver hilo())
+        self.caidas = set()
+        self.llamadas = {"tienda": 0, "idealo": 0, "chollometro": 0}
+        self.pedidas = []      # URLs de tienda pedidas, en orden
+
+    def __call__(self, url, timeout=20):
+        if "idealo" in url:
+            self.llamadas["idealo"] += 1
+            for clave, precio in self.idealo.items():
+                if clave in url:
+                    return (f'<script type="application/ld+json">{{"@type":"Product","name":"{clave}",'
+                            f'"offers":{{"lowPrice":"{precio}"}}}}</script>'), url
+            return "<html>sin resultados</html>", url
+        if "chollometro" in url:
+            self.llamadas["chollometro"] += 1
+            if "/search" in url:
+                raise AssertionError("Chollometro prohíbe /search en su robots.txt")
+            if "page=" in url and "page=1" not in url:
+                return "<html></html>", url
+            if url.rstrip("/").endswith(("/nuevos", "chollometro.com")):
+                return cm_html([RELLENO_CM] + self.chollometro), url
+            return "<html></html>", url
+        self.llamadas["tienda"] += 1
+        self.pedidas.append(url)
+        for dom, prods in self.tiendas.items():
+            if dom in url:
+                if dom in self.caidas:
+                    raise OSError("HTTP 403 bloqueado")
+                return tienda_html(prods), url
+        raise OSError("dominio desconocido")
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        shutil.copy(CONF / "marcas.txt", self.tmp / "marcas.txt")
+        cfg = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        cfg["categorias"]["tecnologia"]["tiendas"] = ["mediamarkt.es", "pccomponentes.com"]
+        for c in cfg["categorias"].values():  # las rondas simuladas no abren el navegador real
+            c["navegador"] = []
+        cfg["entrega"] = {"modo": "hermes"}  # estas pruebas miran lo que recibe la IA
+        # Muchas pruebas usan productos sin precio en Idealo y miran otras reglas (cupos, silencio...):
+        # para ellas vale la regla antigua del descuento mínimo. La nueva tiene su propia prueba.
+        cfg["filtros_codigo"]["exigir_precio_mercado"] = False
+        cfg["filtros_codigo"]["max_por_tienda_y_ronda"] = 1000  # las pruebas de cupos usan una sola tienda
+        # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
+        cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
+                                      "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
+                                      "navegador_si_vacia": False})  # tienen su propia prueba
+        for c in cfg["categorias"].values():
+            c.pop("historial_propio_dias", None)
+        (self.tmp / "tiendas.json").write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        self._orig = {k: getattr(v, k) for k in ("DATOS", "CONFIG", "MARCAS", "URLS", "DB", "LOG",
+                                                 "descargar", "en_horario", "CM_REFRESCO_MIN")}
+        v.CM_REFRESCO_MIN = 0  # las rondas simuladas van seguidas: la copia de Chollometro se pone al día siempre
+        v.DATOS = self.tmp / "vigilante_data"
+        v.CONFIG, v.MARCAS = self.tmp / "tiendas.json", self.tmp / "marcas.txt"
+        v.URLS, v.DB, v.LOG = v.DATOS / "urls.json", v.DATOS / "vistos.db", v.DATOS / "log.txt"
+        self.red = Red()
+        v.descargar = self.red
+        v.en_horario = lambda cfg: True
+        self._sleep, v.time.sleep = v.time.sleep, lambda s: None
+
+    def tearDown(self):
+        for k, val in self._orig.items():
+            setattr(v, k, val)
+        v.time.sleep = self._sleep
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def ronda(self, cat="tecnologia"):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            v.ronda(cat)
+        salida = buf.getvalue().strip().splitlines()
+        self.assertEqual(len(salida), 1, "debe imprimir exactamente una línea")
+        datos = json.loads(salida[0])
+        return [] if datos == {"wakeAgent": False} else datos["c"]
+
+
+# ----------------------------------------------------------- piezas sueltas
+
+class Piezas(unittest.TestCase):
+    def test_numeros(self):
+        casos = {"1.299,00 €": 1299.0, "19.99": 19.99, "1,299.50": 1299.5, "39,99": 39.99,
+                 "1.299": 1299.0, 25: 25.0, "": None, "Negro": None, None: None, True: None}
+        for entrada, esperado in casos.items():
+            self.assertEqual(v.a_numero(entrada), esperado, entrada)
+
+    def test_extraccion_y_ruido(self):
+        html = tienda_html([
+            {"n": "Xiaomi Redmi Buds 6 Pro", "m": "Xiaomi", "e": "6941812790000", "p": 39.99, "a": 79.99},
+            {"n": "Cosori Freidora 5,5 L", "p": 59.99, "a": 99.99, "ld": False},
+        ]) + '<script>window.__STATE__ = {"x":[{"name":"Philips Afeitadora","salePrice":"29,99","oldPrice":"49,99"}]};</script>'
+        ps = {p["nombre"]: p for p in v.extraer(html, "https://www.tienda.es/ofertas")}
+        self.assertEqual(set(ps), {"Xiaomi Redmi Buds 6 Pro", "Cosori Freidora 5,5 L", "Philips Afeitadora"})
+        b = ps["Xiaomi Redmi Buds 6 Pro"]
+        self.assertEqual((b["precio"], b["precio_antes"], b["ean"], b["marca"]), (39.99, 79.99, "6941812790000", "Xiaomi"))
+        self.assertEqual(b["url"], "https://www.tienda.es/p/Xiaomi-Redmi-Buds-6-Pro")
+        self.assertEqual(ps["Cosori Freidora 5,5 L"]["precio_antes"], 99.99)
+        self.assertEqual(ps["Philips Afeitadora"]["precio_antes"], 49.99)
+
+    def test_microdatos_html(self):
+        html = """<div itemscope itemtype="https://schema.org/Product">
+          <h2 itemprop="name">JBL Flip 6</h2><meta itemprop="gtin13" content="6925281993145">
+          <img itemprop="image" src="/f6.jpg"><a itemprop="url" href="/jbl-flip-6">ver</a>
+          <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+            <span itemprop="price" content="79.99">79,99 €</span></div></div>
+          <div itemscope itemtype="https://schema.org/Product"><span itemprop="name">Sony WH-CH520</span>
+          <span itemprop="offers" itemscope><span itemprop="price">39,99 €</span></span></div>"""
+        ps = {p["nombre"]: p for p in v.extraer(html, "https://t.es/")}
+        self.assertEqual(ps["JBL Flip 6"]["precio"], 79.99)
+        self.assertEqual(ps["JBL Flip 6"]["ean"], "6925281993145")
+        self.assertEqual(ps["JBL Flip 6"]["url"], "https://t.es/jbl-flip-6")
+        self.assertEqual(ps["Sony WH-CH520"]["precio"], 39.99)
+
+    def test_claves_snake_y_anidadas(self):
+        html = ('<script type="application/json">' + json.dumps({"items": [
+            {"product_name": "Philips Airfryer", "final_price": "59,99", "regular_price": "99,99"},
+            {"title": "Braun Series 7", "price": {"current": 89.0, "original": 149.0}},
+            {"name": "Xiaomi 17T", "price": 549.99, "market_price": 649.99}]}) + "</script>")
+        ps = {p["nombre"]: (p["precio"], p["precio_antes"]) for p in v.extraer(html, "https://t.es/")}
+        self.assertEqual(ps["Philips Airfryer"], (59.99, 99.99))
+        self.assertEqual(ps["Braun Series 7"], (89.0, 149.0))
+        self.assertEqual(ps["Xiaomi 17T"], (549.99, 649.99))
+
+    def test_aggregateoffer_no_es_precio_tachado(self):
+        html = ('<script type="application/ld+json">' + json.dumps(
+            {"@type": "Product", "name": "ELECTRO CHOLLOS",
+             "offers": {"@type": "AggregateOffer", "lowPrice": 29, "highPrice": 1049.95}}) + "</script>")
+        self.assertIsNone(v.extraer(html, "https://t.es/")[0]["precio_antes"])
+
+    def test_precio_tachado_en_html(self):
+        datos = {"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": "Samsung Galaxy S26", "url": "/es/product/_samsung-galaxy-s26-123",
+             "offers": {"price": 799}},
+            {"@type": "Product", "name": "Xiaomi Redmi Note 15", "url": "/es/product/_xiaomi-note-15-456",
+             "offers": {"price": 199}}]}
+        html = ('<script type="application/ld+json">' + json.dumps(datos) + "</script>"
+                '<div><a href="/es/product/_samsung-galaxy-s26-123">Samsung Galaxy S26</a>'
+                '<span class="sc-strike-through">999,00 €</span><span>799,– €</span></div>'
+                '<div><a href="/es/product/_xiaomi-note-15-456">Xiaomi Redmi Note 15</a>'
+                '<span>199 €</span><del>1.990 €</del></div>')  # 10x: precio absurdo, se ignora
+        ps = {p["nombre"]: p["precio_antes"] for p in v.extraer(html, "https://www.mediamarkt.es/")}
+        self.assertEqual(ps["Samsung Galaxy S26"], 999.0)
+        self.assertIsNone(ps["Xiaomi Redmi Note 15"])
+
+    def test_precio_promocion_manda_sobre_price(self):
+        # Samsung: "price" es el precio normal y "promotionPrice" el de oferta.
+        html = ('<script type="application/json">' + json.dumps({"items": [
+            {"displayName": "Galaxy S26 Ultra", "price": "1549.01", "promotionPrice": "1249",
+             "listPrice": "1549.01"},
+            {"displayName": "Galaxy Buds4", "price": "199", "promotionPrice": "149"},
+            {"displayName": "Galaxy Watch8", "price": "349", "promotionPrice": None}]}) + "</script>")
+        ps = {p["nombre"]: (p["precio"], p["precio_antes"]) for p in v.extraer(html, "https://t.es/")}
+        self.assertEqual(ps["Galaxy S26 Ultra"], (1249.0, 1549.01))
+        self.assertEqual(ps["Galaxy Buds4"], (149.0, 199.0))
+        self.assertEqual(ps["Galaxy Watch8"], (349.0, None))
+
+    def test_precio_tachado_data_test_y_tarjeta_larga(self):
+        # MediaMarkt: el tachado va en data-test (no en class) y lejos del enlace del producto.
+        datos = {"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": "Galaxy S26 Ultra", "url": "/es/product/_s26-ultra-1",
+             "offers": {"price": 1299}},
+            {"@type": "Product", "name": "Galaxy S26", "url": "/es/product/_s26-2",
+             "offers": {"price": 899}}]}
+        relleno = "<div><span>Disponible online</span></div>" * 150  # ~6000 caracteres
+        tarjeta = lambda u, tach, precio: (
+            f'<a href="{u}"><h3>x</h3></a>{relleno}'
+            + (f'<div data-test="mms-strike-price-type-xop"><span>{tach},&ndash;&nbsp;&euro;</span>'
+               f'<span>{tach},00€</span></div>' if tach else "")
+            + f'<div><span>{precio},00€</span></div>')
+        html = ('<script type="application/ld+json">' + json.dumps(datos) + "</script>"
+                + tarjeta("/es/product/_s26-ultra-1", 1749, 1299) + tarjeta("/es/product/_s26-2", None, 899))
+        ps = {p["nombre"]: p["precio_antes"] for p in v.extraer(html, "https://www.mediamarkt.es/")}
+        self.assertEqual(ps["Galaxy S26 Ultra"], 1749.0)
+        self.assertIsNone(ps["Galaxy S26"], "no toma el tachado de la tarjeta anterior")
+
+    def test_atributos_data(self):
+        # Coolmod: datos en atributos data-item* del enlace y precio anterior tachado en la tarjeta.
+        html = """<div class="card"><a href="/nanocable-cat6/" data-itemname="Nanocable Latiguillo Cat 6 "
+             data-itemid="144792" data-itemprice="1.95" data-itempricetaxexc="4.92" data-itembrand="Nanocable">
+             <img src="/n.jpg"></a><p><a href="/nanocable-cat6/">Nanocable Latiguillo Cat 6</a></p>
+             <span class=" line-through text-sm price-old-product">5,95&nbsp;&euro;</span>
+             <div data-price-type="sale"><span>1</span><sup>95 &euro;</sup></div></div>
+           <div class="card"><a href="/logitech-g502/" data-itemname="Logitech G502 X" data-itemprice="59.90"
+             data-itembrand="Logitech"></a><span>59,90 &euro;</span></div>
+           <button data-product='{"name": "Kingston NV3 1TB", "price": "54.90", "regular_price": "79.90"}'>x</button>"""
+        ps = {p["nombre"]: p for p in v.extraer(html, "https://www.coolmod.com/outlet/")}
+        self.assertEqual(set(ps), {"Nanocable Latiguillo Cat 6", "Logitech G502 X", "Kingston NV3 1TB"})
+        n = ps["Nanocable Latiguillo Cat 6"]
+        self.assertEqual((n["precio"], n["precio_antes"], n["marca"], n["url"]),
+                         (1.95, 5.95, "Nanocable", "https://www.coolmod.com/nanocable-cat6/"))
+        self.assertIsNone(ps["Logitech G502 X"]["precio_antes"])
+        self.assertEqual(ps["Kingston NV3 1TB"]["precio_antes"], 79.9)
+
+    def test_url_desde_la_tarjeta(self):
+        # ElectroDepot: el JSON de la lista no trae URL; está en el <a> de la tarjeta.
+        capa = json.dumps([{"item": {"name": 'TV Valberg 55" 4K', "price": "249.96"}},
+                           {"item": {"name": "Microondas Valberg  20L", "price": "49.96"}},
+                           {"item": {"name": "Plancha sin tarjeta", "price": "19.96"}}])
+        html = (f'<div data-datalayerproducts="{capa.replace("&", "&amp;").replace(chr(34), "&quot;")}"></div>'
+                '<a href="/tv-valberg-55.html" class="item"><img title="TV Valberg 55&quot; 4K">'
+                '<h2>TV Valberg 55&quot; 4K</h2></a>'
+                '<a href="https://www.electrodepot.es/microondas-20l.html"><div><h2>Microondas Valberg  20L</h2>'
+                '</div></a><a href="/otra.html">otra</a></div><h2>Plancha sin tarjeta</h2>')
+        ps = {p["nombre"]: p["url"] for p in v.extraer(html, "https://www.electrodepot.es/electrochollos.html")}
+        self.assertEqual(ps['TV Valberg 55" 4K'], "https://www.electrodepot.es/tv-valberg-55.html")
+        self.assertEqual(ps["Microondas Valberg 20L"], "https://www.electrodepot.es/microondas-20l.html")
+        self.assertIsNone(ps["Plancha sin tarjeta"], "fuera de un enlace: no se inventa la URL")
+
+    def test_tarjetas_visibles_sin_datos(self):
+        # Euronics: sin JSON-LD ni microdatos; solo tarjetas con enlace, nombre y precios.
+        tarjeta = lambda slug, nombre, antes, ahora, extra="": (
+            f'<li><article><a href="/{slug}.html"><img alt="{nombre}" src="/f.jpg"></a>'
+            f'<span class="hm26-card__brand">Marca</span><h3><a title="acceder a ficha producto" '
+            f'href="/{slug}.html">{nombre}</a></h3>{extra}<div class="bloquePrecio">'
+            + (f'<span class="hm26-card__old precioDescuento">{antes} &euro;</span>' if antes else "")
+            + f'<span class="hm26-card__now">{ahora} &euro;</span></div>'
+            f'<a href="/{slug}.html">Ver producto</a></article></li>')
+        html = ('<nav><a href="/promociones.html">Promociones</a><a href="/tv-y-video/">TV</a></nav>'
+                '<p>Envío gratis desde 50 €</p>'
+                + tarjeta("samsung-rb38c607as9-ef-frigorificos-combi", "Frigorífico combi Samsung RB38C607AS9/EF",
+                          "999", "899")
+                + tarjeta("lg-oled55c5-televisor-oled-55", "TV LG OLED55C5 55 pulgadas", "1.499", "1.199",
+                          '<p>Ahorra 300 € | Desde 49,96 €/mes</p>')
+                + tarjeta("bosch-serie-4-lavavajillas-sms4", "Lavavajillas Bosch Serie 4", None, "449"))
+        ps = {p["nombre"]: p for p in v.extraer(html, "https://www.euronics.es/promocion-black-friday.html")}
+        self.assertEqual(set(ps), {"Frigorífico combi Samsung RB38C607AS9/EF", "TV LG OLED55C5 55 pulgadas",
+                                   "Lavavajillas Bosch Serie 4"})
+        f = ps["Frigorífico combi Samsung RB38C607AS9/EF"]
+        self.assertEqual((f["precio"], f["precio_antes"], f["url"]),
+                         (899.0, 999.0, "https://www.euronics.es/samsung-rb38c607as9-ef-frigorificos-combi.html"))
+        self.assertEqual((ps["TV LG OLED55C5 55 pulgadas"]["precio"], ps["TV LG OLED55C5 55 pulgadas"]["precio_antes"]),
+                         (1199.0, 1499.0), "ni el ahorro ni la cuota mensual son el precio")
+        self.assertEqual((ps["Lavavajillas Bosch Serie 4"]["precio"], ps["Lavavajillas Bosch Serie 4"]["precio_antes"]),
+                         (449.0, None))
+
+    def test_tarjetas_precio_partido_y_badges(self):
+        # Back Market parte el precio en etiquetas; HP pone '50€ extra de dto.' antes del precio.
+        html = ('<a href="/es-es/p/playstation-5/7b0d7cf2-735b">PlayStation 5 Muy bueno 825 GB</a>'
+                '<span>Precio reacondicionado:</span><span>684</span><span>,23</span><span>€</span>'
+                '<span>40 € descontados al finalizar la compra</span>'
+                '<a href="/es-es/shop/products/laptops/hp-omnibook-3-14-hu0011nsx">x</a><span>50€ extra de dto.</span>'
+                '<h3><a href="/es-es/shop/products/laptops/hp-omnibook-3-14-hu0011nsx">Portátil HP OmniBook 3 14</a></h3>'
+                '<span>Desde 25,00 € al mes</span><span class="price">549,00 €</span>'
+                '<a href="/es-es/p/iphone-15-128gb/aa11bb22-ccdd">iPhone 15 128 GB Negro</a><span>499 €</span>')
+        ps = {p["nombre"]: p["precio"] for p in v.extraer(html, "https://www.backmarket.es/es-es/e/good-deals")}
+        self.assertEqual(ps["PlayStation 5 Muy bueno 825 GB"], 684.23)
+        self.assertEqual(ps["Portátil HP OmniBook 3 14"], 549.0)
+
+    def test_tarjetas_no_pisan_datos_estructurados(self):
+        # Con 3 o más productos en JSON-LD no se usan las tarjetas (las tiendas que ya funcionan no cambian).
+        html = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0} for i in range(3)]) + (
+            '<a href="/otro-producto-raro-123456.html">Producto que solo sale en la tarjeta</a><span>5 &euro;</span>')
+        self.assertEqual(len(v.extraer(html, "https://t.es/")), 3)
+
+    def test_json_en_atributo_cualquiera(self):
+        # Dell: los productos van en JSON dentro de un atributo del componente, con dellPrice y pdUrl.
+        datos = {"pv15250_so_12": {"productId": "pv15250_so_12", "title": "Portátil Dell Pro 15 Essential",
+                                   "marketPrice": "1.749,66 €", "dellPrice": "1.599,62 €",
+                                   "totalSavings": "150,04 €", "dellPriceWithoutTax": "1.322,01 €",
+                                   "pdUrl": "https://www.dell.com/es-es/shop/laptop-computers/spd/pv15250_so_12"}}
+        html = f'<div data-x="1" product-stack="{escape_attr(json.dumps(datos, ensure_ascii=False))}"></div>'
+        p = v.extraer(html, "https://www.dell.com/es-es/shop/deals/dc/laptop-deals")[0]
+        self.assertEqual((p["nombre"], p["precio"], p["precio_antes"], p["url"]),
+                         ("Portátil Dell Pro 15 Essential", 1599.62, 1749.66,
+                          "https://www.dell.com/es-es/shop/laptop-computers/spd/pv15250_so_12"))
+
+    def test_huawei_compareprice_y_gbomcode(self):
+        api = {"data": {"prdDisplayInfos": [{"sbomList": [
+            {"name": "HUAWEI FreeBuds Neo Blanco Hielo", "price": 99.0, "comparePrice": 129.0,
+             "gbomCode": "6942711308331"},
+            {"name": "HUAWEI FreeClip 2 Negro", "price": 199.0, "comparePrice": 199.0, "gbomCode": "6942711300000"}]}]}}
+        ps = {p["nombre"]: p for p in v.extraer("<html></html>", "https://consumer.huawei.com/es/offer/", [api])}
+        self.assertEqual((ps["HUAWEI FreeBuds Neo Blanco Hielo"]["precio_antes"], ps["HUAWEI FreeBuds Neo Blanco Hielo"]["ean"]),
+                         (129.0, "6942711308331"))
+        self.assertIsNone(ps["HUAWEI FreeClip 2 Negro"]["precio_antes"], "comparePrice igual: sin rebaja")
+
+    def test_tienda_via_comparador(self):
+        # PcComponentes leída por PCComTracker: solo filas con enlace directo a PcComponentes,
+        # con su URL y su precio (no los del comparador ni los de Amazon/MediaMarkt).
+        ld = {"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": "Logitech G733 Lightspeed Lilas", "url": "https://pccomtracker.com/producto/g733-1",
+             "offers": {"price": 99.0, "priceSpecification": {"priceType": "https://schema.org/StrikethroughPrice",
+                                                              "price": 149.0}}}]}
+        fila = lambda n, tienda, dom, precio: (
+            f'<a href="/producto/{n.lower().replace(" ", "-")}-1">{n}</a>'
+            f'<a href="https://{dom}/{n.lower().replace(" ", "-")}" target="_blank" '
+            f'aria-label="Ver {n} en {tienda} por {precio} €" class="x">{precio} €</a>')
+        html = ('<script type="application/ld+json">' + json.dumps(ld) + "</script>"
+                + fila("Logitech G733 Lightspeed Lilas", "PcComponentes", "www.pccomponentes.com", "122,98")
+                + fila("Logitech G733 Lightspeed Lilas", "Amazon", "www.amazon.es", "119,00")
+                + fila("Oral-B Vitality Pro Morado", "PcComponentes", "www.pccomponentes.com", "22,99")
+                + '<a href="/goto/amazon?url=x" aria-label="Ver algo en Amazon por 5 €">x</a>')
+        base = "https://pccomtracker.com/black-friday"
+        ps = {p["nombre"]: p for p in v.via_comparador(html, v.extraer(html, base), "pccomponentes.com", base)}
+        self.assertEqual(set(ps), {"Logitech G733 Lightspeed Lilas", "Oral-B Vitality Pro Morado"})
+        g = ps["Logitech G733 Lightspeed Lilas"]
+        self.assertEqual((g["precio"], g["precio_antes"], g["url"]),
+                         (122.98, 149.0, "https://www.pccomponentes.com/logitech-g733-lightspeed-lilas"))
+        self.assertEqual(g["historico_url"], "https://pccomtracker.com/producto/logitech-g733-lightspeed-lilas-1",
+                         "la ficha del tracker de la misma fila, para leer el histórico")
+        ficha = ('<p>Su precio habitual es de 1303.78€, con un mínimo en el último año de 1069.00€ '
+                 '(alcanzado el 4 de noviembre de 2026)</p>')
+        orig, v.descargar = v.descargar, lambda url, timeout=20, reintentos=1: (ficha, url)
+        try:
+            r = v.historico({"historicos": {}}, {"n": "x", "t": "pccomponentes.com", "p": 1239.0,
+                                                 "h": "https://pccomtracker.com/producto/book6-1"})
+        finally:
+            v.descargar = orig
+        self.assertEqual((r["minimo"], r["habitual"], r["fuente"], r["es_minimo"]),
+                         (1069.0, 1303.78, "pccomtracker.com", False))
+        # Página 2 del comparador sin enlaces a la tienda: nada (antes salían con la URL del tracker).
+        p1 = html
+        p2 = '<script type="application/ld+json">' + json.dumps({"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": "Samsung Galaxy Book6", "url": "https://pccomtracker.com/producto/book6-1",
+             "offers": {"price": 1239.0}}]}) + "</script>"
+        paginas = {base: p1, base + "?page=2": p2}
+        orig, v.descargar = v.descargar, lambda url, timeout=20, reintentos=1: (paginas[url], url)
+        sleep, v.time.sleep = v.time.sleep, lambda s: None
+        try:
+            _, _, ps2, _ = v.leer_tienda("pccomponentes.com", {"pccomponentes.com": base}, None, None, 3)
+        finally:
+            v.descargar, v.time.sleep = orig, sleep
+        self.assertEqual(sorted(p["nombre"] for p in ps2), ["Logitech G733 Lightspeed Lilas", "Oral-B Vitality Pro Morado"])
+        self.assertTrue(all("pccomponentes.com" in p["url"] for p in ps2))
+        # En la web de la propia tienda no cambia nada.
+        propios = [{"nombre": "X", "precio": 1.0, "precio_antes": None, "url": None}]
+        self.assertIs(v.via_comparador("", propios, "pccomponentes.com", "https://www.pccomponentes.com/ofertas"), propios)
+
+    def test_precioreal_si_idealo_bloquea(self):
+        # Idealo devuelve 403 (Akamai) -> PrecioReal, solo con el mismo modelo y sin accesorios.
+        pr = '<script type="application/ld+json">' + json.dumps({"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": n, "offers": {"price": precio}} for n, precio in
+            (("Xiaomi Redmi Buds 6 Pro", 44.99), ("Xiaomi Redmi Buds 6", 32.95), ("Xiaomi Redmi Buds 6 Play", 10.7),
+             ("Xiaomi Redmi Buds 6 estuche", 7.19))]}) + "</script>"
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "idealo" in url:
+                raise OSError("HTTP Error 403: Forbidden")
+            return pr, url
+        orig, v.descargar = v.descargar, red
+        sleep, v.time.sleep = v.time.sleep, lambda s: None
+        v._IDEALO_BLOQUEADO[0] = False
+        try:
+            p = {"nombre": "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4", "precio": 34.99, "ean": None}
+            self.assertEqual(v.idealo_red(p), 32.95, "ni la versión Play ni el accesorio")
+            self.assertIn("precioreal.com/comparador/catalogo?q=Xiaomi+Redmi+Buds+6+TWS", pedidas[-1])
+            antes = len([u for u in pedidas if "idealo" in u])
+            self.assertEqual(v.idealo_red(p), 32.95)
+            self.assertEqual(len([u for u in pedidas if "idealo" in u]), antes, "tras un 403 no se vuelve a pedir a Idealo")
+        finally:
+            v.descargar, v.time.sleep = orig, sleep
+            v._IDEALO_BLOQUEADO[0] = False
+        self.assertFalse(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 512GB"))
+        self.assertTrue(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 256GB"))
+        # Mismo código exacto aunque el comparador añada palabras; código distinto, fuera.
+        self.assertTrue(v.mismo_modelo("Televisor LG OLED65C66LB", 'LG OLED evo C6 OLED65C66LB 65" 4K UHD Smart TV'))
+        self.assertFalse(v.mismo_modelo("Televisor LG OLED65C66LB", 'LG OLED C6 OLED55C66LB 55" 4K Smart TV'))
+        # Caso real: el Book6 (Core Ultra 5, Windows 11 Pro) se emparejó con el Book6 Pro (Ultra 7) a 1.634 €.
+        book6 = 'Portátil Samsung Galaxy Book6 16" Intel Core Ultra 5 325 16GB 512GB SSD Intel Graphics Windows 11 Pro'
+        self.assertFalse(v.mismo_modelo(book6, 'Portátiles Samsung Samsung Galaxy Book6 Pro 16" Intel Core Ultra 7 358H 32GB'))
+        self.assertTrue(v.mismo_modelo(book6, 'Samsung Galaxy Book6 16" Intel Core Ultra 5 325 16GB 512GB'))
+        self.assertEqual(v.codigos_modelo(book6), set(), "BOOK6 es la familia, no un código de modelo")
+        # Caso real: 'Bluetooth 5.4' hacía pasar a los Buds 4 y Buds 5 por los Buds 6.
+        buds6 = "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4 42h IP54 Auriculares"
+        self.assertFalse(v.mismo_modelo(buds6, "Xiaomi Redmi Buds 4"))
+        self.assertFalse(v.mismo_modelo(buds6, "Xiaomi Buds 5"))
+        self.assertTrue(v.mismo_modelo(buds6, "Xiaomi Redmi Buds 6"))
+        # Tienda oficial: el nombre no lleva la marca; se busca por marca + código.
+        sony = {"nombre": "Auriculares inalámbricos con Noise Cancelling WF-C710N", "marca": None, "tienda": "sony.es"}
+        self.assertEqual(v.consulta_comparador(sony), "sony WF-C710N")
+        self.assertTrue(v.mismo_modelo(v.nombre_con_marca(sony), "Sony WF-C710N"))
+        self.assertFalse(v.mismo_modelo(v.nombre_con_marca(sony), "Sony WF-C700N"))
+        # Tienda que no es de marca: no se le añade su nombre; IP54 no es un código de modelo.
+        buds = {"nombre": "Xiaomi Redmi Buds 6 Blanco TWS ANC 42h IP54", "marca": None, "tienda": "powerplanetonline.com"}
+        self.assertEqual(v.consulta_comparador(buds), "Xiaomi Redmi Buds 6 TWS")
+
+    def test_ssl_usa_almacen_de_windows_y_verifica(self):
+        import ssl
+        ctx = v._contexto_ssl()
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED, "nunca se desactiva la verificación")
+        self.assertTrue(ctx.check_hostname)
+
+    def test_precio_antes_igual_se_ignora(self):
+        html = tienda_html([{"n": "Sony WH-1000XM5", "p": 299, "a": 299}])
+        self.assertIsNone(v.extraer(html, "https://x.es")[0]["precio_antes"])
+
+    def test_ean_invalido(self):
+        html = tienda_html([{"n": "Sony WH-1000XM5", "p": 299, "e": "12AB"}])
+        self.assertIsNone(v.extraer(html, "https://x.es")[0]["ean"])
+
+    def test_marcas(self):
+        v_marcas, v.MARCAS = v.MARCAS, CONF / "marcas.txt"
+        try:
+            rx = v.regex_marcas()
+        finally:
+            v.MARCAS = v_marcas
+        ok = lambda n, m=None: v.marca_ok({"nombre": n, "marca": m}, rx)
+        self.assertTrue(ok("Auriculares JBL Tune 520BT"))
+        self.assertTrue(ok("Freidora", "Cosori"))
+        self.assertTrue(ok("Cafetera De'Longhi Dedica"))
+        self.assertTrue(ok("Nothing Phone (3a)"))
+        self.assertFalse(ok("Auriculares Bluetooth KJHGF Pro"))
+        self.assertFalse(ok("Me queda poco de batería"))
+        self.assertFalse(ok("Nothing special cable"))
+        self.assertFalse(ok("Funda para Applewatch"))  # no coincide con trozos de palabra
+        # Tiendas oficiales: el producto no repite la marca en el nombre
+        self.assertTrue(v.marca_ok({"nombre": "Galaxy S26+", "marca": None}, rx, "samsung.com/es"))
+        self.assertTrue(v.marca_ok({"nombre": "Redmi Pad 2", "marca": None}, rx, "mi.com/es"))
+        self.assertFalse(v.marca_ok({"nombre": "Secador 1800W", "marca": None}, rx, "electrodepot.es"))
+
+    def test_horario_cruza_medianoche(self):
+        orig = v.ahora_madrid
+        try:
+            for hora, esperado in {"07:59": False, "08:00": True, "15:00": True, "23:59": True,
+                                   "00:30": True, "00:45": True, "00:46": False, "03:00": False}.items():
+                v.ahora_madrid = lambda h=hora: datetime.strptime(h, "%H:%M")
+                self.assertEqual(v.en_horario({"horario": {"inicio": "08:00", "fin": "00:45"}}), esperado, hora)
+        finally:
+            v.ahora_madrid = orig
+
+    def test_urls(self):
+        self.assertEqual(v.url_tienda("mi.com/es"), "https://www.mi.com/es/")
+        self.assertEqual(v.url_tienda("store.steampowered.com"), "https://store.steampowered.com/")
+        self.assertEqual(v.raiz("mediamarkt.es"), "mediamarkt")
+        self.assertEqual(v.raiz("samsung.com/es"), "samsung")
+
+
+# --------------------------------------------------------------- rondas
+
+class Rondas(Base):
+    def preparar(self):
+        self.red.tiendas = {
+            "mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro", "m": "Xiaomi", "e": "6941812790000", "p": 39.99, "a": 79.99},
+                           {"n": "Cosori Freidora 5,5 L", "p": 79.99, "a": 99.99, "ld": False}],
+            "pccomponentes": [{"n": "Xiaomi Redmi Buds 6 Pro", "m": "Xiaomi", "e": "6941812790000", "p": 41.99, "a": 79.99}],
+        }
+        self.red.idealo = {"6941812790000": "41,50"}
+
+    def test_primera_ronda_solo_memoriza(self):
+        self.preparar()
+        self.assertEqual(self.ronda(), [])
+        self.assertEqual(self.red.llamadas["idealo"], 0)
+
+    def test_sin_cambios_no_despierta(self):
+        self.preparar()
+        self.ronda()
+        self.assertEqual(self.ronda(), [])
+        self.assertEqual(self.red.llamadas["idealo"] + self.red.llamadas["chollometro"], 0)
+
+    def test_bajada_y_duplicados(self):
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.red.tiendas["pccomponentes"][0]["p"] = 35.99
+        c = self.ronda()
+        self.assertEqual(len(c), 1, "mismo EAN en 2 tiendas: solo el más barato")
+        self.assertEqual((c[0]["t"], c[0]["p"], c[0]["id"], c[0]["ch"], c[0]["baja"]),
+                         ("mediamarkt.es", 34.99, 41.5, "no", 1))
+        self.assertLess(len(json.dumps(c, separators=(",", ":"))), 400, "JSON compacto")
+
+    def test_no_repite_si_sube_y_vuelve_a_bajar(self):
+        self.preparar()
+        self.ronda()
+        buds = self.red.tiendas["mediamarkt"][0]
+        buds["p"] = 34.99
+        self.assertEqual(len(self.ronda()), 1)
+        buds["p"] = 39.99
+        self.assertEqual(self.ronda(), [])
+        buds["p"] = 34.99
+        self.assertEqual(self.ronda(), [], "mismo precio ya avisado")
+        buds["p"] = 29.99
+        self.assertEqual(len(self.ronda()), 1, "nuevo mínimo: sí avisa")
+
+    def test_producto_nuevo(self):
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0})
+        self.red.idealo["6925281993145"] = "85,00"
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Flip 6"])
+        self.assertNotIn("baja", c[0])
+
+    def test_filtros_gratis(self):
+        self.preparar()
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["filtros_codigo"]["precio_max_eur"] = 600  # el tope sigue funcionando si se pone
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "Auriculares KJHGF Pro", "p": 9.99, "a": 59.99},              # sin marca conocida
+            {"n": "Samsung TV QLED 75", "m": "Samsung", "p": 999, "a": 1999},   # demasiado caro
+            {"n": "Sony WH-CH520", "m": "Sony", "p": 45, "a": 49},              # descuento < 20 %
+        ]
+        self.assertEqual(self.ronda(), [])
+        self.assertEqual(self.red.llamadas["idealo"], 0, "descartados antes de consultar Idealo")
+
+    def test_idealo_mas_barato_descarta(self):
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 99.0, "a": 139.0})
+        self.red.idealo["6925281993145"] = "79,00"
+        self.assertEqual(self.ronda(), [])
+
+    def test_sin_precio_de_mercado_no_se_envia(self):
+        # Sony WF-C710N "antes 199 €" a 89 €: sin comparador no se sabe si el 'antes' es real.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["exigir_precio_mercado"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "Sony WF-C710N", "m": "Sony", "p": 89.0, "a": 199.0},          # sin Idealo: fuera
+            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]
+        self.red.idealo["6925281993145"] = "85,00"                               # con Idealo: pasa
+        self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
+
+    def test_categoria_sin_comparador(self):
+        # Moda/hogar: sin precio de mercado vale un descuento grande (50 %), y el global sigue exigiendo mercado.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["exigir_precio_mercado"] = True
+        cfg["categorias"]["tecnologia"].update({"exigir_precio_mercado": False, "descuento_min_sin_mercado": 0.5})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "Desigual Abrigo Acolchado", "m": "Desigual", "p": 59.0, "a": 149.0},   # -60 %: pasa
+            {"n": "Desigual Bolso Shopper", "m": "Desigual", "p": 39.0, "a": 59.0}]       # -34 %: no
+        cfg["filtros_codigo"]["descuento_min_sin_idealo"] = 0.3
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        v_marcas = v.MARCAS.read_text(encoding="utf-8")
+        v.MARCAS.write_text(v_marcas + "\ndesigual\n", encoding="utf-8")
+        self.assertEqual([x["n"] for x in self.ronda()], ["Desigual Abrigo Acolchado"])
+
+    def test_tiene_que_estar_bajo_el_mercado(self):
+        # Caso real: LG QNED70 a 348,12 € ("antes" PVPR 449 €) con el mercado a 339 €: no es chollo.
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "LG QNED70 43", "m": "LG", "e": "8806096000001", "p": 348.12, "a": 449.0},
+            {"n": "LG QNED80 50", "m": "LG", "e": "8806096000002", "p": 399.0, "a": 549.0}]
+        self.red.idealo.update({"8806096000001": "339,00", "8806096000002": "449,00"})
+        self.assertEqual([x["n"] for x in self.ronda()], ["LG QNED80 50"])
+
+    def test_amazon_deals_en_script(self):
+        # Amazon /deals: los productos van en el TERCER objeto de un script, con priceToPay/basisPrice.
+        datos = {"productSearchResponse": {"products": [
+            {"asin": "B0BVMS3QTW", "title": "Dodot Pañales Bebé Sensitive Talla 5, 152 Pañales",
+             "link": "/Pa%C3%B1ales-Sensitive/dp/B0BVMS3QTW",
+             "price": {"priceToPay": {"label": "Precio de la oferta:", "price": "59.77", "strikethrough": False},
+                       "basisPrice": {"label": "Mediano:", "price": "82.85", "strikethrough": True}}}]}}
+        html = ("<script>(function(){ var a = {\"uno\": \"" + "x" * 60 + "\"}; f({\"dos\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]});"
+                + " P.declare('deals', " + json.dumps(datos) + ");})();</script>")
+        p = v.extraer(html, "https://www.amazon.es/deals")[0]
+        self.assertEqual((p["precio"], p["precio_antes"], p["url"]),
+                         (59.77, 82.85, "https://www.amazon.es/Pa%C3%B1ales-Sensitive/dp/B0BVMS3QTW"))
+
+    def test_epic_marca_lo_gratis(self):
+        api = {"data": {"Catalog": {"searchStore": {"elements": [
+            {"title": "Flotsam", "productSlug": "flotsam",
+             "promotions": {"promotionalOffers": [{"promotionalOffers": [{"discountSetting": {"discountPercentage": 0}}]}]},
+             "price": {"totalPrice": {"discountPrice": 0, "originalPrice": 1999}}},
+            {"title": "LISA: Definitive Edition", "productSlug": "lisa",
+             "promotions": {"promotionalOffers": [{}]},
+             "price": {"totalPrice": {"discountPrice": 1451, "originalPrice": 2419}}}]}}}}
+        orig, v.descargar = v.descargar, lambda url, timeout=20, reintentos=1: (json.dumps(api), url)
+        try:
+            ps = {p["nombre"]: p for p in v.epic_gratis()}
+        finally:
+            v.descargar = orig
+        self.assertTrue(ps["Flotsam"]["gratis"])
+        self.assertEqual((ps["Flotsam"]["precio"], ps["Flotsam"]["precio_antes"]), (0.0, 19.99))
+        self.assertFalse(ps["LISA: Definitive Edition"]["gratis"])
+        self.assertIn("store-site-backend-static.ak.epicgames.com", v.EPIC_PROMOS)
+
+    def test_antes_desde_porcentaje(self):
+        # GOG: precio + "discount": "-77%"; Humble: full_price.
+        api = {"products": [
+            {"title": "Celeste", "price": {"amount": "4.99"}, "discount": "-77%"},
+            {"human_name": "x", "title": "Hades", "current_price": {"amount": 9.99}, "full_price": {"amount": 24.99}},
+            {"title": "Juego sin rebaja", "price": 19.99, "discount": "CODIGO"}]}
+        ps = {p["nombre"]: p["precio_antes"] for p in v.extraer("<html></html>", "https://t.es/", [api])}
+        self.assertEqual(ps["Celeste"], 21.7)
+        self.assertEqual(ps["Hades"], 24.99)
+        self.assertIsNone(ps["Juego sin rebaja"])
+
+    def test_antes_desde_etiqueta_de_descuento(self):
+        # Instant Gaming: sin tachado, solo la etiqueta "-75%" en la tarjeta.
+        ld = {"@type": "ItemList", "itemListElement": [
+            {"@type": "Product", "name": "Hollow Knight", "url": "/es/123-hollow-knight/", "offers": {"price": 3.74}},
+            {"@type": "Product", "name": "Hades II", "url": "/es/456-hades-ii/", "offers": {"price": 24.99}}]}
+        html = ('<script type="application/ld+json">' + json.dumps(ld) + "</script>"
+                '<div><a href="/es/123-hollow-knight/">Hollow Knight</a><div class="discount">-75%</div><span>3,74 €</span></div>'
+                '<div><a href="/es/456-hades-ii/">Hades II</a><span>24,99 €</span><p>-10% extra en app</p></div>')
+        ps = {p["nombre"]: p["precio_antes"] for p in v.extraer(html, "https://www.instant-gaming.com/es/")}
+        self.assertEqual(ps["Hollow Knight"], 14.96)
+        self.assertIsNone(ps["Hades II"], "'-10% extra en app' es una promoción, no el descuento del juego")
+
+    def test_feeds_de_viajes(self):
+        rss = ('<?xml version="1.0"?><rss><channel><item><title>LUJO en el Mar Rojo con TODO INCLUIDO</title>'
+               '<link>https://www.viajerospiratas.es/mar-rojo/</link><description>&lt;p&gt;Un viaje de lujo en Sharm El Sheik '
+               'desde solo 332€. Es una zona...&lt;/p&gt;</description></item>'
+               '<item><title>Sin precio</title><link>https://x/</link><description>nada</description></item></channel></rss>')
+        listings = ('<?xml version="1.0"?><listings><title>Busco un chollo</title><listing><id>1</id>'
+                    '<title>¡Vive las Fiestas de Benidorm!</title><url>https://www.buscounchollo.com/reserva-chollo/40176/x</url>'
+                    '<price>39.00 EUR</price><description>2 días y 1 noche en Benidorm</description></listing></listings>')
+        orig = v.descargar
+        v.descargar = lambda url, timeout=20, reintentos=1: (listings if "buscounchollo" in url else rss, url)
+        try:
+            vp = v.leer_rss("viajerospiratas.es")
+            bc = v.leer_rss("buscounchollo.com")
+        finally:
+            v.descargar = orig
+        self.assertEqual([(p["nombre"], p["precio"]) for p in vp], [("LUJO en el Mar Rojo con TODO INCLUIDO", 332.0)])
+        self.assertEqual([(p["precio"], p["url"]) for p in bc], [(39.0, "https://www.buscounchollo.com/reserva-chollo/40176/x")])
+
+    def test_importes_en_centimos(self):
+        # Groupon: {"amount": 1499, "currencyExponent": 2} = 14,99 €.
+        api = {"deals": [{"title": "Higiene facial con tratamiento en Cuídate Córdoba",
+                          "url": "https://www.groupon.es/deals/cuidate-cordoba-12",
+                          "prices": {"price": {"amount": 1499, "currencyCode": "EUR", "currencyExponent": 2},
+                                     "strikeThroughPrice": {"amount": 3000, "currencyCode": "EUR", "currencyExponent": 2}}}]}
+        p = v.extraer("<html></html>", "https://www.groupon.es/", [api])[0]
+        self.assertEqual((p["precio"], p["precio_antes"]), (14.99, 30.0))
+
+    def test_url_del_listitem(self):
+        # Outlet de LG: {"@type":"ListItem","url":...,"item":{"@type":"Product",...}} sin url dentro.
+        html = '<script type="application/ld+json">' + json.dumps({"@type": "ItemList", "itemListElement": [
+            {"@type": "ListItem", "position": 1, "url": "https://www.lg.com/es/outlet/qned70-43/",
+             "item": {"@type": "Product", "name": "Outlet LG QNED70 43", "offers": {"price": "348.12"}}}]}) + "</script>"
+        self.assertEqual(v.extraer(html, "https://www.lg.com/es/outlet/")[0]["url"], "https://www.lg.com/es/outlet/qned70-43/")
+
+    def test_pccomponentes_con_historico_del_tracker(self):
+        # Sin precio de mercado, PcComponentes se compara con su propio historial (PCComTracker):
+        # pasa cerca del mínimo o un 10 % bajo lo habitual; el Galaxy Book6 a 1.239 € (mín. 1.069, habitual 1.303), no.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["exigir_precio_mercado"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        hist = {"Samsung Galaxy Book6": {"minimo": 1069.0, "habitual": 1303.78},
+                "Samsung Odyssey G5": {"minimo": 199.0, "habitual": 279.0}}
+        orig = (v.via_comparador, v.historico_comparador)
+        v.via_comparador = lambda html, ps, t, base, estricto=False: [
+            {**p, "historico_url": "https://pccomtracker.com/producto/" + p["nombre"].replace(" ", "-")} for p in ps
+        ] if "pccomponentes" in t else ps
+        v.historico_comparador = lambda url: {**hist[url.rsplit("/", 1)[1].replace("-", " ")], "url": url}
+        try:
+            self.red.tiendas = {"mediamarkt": [], "pccomponentes": [{"n": "Logitech G502 X", "m": "Logitech", "p": 59.0}]}
+            self.ronda()  # primera lectura: solo memoriza
+            self.red.tiendas["pccomponentes"] += [{"n": "Samsung Galaxy Book6", "m": "Samsung", "p": 1239.0},
+                                                  {"n": "Samsung Odyssey G5", "m": "Samsung", "p": 204.0}]
+            self.assertEqual([x["n"] for x in self.ronda()], ["Samsung Odyssey G5"])
+        finally:
+            v.via_comparador, v.historico_comparador = orig
+
+    def test_sin_idealo_exige_mas_descuento(self):
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "Philips Airfryer XL", "m": "Philips", "p": 69.0, "a": 99.0},   # 30 %: no basta
+            {"n": "Braun Series 7", "m": "Braun", "p": 59.0, "a": 129.0},         # 54 %: sí
+        ]
+        self.assertEqual([x["n"] for x in self.ronda()], ["Braun Series 7"])
+
+    def test_cache_idealo(self):
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 32.99
+        self.ronda()
+        self.assertEqual(self.red.llamadas["idealo"], 1, "segunda consulta sale de la caché")
+
+    def test_chollometro(self):
+        # Copia local de Chollometro (/search está prohibido en su robots.txt).
+        p = {"nombre": "Xiaomi Redmi Buds 6 Pro Negro", "tienda": "mediamarkt.es", "precio": 34.99}
+
+        def estado(*hs, fresca=True):
+            q = dict(p)
+            return v.estado_chollometro(q, {"hilos": v.hilos_chollometro(cm_html(list(hs))), "fresca": fresca}), q
+
+        self.assertEqual(estado(hilo("Xiaomi Redmi Buds 6 Pro", "MediaMarkt", 34.99))[0], "misma")
+        self.assertEqual(estado(hilo("Xiaomi Redmi Buds 6 Pro", "MediaMarkt", 39.99))[0], "misma:39.99")
+        self.assertEqual(estado(hilo("Redmi Buds 6 Pro a precio mínimo", "Amazon", 36.0))[0], "otra:36")
+        self.assertEqual(estado(hilo("Xiaomi Redmi Buds 4 Pro", "Amazon", 20.0))[0], "no", "otro modelo")
+        self.assertEqual(estado(fresca=False)[0], "?", "copia sin actualizar: no se sabe")
+        ch, q = estado(hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 36.0, temp=850, dias=90, caducado=True))
+        self.assertEqual(ch, "no", "post viejo y caducado: no es duplicado")
+        self.assertEqual((q["_cm_hot"]["temp"], q["_cm_hot"]["precio"]), (850, 36.0))
+        self.assertTrue(v.demanda_probada_ok(q), "ahora más barato que cuando fue chollo caliente")
+        # En una ronda: la copia se pone al día leyendo /nuevos y la portada.
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 32.99
+        self.red.chollometro = [hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 36.0)]
+        self.assertEqual(self.ronda()[0]["ch"], "otra:36")
+
+    def test_descuento_real_minimo(self):
+        # Regla de Instinct: BUENA = 25 % real sobre comparables exactos; el "antes" de la tienda no cuenta.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"descuento_real_min": 0.25, "min_bajo_mercado": 0.05, "ahorro_min_eur": 0})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 199.0},      # mercado 95: -17 %
+            {"n": "JBL Charge 5", "m": "JBL", "e": "6925281900002", "p": 99.0, "a": 179.0}]    # mercado 149: -34 %
+        self.red.idealo.update({"6925281993145": "95,00", "6925281900002": "149,00"})
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Charge 5"])
+        self.assertTrue(c[0]["dr"].startswith("-34 % sobre mercado"))
+        self.assertEqual(v.descuento_real({"precio": 50, "precio_antes": 200}, None), (None, None),
+                         "solo el 'antes' de la tienda: no hay descuento real")
+
+    def test_mensaje_sin_emojis_y_con_busqueda_manual(self):
+        p = {"tienda": "mediamarkt.es", "nombre": "JBL Charge 5 Negro", "precio": 99.0, "precio_antes": 179.0,
+             "idealo": 149.0, "ch": "no", "url": "https://x.es/jbl", "estado": "bajada", "gratis": True,
+             "dto_real": 0.336, "ref_real": "mercado", "_cm_hot": {"temp": 850, "precio": 110.0, "dias": 90}}
+        texto = v.mensaje_candidato(7, p)
+        self.assertFalse(re.search(r"[\U0001F300-\U0001FAFF☀-➿⬇]", texto), texto)
+        self.assertIn("https://www.chollometro.com/search?q=JBL+Charge+5", texto)
+        self.assertIn("referencia de la tienda: 179 €", texto)
+        self.assertIn("Descuento real: -34 % sobre mercado", texto)
+
+    def test_etiquetas_honestas(self):
+        # Instrucciones de lectura, paso 7: lo no comprobado se dice.
+        p = {"tienda": "x.es", "nombre": "Sofá Kivik", "precio": 99.0, "precio_antes": 199.0, "ch": "no",
+             "url": "https://x.es/sofa", "estado": "bajada"}
+        texto = v.mensaje_candidato(3, p)
+        for frase in ("Mercado: sin comparar con otras tiendas", "Histórico: sin verificar",
+                      "duplicado sin revisar", "Sin verificar: envío, stock y tallas"):
+            self.assertIn(frase, texto)
+        p.update({"_min_previo": 129.0, "_seguido_dias": 21, "idealo": 140.0})
+        texto = v.mensaje_candidato(3, p)
+        self.assertIn("Histórico propio: mínimo 129 € en 21 días", texto)
+        self.assertIn("Mercado: 140 € (otras tiendas)", texto)
+        self.assertNotIn("mínimo histórico", texto.lower())
+
+    def test_ficha_con_fotos_referencia_y_tallas(self):
+        html = ('<html><head><meta property="og:image" content="https://x.es/a.jpg"><title>Nike Pegasus 41</title></head>'
+                '<h1>Nike Pegasus 41</h1><script type="application/ld+json">{"@type":"ProductGroup","name":"Nike Pegasus 41",'
+                '"sku":"FD2722-002","image":["https://x.es/a.jpg","https://x.es/b.jpg","https://x.es/c.jpg"],'
+                '"hasVariant":[{"@type":"Product","name":"Nike Pegasus 41","size":"42","offers":{"price":"89.99",'
+                '"availability":"https://schema.org/InStock"}},{"@type":"Product","name":"Nike Pegasus 41","size":"43",'
+                '"offers":{"price":"89.99","availability":"https://schema.org/OutOfStock"}}]}</script></html>')
+        f = v.analizar_ficha(html, "https://x.es/nike")
+        self.assertEqual(f["fotos"], ["https://x.es/a.jpg", "https://x.es/b.jpg"])
+        self.assertEqual(f["referencia"], "FD2722-002")
+        self.assertEqual(f["variantes"], ["42: hay stock", "43: agotada"])
+        # Sin datos: el desplegable de tallas (sin stock declarado: "seleccionable").
+        dom = ('<select name="talla"><option value="">Elige talla</option><option value="1">S</option>'
+               '<option value="2" disabled>M - Agotado</option></select>')
+        self.assertEqual(v.variantes_de([], dom), ["S: seleccionable", "M: agotada"])
+
+    def test_validar_ficha(self):
+        # Manual de Instinct: 200 con página genérica, shell de JS o muro antibot = "sin validar".
+        c = {"n": "JBL Charge 5 Altavoz Bluetooth Negro", "p": 99.0, "e": "6925281900002"}
+        buena = ('<html><head><title>JBL Charge 5 | Tienda</title></head><body><h1>JBL Charge 5 Altavoz Bluetooth</h1>'
+                 '<script type="application/ld+json">{"@type":"Product","name":"JBL Charge 5","gtin13":"6925281900002",'
+                 '"offers":{"price":"99.00","availability":"https://schema.org/InStock"}}</script>' + "x " * 900 + "</body></html>")
+        f = v.analizar_ficha(buena, "https://x.es/jbl")
+        self.assertEqual(v.validar_ficha(f, c), (True, "ficha real con título y precio"))
+        muro = '<html><title>Just a moment...</title><script src="https://ct.captcha-delivery.com/c.js"></script></html>'
+        self.assertFalse(v.validar_ficha(v.analizar_ficha(muro, "https://x.es/jbl"), c)[0])
+        generica = '<html><title>Ofertas de la semana</title><h1>Ofertas</h1>' + "y " * 900 + "</html>"
+        self.assertFalse(v.validar_ficha(v.analizar_ficha(generica, "https://x.es/"), c)[0], "sin precio del producto")
+        otra = buena.replace("6925281900002", "6925281900099")
+        ok, motivo = v.validar_ficha(v.analizar_ficha(otra, "https://x.es/jbl"), c)
+        self.assertFalse(ok)
+        self.assertIn("EAN distinto", motivo)
+        enlaces = v.busquedas_chollometro({"n": "Sony WH-1000XM5 Negro", "e": "4548736132610"})
+        self.assertEqual(set(enlaces), {"referencia", "modelo", "nombre"})
+        self.assertTrue(enlaces["modelo"].endswith("q=WH-1000XM5"))
+
+    def test_tallas_de_nino_no_son_las_de_adulto(self):
+        self.assertFalse(v.mismo_modelo("Nike Air Max 90 - Bebés Zapatillas", "Nike Air Max 90"))
+        self.assertFalse(v.mismo_modelo("Nike P-6000 - Pre escolar Zapatillas", "Nike P-6000"))
+        self.assertTrue(v.mismo_modelo("Nike Air Max 90 Zapatillas", "Nike Air Max 90"))
+
+    def test_jardin_y_motor_fuera(self):
+        cfg = v.cargar_config()
+        self.assertTrue(v.excluido({"nombre": "Manguera extensible de jardín 30 m"}, "amazon.es", cfg))
+        self.assertTrue(v.excluido({"nombre": "Casco moto integral"}, "amazon.es", cfg))
+        self.assertTrue(v.excluido({"nombre": "Chaqueta"}, "motocard.com", cfg))
+        self.assertFalse(v.excluido({"nombre": "Motorola Moto G85 5G 256GB"}, "amazon.es", cfg), "Motorola no es motor")
+        self.assertFalse(v.excluido({"nombre": "Taladro percutor Einhell 18V"}, "amazon.es", cfg), "bricolaje sí")
+
+    def test_solo_tiendas_con_demanda(self):
+        # 117 tiendas sin ningún post caliente en 3,5 meses daban casi todos los candidatos malos.
+        con = v.bd()
+        hace = lambda d: int(time.time() - d * 86400)
+        filas = [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)]
+        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        con.commit()
+        cfg = {"filtros_codigo": {"solo_tiendas_con_demanda": True, "siempre_leer": ["bricoking.es"]}}
+        tiendas = ["mediamarkt.es", "pccomponentes.com", "bricoking.es", "prenatal.es"]
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, tiendas), ["mediamarkt.es", "bricoking.es"])
+        cfg["filtros_codigo"]["solo_tiendas_con_demanda"] = False
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, tiendas), tiendas)
+        con.execute("DELETE FROM cm WHERE id >= 100")
+        cfg["filtros_codigo"]["solo_tiendas_con_demanda"] = True
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, tiendas), tiendas, "pocos datos: no se filtra")
+        con.close()
+        self.assertTrue(v.con_demanda("gog.com/es", {"gog.com": 3}))
+        self.assertTrue(v.con_demanda("mi.com", {"mi.com": 1}))
+        self.assertFalse(v.con_demanda("mi.com", {"xiaomi.com": 5}))
+
+    def test_demanda_probada(self):
+        # Sin comparador ni histórico, pero ya fue chollo caliente (850°) a 36 €: a 34,99 € sí se envía.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"exigir_precio_mercado": True})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.red.idealo = {}
+        self.red.chollometro = [hilo("JBL Charge 5", "Amazon", 99.0, temp=850, dias=90, caducado=True)]
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [{"n": "JBL Charge 5", "m": "JBL", "p": 95.0, "a": 179.0},
+                                           {"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 149.0}]
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Charge 5"])
+        self.assertIn("850°", c[0]["hot"])
+
+    def test_ya_publicado_igual_o_mas_barato(self):
+        # Caso real: Endzone en GOG a 1,99 € con Chollometro ya a 1,06 €: Hermes siempre lo descartaba.
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("otra:1.06", 1.99))
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:2", 1.99))
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:6", 0.99), "ahora más barato: sí")
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("no", 5))
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("?", 5))
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.red.chollometro = [hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 33.0)]
+        self.assertEqual(self.ronda(), [])
+
+    def test_ahorro_minimo_en_euros(self):
+        # Caso real: cuchillo Arcos a 10,99 € con el mercado a 11,96 €: 1 € de ahorro no es chollo.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"ahorro_min_eur": 5, "min_bajo_mercado": 0.05})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "JBL Go 4", "m": "JBL", "e": "6925281900001", "p": 30.0, "a": 49.0},       # mercado 33: 3 €
+            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]    # mercado 95: 16 €
+        self.red.idealo.update({"6925281900001": "33,00", "6925281993145": "95,00"})
+        self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
+        self.assertTrue(v.ahorro_suficiente({"precio": 0, "gratis": True}, None, {}, {"ahorro_min_eur": 5}))
+        self.assertFalse(v.ahorro_suficiente({"precio": 3.89, "precio_antes": 14.99}, None,
+                                             {"ahorro_min_eur": 15}, {"ahorro_min_eur": 5}), "la categoría manda")
+
+    def test_bajo_mercado_por_categoria(self):
+        # Hogar: PrecioReal empareja productos genéricos; se pide un 15 % bajo el mercado, no un 5 %.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["min_bajo_mercado"] = 0.05
+        cfg["categorias"]["tecnologia"]["min_bajo_mercado"] = 0.15
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0})
+        self.red.idealo["6925281993145"] = "88,00"  # 10 % por debajo: no llega al 15 %
+        self.assertEqual(self.ronda(), [])
+
+    def test_precio_original_minimo(self):
+        # GOG: Might and Magic 8 a 0,99 € (antes 4,95 €) no es publicable aunque sea -80 %.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["reglas_tienda"]["mediamarkt.es"] = {"antes_min_eur": 15}
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [{"n": "JBL Go Mini", "m": "JBL", "p": 2.0, "a": 9.99},
+                                           {"n": "JBL Charge 5", "m": "JBL", "p": 50.0, "a": 150.0}]
+        self.assertEqual([x["n"] for x in self.ronda()], ["JBL Charge 5"])
+
+    def _envejecer(self, dias):
+        """Simula que el vigilante lleva `dias` días siguiendo los precios."""
+        con = sqlite3.connect(v.DB)
+        hace = (datetime.now() - timedelta(days=dias)).isoformat(timespec="minutes")
+        con.execute("UPDATE vistos SET desde=?", (hace,))
+        con.commit()
+        con.close()
+
+    def test_historial_propio(self):
+        # Sin precio de mercado, el 'antes' de la tienda no prueba nada: solo pasa lo que baja de su
+        # mínimo visto tras 14 días de seguimiento.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"exigir_precio_mercado": True, "historial_propio_dias": 14,
+                                      "bajada_min_propia": 0.10})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Charge 5", "m": "JBL", "p": 50.0, "a": 150.0})
+        self.assertEqual(self.ronda(), [], "nuevo con -67 % de la tienda: no basta")
+        cosori = self.red.tiendas["mediamarkt"][1]
+        cosori["p"] = 69.99
+        self.assertEqual(self.ronda(), [], "baja de su mínimo, pero solo lleva unas horas de seguimiento")
+        self._envejecer(20)
+        cosori["p"] = 66.0
+        self.assertEqual(self.ronda(), [], "baja, pero menos de un 10 % bajo su mínimo (69,99)")
+        cosori["p"] = 55.0
+        self.assertEqual([x["n"] for x in self.ronda()], ["Cosori Freidora 5,5 L"])
+
+    def test_juegos_con_historial_propio(self):
+        # Steam: "-84 % recurrente, 10 veces en 12 meses". El primer -80 % que se ve no se envía.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["categorias"]["tecnologia"].update({"sin_idealo": True, "historial_propio_dias": 14})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Charge 5", "m": "JBL", "p": 50.0, "a": 150.0})
+        self.assertEqual(self.ronda(), [])
+        self._envejecer(30)
+        self.red.tiendas["mediamarkt"][-1]["p"] = 40.0
+        self.assertEqual([x["n"] for x in self.ronda()], ["JBL Charge 5"])
+
+    def test_generico_no_se_compara(self):
+        # Estor Decoscreen emparejado con un colchón Pikolin en PrecioReal: sin marca, código ni EAN, no se busca.
+        estor = {"nombre": "ESTOR ENROLLABLE DECOSCREEN PERLA GRIS 135X190", "ean": None, "marca": None,
+                 "tienda": "bricoking.es", "precio": 79.99}
+        self.assertFalse(v.identificable(estor))
+        self.assertEqual(v.lista_codigos("REVESTIMIENTO VINILICO 75X45CM PACK"), [])
+        self.assertIsNone(v.precioreal_red(estor))
+        self.assertTrue(v.identificable({**estor, "nombre": "Sony WF-C710N"}))
+
+    def test_cupo_diario(self):
+        self.preparar()
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["max_verificaciones_ia_por_dia"] = 2
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.ronda()
+        nuevos = [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(5)]
+        self.red.tiendas["mediamarkt"] += nuevos
+        self.assertEqual(len(self.ronda()), 2)
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Go 4", "m": "JBL", "p": 20.0, "a": 60.0})
+        antes = self.red.llamadas["tienda"]
+        self.assertEqual(self.ronda(), [])
+        self.assertEqual(self.red.llamadas["tienda"], antes, "cupo agotado: ni descarga")
+
+    def test_maximo_por_tienda_y_ronda(self):
+        # Forumsport: 14 productos al -50 % de golpe -> como mucho 2 de la misma tienda por ronda.
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["max_por_tienda_y_ronda"] = 2
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(6)]
+        self.red.tiendas["pccomponentes"] += [{"n": f"Sony WH-{i}", "m": "Sony", "p": 50.0, "a": 150.0} for i in range(6)]
+        c = self.ronda()
+        self.assertEqual(sorted(Counter(x["t"] for x in c).values()), [2, 2])
+
+    def test_tope_por_tanda(self):
+        self.preparar()
+        self.ronda()
+        tope = json.loads(v.CONFIG.read_text(encoding="utf-8"))["filtros_codigo"]["max_candidatos_ia_por_tanda"]
+        self.red.tiendas["mediamarkt"] += [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(tope + 5)]
+        self.assertEqual(len(self.ronda()), tope)
+
+    def test_tienda_caida_no_rompe(self):
+        self.preparar()
+        self.ronda()
+        self.red.caidas.add("pccomponentes")
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.assertEqual(len(self.ronda()), 1)
+        self.assertIn("403", v.LOG.read_text(encoding="utf-8"))
+
+    def test_url_nueva_de_tienda_no_inunda(self):
+        self.preparar()
+        self.ronda()
+        v.URLS.write_text(json.dumps({"tecnologia:mediamarkt.es": "https://www.mediamarkt.es/outlet"}), encoding="utf-8")
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 139.0})
+        self.assertEqual(self.ronda(), [], "página nueva: primero se siembra")
+
+    def test_fuera_de_horario(self):
+        self.preparar()
+        v.en_horario = lambda cfg: False
+        self.assertEqual(self.ronda(), [])
+        self.assertEqual(sum(self.red.llamadas.values()), 0)
+
+    def test_dos_categorias_a_la_vez(self):
+        self.preparar()
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["categorias"]["moviles"]["tiendas"] = ["mediamarkt.es", "pccomponentes.com"]
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        errores = []
+
+        def lanzar(cat):
+            try:
+                for _ in range(5):
+                    v.ronda(cat)
+            except Exception as e:  # pragma: no cover
+                errores.append(e)
+
+        hilos = [threading.Thread(target=lanzar, args=(c,)) for c in ("tecnologia", "moviles")]
+        with redirect_stdout(io.StringIO()):  # una sola redirección para los dos hilos
+            for h in hilos:
+                h.start()
+            for h in hilos:
+                h.join()
+        self.assertEqual(errores, [])
+        n = sqlite3.connect(v.DB).execute("SELECT COUNT(*) FROM vistos").fetchone()[0]
+        self.assertEqual(n, 3, "sin duplicados en la base de datos")
+
+
+class Robots(unittest.TestCase):
+    TEXTO = """User-agent: *
+Allow: /
+Disallow: /search
+Disallow: /*?sortBy=*
+Disallow: /api/1.0/
+Allow: /api/1.0/publico$
+
+User-agent: ChatGPT-User
+Disallow: /
+"""
+
+    def test_reglas(self):
+        r = v.reglas_robots(self.TEXTO)
+        self.assertTrue(v.robots_permite(r, "/nuevas"))
+        self.assertFalse(v.robots_permite(r, "/search?q=killing+floor"), "caso real: Chollometro prohíbe /search")
+        self.assertFalse(v.robots_permite(r, "/ofertas?sortBy=temp&page=2"))
+        self.assertTrue(v.robots_permite(r, "/ofertas?page=2"))
+        self.assertFalse(v.robots_permite(r, "/api/1.0/games?id=1"))
+        self.assertTrue(v.robots_permite(r, "/api/1.0/publico"), "la regla más larga gana")
+        self.assertEqual(v.reglas_robots("User-agent: *\nDisallow:\n"), [], "Disallow vacío = todo permitido")
+
+    def test_descargar_respeta_robots(self):
+        tmp = Path(tempfile.mkdtemp())
+        orig = v.DATOS, v._descargar
+        v._ROBOTS_MEM.clear()
+        pedidas = []
+
+        def falsa(url, timeout):
+            pedidas.append(url)
+            if url.endswith("/robots.txt"):
+                if "sinrobots" in url:
+                    raise v.HTTPError(url, 404, "no", {}, None)
+                return self.TEXTO, url
+            return "<html>ok</html>", url
+        try:
+            v.DATOS, v._descargar = tmp, falsa
+            self.assertEqual(v.descargar("https://web.es/nuevas")[0], "<html>ok</html>")
+            with self.assertRaises(v.BloqueadoPorRobots):
+                v.descargar("https://web.es/search?q=x")
+            self.assertNotIn("https://web.es/search?q=x", pedidas, "ni siquiera se pide")
+            self.assertEqual(pedidas.count("https://web.es/robots.txt"), 1, "robots.txt en caché")
+            v._ROBOTS_MEM.clear()
+            v.descargar("https://web.es/otra")
+            self.assertEqual(pedidas.count("https://web.es/robots.txt"), 1, "caché en disco")
+            self.assertTrue(v.permitido("https://sinrobots.es/lo-que-sea"))
+        finally:
+            v.DATOS, v._descargar = orig
+            v._ROBOTS_MEM.clear()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ------------------------------------------------------------ red real
+
+class Descarga(unittest.TestCase):
+    """Prueba descargar() de verdad contra un servidor local (gzip, charset y errores)."""
+
+    def setUp(self):
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/cookie":
+                    if "ok=1" not in (self.headers.get("Cookie") or ""):
+                        self.send_response(307)
+                        self.send_header("Set-Cookie", "ok=1; Path=/")
+                        self.send_header("Location", "/cookie")
+                        self.end_headers()
+                        return
+                if self.path == "/503-una-vez":
+                    H.veces = getattr(H, "veces", 0) + 1
+                    if H.veces == 1:
+                        self.send_response(503)
+                        self.end_headers()
+                        return
+                if self.path == "/latin":
+                    cuerpo = '<meta charset="iso-8859-1"><p>Cafetera económica 59,99</p>'.encode("iso-8859-1")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(cuerpo)
+                    return
+                if self.path == "/403":
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                cuerpo = gzip.compress("<p>Freidora 59,99 € ñ</p>".encode("windows-1252"))
+                self.send_response(200)
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Type", "text/html; charset=windows-1252")
+                self.end_headers()
+                self.wfile.write(cuerpo)
+
+            def log_message(self, *a):
+                pass
+
+        os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1,localhost"
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.srv.server_port}"
+
+    def tearDown(self):
+        self.srv.shutdown()
+
+    def test_gzip_y_charset(self):
+        html, _ = v.descargar(self.base + "/")
+        self.assertIn("59,99 € ñ", html)
+
+    def test_redireccion_con_cookies(self):
+        html, _ = v.descargar(self.base + "/cookie")
+        self.assertIn("59,99", html)
+
+    def test_reintenta_un_503(self):
+        html, _ = v.descargar(self.base + "/503-una-vez")
+        self.assertIn("59,99", html)
+
+    def test_charset_desde_meta(self):
+        html, _ = v.descargar(self.base + "/latin")
+        self.assertIn("económica", html)
+
+    def test_error_http(self):
+        with self.assertRaises(Exception):
+            v.descargar(self.base + "/403")
+
+
+# ------------------------------------------------------------- paginación
+
+class Grupos(Base):
+    def test_rapidas_no_abre_navegador_y_navegador_no_descarga(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["categorias"]["tecnologia"]["navegador"] = ["coolmod.com"]
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "p": 79.0}], "pccomponentes": []}
+        nav = []
+        orig = v.leer_con_pestanas
+        v.leer_con_pestanas = lambda cfg, trabajos: nav.extend(t for t, _, _ in trabajos) or [
+            (t, u, [], None) for t, u, _ in trabajos]
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.ronda_grupo("rapidas")
+            self.assertEqual(nav, [], "rápidas no abre Chrome")
+            self.assertTrue(any("mediamarkt" in u for u in self.red.pedidas))
+            self.red.pedidas.clear()
+            with redirect_stdout(io.StringIO()):
+                v.ronda_grupo("navegador")
+            self.assertEqual(nav, ["coolmod.com"], "navegador solo lee las tiendas de navegador")
+            self.assertEqual(self.red.pedidas, [], "y no descarga las demás")
+        finally:
+            v.leer_con_pestanas = orig
+
+
+class Descubrir(Base):
+    def test_no_elige_una_ficha_suelta(self):
+        # Euronics, Tien21, PCBox...: la ficha de un móvil (1 producto, rebajado) ganaba al listado.
+        listado = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0} for i in range(4)])
+        ficha = tienda_html([{"n": "Samsung Galaxy A17", "p": 149.0, "a": 199.0}])
+        portada = ('<a href="/ofertas">Ofertas</a><a href="/samsung-galaxy-a17-black.html">Oferta Galaxy</a>'
+                   '<a href="/promociones">Promociones</a>')
+        paginas = {"/ofertas": listado, "/samsung-galaxy-a17-black.html": ficha, "/promociones": "<p>nada</p>"}
+
+        def red(url, timeout=20, reintentos=1):
+            ruta = v.urlparse(url).path
+            return paginas.get(ruta, portada), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()):
+            v.descubrir("tecnologia")
+        urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+        self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/ofertas")
+
+    def test_prueba_muestra_cada_tienda(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 79.0, "a": 129.0}]}
+        self.red.caidas.add("pccomponentes")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            v.prueba("tecnologia")
+        salida = buf.getvalue()
+        self.assertRegex(salida, r"mediamarkt\.es\s+1 prod \|\s+1 con precio anterior \|\s+1 de marca")
+        self.assertRegex(salida, r"pccomponentes\.com\s+ERROR")
+
+    def test_prefiere_pagina_permanente_a_campana(self):
+        # El Black Friday tiene más rebajas, pero caduca: gana la de ofertas permanente.
+        bf = tienda_html([{"n": f"Samsung TV {i}", "p": 399.0, "a": 599.0} for i in range(20)])
+        perm = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0, "a": 129.0} for i in range(4)])
+        portada = ('<a href="/promocion-black-friday.html">Black Friday</a><a href="/event/oferta-2026/">x</a>'
+                   '<a href="/ofertas">Ofertas</a>')
+        paginas = {"/promocion-black-friday.html": bf, "/event/oferta-2026/": bf, "/ofertas": perm}
+        v.descargar = lambda url, timeout=20, reintentos=1: (paginas.get(v.urlparse(url).path, portada), url)
+        with redirect_stdout(io.StringIO()):
+            v.descubrir("tecnologia")
+        urls = json.loads(v.URLS.read_text(encoding="utf-8"))
+        self.assertEqual(urls["mediamarkt.es"], "https://www.mediamarkt.es/ofertas")
+        self.assertTrue(v.RE_TEMPORAL.search("/es/event/black-friday-2026/"))
+        self.assertFalse(v.RE_TEMPORAL.search("/es/outlet/ofertas-del-mes"))
+
+
+class Paginacion(unittest.TestCase):
+    def test_siguiente_pagina(self):
+        sp = v.siguiente_pagina
+        self.assertEqual(sp('<link rel="next" href="/ofertas?page=2">', "https://t.es/ofertas"),
+                         "https://t.es/ofertas?page=2")
+        self.assertEqual(sp('<a class="x" rel="next" href="?p=3&amp;orden=desc">', "https://t.es/o?p=2"),
+                         "https://t.es/o?p=3&orden=desc")
+        self.assertEqual(sp('<a href="/o/pagina/2"> Siguiente </a>', "https://t.es/o"), "https://t.es/o/pagina/2")
+        self.assertEqual(sp('<a href="#">»</a>', "https://t.es/o?page=4"), "https://t.es/o?page=5")
+        self.assertEqual(sp("<p>nada</p>", "https://t.es/o/page/7/"), "https://t.es/o/page/8/")
+        self.assertIsNone(sp("<p>sin paginación</p>", "https://t.es/ofertas"))
+
+    def test_paginas_por_tienda(self):
+        cfg = {"paginas": {"defecto": 3, "mi.com/es": 1}}
+        self.assertEqual(v.paginas_de(cfg, "mi.com/es"), 1)
+        self.assertEqual(v.paginas_de(cfg, "mediamarkt.es"), 3)
+        self.assertEqual(v.paginas_de({}, "x"), 3)
+
+    def test_lee_varias_paginas_y_para_a_tiempo(self):
+        paginas = {
+            "https://www.t.es/ofertas": tienda_html([{"n": "JBL Flip 6", "p": 79, "a": 129}]) + '<link rel="next" href="/ofertas?page=2">',
+            "https://www.t.es/ofertas?page=2": tienda_html([{"n": "Sony WH-CH520", "p": 35, "a": 59}]) + '<link rel="next" href="/ofertas?page=3">',
+            # la 3 repite la 2: debe parar sin pedir la 4
+            "https://www.t.es/ofertas?page=3": tienda_html([{"n": "Sony WH-CH520", "p": 35, "a": 59}]) + '<link rel="next" href="/ofertas?page=4">',
+        }
+        pedidas = []
+
+        def falso(url, timeout=20):
+            pedidas.append(url)
+            return paginas[url], url
+        orig, v.descargar = v.descargar, falso
+        sleep, v.time.sleep = v.time.sleep, lambda s: None
+        try:
+            _, _, ps, err = v.leer_tienda("t.es", {"t.es": "https://www.t.es/ofertas"}, None, None, 10)
+            self.assertIsNone(err)
+            self.assertEqual([p["nombre"] for p in ps], ["JBL Flip 6", "Sony WH-CH520"])
+            self.assertEqual(len(pedidas), 3)
+            pedidas.clear()
+            _, _, ps, _ = v.leer_tienda("t.es", {"t.es": "https://www.t.es/ofertas"}, None, None, 1)
+            self.assertEqual((len(ps), len(pedidas)), (1, 1), "respeta el máximo de páginas")
+        finally:
+            v.descargar, v.time.sleep = orig, sleep
+
+    def test_page_2_sin_enlace(self):
+        # MediaMarkt / Electrocosto: botón 'Ver más' sin enlace, pero ?page=2 funciona.
+        # Euronics: ?page=2 devuelve lo mismo -> una sola petición de más y para.
+        paginas = {
+            "https://www.mm.es/ofertas": tienda_html([{"n": "JBL Flip 6", "p": 79, "a": 129}]),
+            "https://www.mm.es/ofertas?page=2": tienda_html([{"n": "Sony WH-CH520", "p": 35, "a": 59}]),
+            "https://www.mm.es/ofertas?page=3": tienda_html([{"n": "Bose QC45", "p": 199, "a": 299}]),
+            "https://www.eu.es/bf?x=1": tienda_html([{"n": "LG OLED55", "p": 999, "a": 1299}]),
+            "https://www.eu.es/bf?x=1&page=2": tienda_html([{"n": "LG OLED55", "p": 999, "a": 1299}]),
+        }
+        pedidas = []
+
+        def falso(url, timeout=20):
+            pedidas.append(url)
+            return paginas[url], url
+        orig, v.descargar = v.descargar, falso
+        sleep, v.time.sleep = v.time.sleep, lambda s: None
+        try:
+            _, _, ps, err = v.leer_tienda("mm.es", {"mm.es": "https://www.mm.es/ofertas"}, None, None, 3)
+            self.assertIsNone(err)
+            self.assertEqual([p["nombre"] for p in ps], ["JBL Flip 6", "Sony WH-CH520", "Bose QC45"])
+            pedidas.clear()
+            _, _, ps, _ = v.leer_tienda("eu.es", {"eu.es": "https://www.eu.es/bf?x=1"}, None, None, 3)
+            self.assertEqual((len(ps), pedidas), (1, ["https://www.eu.es/bf?x=1", "https://www.eu.es/bf?x=1&page=2"]))
+        finally:
+            v.descargar, v.time.sleep = orig, sleep
+
+    def test_fallo_en_pagina_2_conserva_la_1(self):
+        def falso(url, timeout=20):
+            if "page=2" in url:
+                raise OSError("timeout")
+            return tienda_html([{"n": "JBL Flip 6", "p": 79, "a": 129}]) + '<link rel="next" href="?page=2">', url
+        orig, v.descargar = v.descargar, falso
+        sleep, v.time.sleep = v.time.sleep, lambda s: None
+        try:
+            _, _, ps, err = v.leer_tienda("t.es", {"t.es": "https://www.t.es/o"}, None, None, 3)
+        finally:
+            v.descargar, v.time.sleep = orig, sleep
+        self.assertIsNone(err)
+        self.assertEqual(len(ps), 1)
+
+
+class Cerrojo(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._datos, v.DATOS = v.DATOS, self.tmp
+
+    def tearDown(self):
+        v.DATOS = self._datos
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_segundo_espera_y_cerrojo_viejo_se_libera(self):
+        a, b = v.Navegador(), v.Navegador()
+        a._cerrojo()
+        with self.assertRaises(TimeoutError):
+            b._cerrojo(espera_max=0)
+        a._lock.unlink()
+        b._cerrojo(espera_max=0)  # libre: entra
+        os.utime(b._lock, (0, 0))   # simula un proceso muerto hace horas
+        c = v.Navegador()
+        c._cerrojo(espera_max=0)
+        self.assertTrue(c._lock.exists())
+
+
+# ------------------------------------------------- modo mixto por Telegram
+
+class ModoTelegram(Base):
+    def setUp(self):
+        super().setUp()
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["entrega"] = {"modo": "telegram", "chat_id": "456808276"}
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.enviados, self.teclados = [], []
+        self._orig_tg = (v.enviar_telegram, v.token_telegram)
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: (self.enviados.append((chat, texto, foto)), self.teclados.append(teclado)) and True
+        v.token_telegram = lambda: "123:ABC"
+        self.red.tiendas = {"mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro Negro", "m": "Xiaomi", "e": "6941812790000",
+                                            "p": 39.99, "a": 79.99}],
+                            "pccomponentes": []}
+        self.red.idealo = {"6941812790000": "41,50"}
+
+    def tearDown(self):
+        v.enviar_telegram, v.token_telegram = self._orig_tg
+        super().tearDown()
+
+    def test_boton_para_verificar(self):
+        # Un botón "Verificar #N" debajo de CADA aviso (Zeta: "si no, es un lío"). Lo atiende el plugin
+        # de Hermes vigilante-botones, que entrega "verifica N" como si lo hubiera escrito Zeta.
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 149.0})
+        self.red.idealo["6925281993145"] = "95,00"
+        self.ronda()
+        self.assertEqual(len(self.enviados), 2)
+        for (_, texto, _), teclado in zip(self.enviados, self.teclados):
+            n = re.match(r"#(\d+)", texto).group(1)
+            boton = json.loads(teclado)["inline_keyboard"]
+            self.assertEqual(boton, [[{"text": f"Verificar #{n}", "callback_data": f"vg:verifica:{n}"}]])
+        plugin = RAIZ / "hermes" / "plugins" / "vigilante-botones" / "__init__.py"
+        if plugin.exists():  # el plugin traduce el botón al texto que entiende la habilidad
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("vigilante_botones", plugin)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.assertEqual(mod.texto_de("vg:verifica:47"), "verifica 47")
+            self.assertIsNone(mod.texto_de("mp:modelo"))
+            self.assertTrue(re.match(mod.PATRON, "vg:verifica:47"))
+            self.assertFalse(re.match(mod.PATRON, "ea:once:3"))
+
+    def test_sin_enlace_no_se_envia(self):
+        # Foot Locker sin URL: Hermes no puede abrir la ficha ("sin url ni ficha").
+        self.ronda()
+        orig = v.extraer
+
+        def sin_url(html, base, extra=()):
+            ps = orig(html, base, extra)
+            for p in ps:
+                p["url"] = None
+            return ps
+        v.extraer = sin_url
+        try:
+            self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+            self.ronda()
+        finally:
+            v.extraer = orig
+        self.assertEqual(self.enviados, [])
+
+    def test_envia_lista_sin_despertar_a_la_ia(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.assertEqual(self.ronda(), [], "Hermes no se despierta")
+        self.assertEqual(len(self.enviados), 1)
+        chat, texto, foto = self.enviados[0]
+        self.assertEqual(chat, "456808276")
+        self.assertIn("#1 · mediamarkt.es", texto)
+        self.assertIn("34.99 € (referencia de la tienda: 79.99 €, -56 %)", texto)
+        self.assertIn("Mercado: 41.5 €", texto)
+        self.assertEqual(json.loads(self.teclados[0])["inline_keyboard"][0][0]["callback_data"], "vg:verifica:1")
+        self.assertTrue(foto.endswith("/img.jpg"))
+        n = sqlite3.connect(v.DB).execute("SELECT COUNT(*) FROM cupo").fetchone()[0]
+        self.assertEqual(n, 0, "la lista gratis no gasta cupo de verificaciones")
+
+    def test_freno_si_llegan_muchos_de_golpe(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"max_avisos_telegram_hora": 5, "max_avisos_telegram_dia": 8})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.ronda()
+        # Una tienda "cambia sus enlaces": 12 productos nuevos de golpe (la tanda deja pasar 15).
+        self.red.tiendas["mediamarkt"] += [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(12)]
+        self.ronda()
+        candidatos = [t for _, t, _ in self.enviados if t.startswith("#")]
+        avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
+        self.assertEqual(len(candidatos), 5, "solo hasta el límite por hora")
+        self.assertEqual(len(avisos), 1, "un único aviso")
+        self.assertIn("en una hora", avisos[0])
+        # Siguiente ronda dentro de la pausa: no se manda nada más ni se repite el aviso.
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Go 4", "m": "JBL", "p": 20.0, "a": 60.0})
+        self.ronda()
+        self.assertEqual(len(self.enviados), 6)
+        self.assertIn("FRENO telegram", v.LOG.read_text(encoding="utf-8"))
+        # Pasada la pausa: sale lo pendiente hasta el tope del día (8) y avisa del tope diario.
+        con = sqlite3.connect(v.DB)
+        con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='freno_telegram'")
+        con.execute("UPDATE lista SET fecha=? WHERE enviado=1", (datetime.now().strftime("%Y-%m-%dT00:00"),))
+        con.commit()
+        self.ronda()
+        candidatos = [t for _, t, _ in self.enviados if t.startswith("#")]
+        avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
+        self.assertEqual(len(candidatos), 8)
+        self.assertEqual(len(avisos), 2)
+        self.assertIn("8 avisos hoy", avisos[1])
+
+    def test_no_repite_otro_color_ni_otra_tienda(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        self.red.tiendas["pccomponentes"] = [{"n": "Xiaomi Redmi Buds 6 Pro Blanco", "m": "Xiaomi", "p": 34.99, "a": 79.99}]
+        self.ronda()  # siembra pccomponentes
+        self.red.tiendas["pccomponentes"][0]["p"] = 34.50
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1, "mismo modelo, otro color, casi mismo precio: no se repite")
+        self.red.tiendas["pccomponentes"][0]["p"] = 29.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 2, "baja de verdad: sí avisa")
+
+    def test_memoria_dudosa_descarta_sin_buscar(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        with redirect_stdout(io.StringIO()):
+            v.recordar(1, "dudosa", "modelo descontinuado")
+        self.red.tiendas["mediamarkt"][0]["p"] = 29.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1)
+
+    def test_oferta_caducada_vuelve_a_avisar(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1)
+        with redirect_stdout(io.StringIO()):
+            v.recordar(1, "caducada", "la oferta flash se acabó")
+        self.red.tiendas["mediamarkt"][0]["p"] = 49.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1, "sube: nada")
+        self.red.tiendas["mediamarkt"][0]["p"] = 36.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1, "baja, pero no al precio de la oferta: nada")
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        self.assertEqual(len(self.enviados), 2, "vuelve al precio de la oferta: avisa otra vez")
+
+    def test_dossier(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        ficha = ('<meta property="og:image" content="/foto-buds.jpg">'
+                 '<meta name="description" content="Auriculares con cancelación de ruido y 36 h de batería.">'
+                 '<script type="application/ld+json">' + json.dumps({"@type": "Product", "name": "Xiaomi Redmi Buds 6 Pro",
+                 "offers": {"price": "32,99", "availability": "https://schema.org/InStock",
+                            "seller": {"@type": "Organization", "name": "MediaMarkt"}}}) + "</script>"
+                 "<p>Envío gratis a partir de 50 €</p>")
+        red = self.red
+
+        def falso(url, timeout=20):
+            if "/p/" in url:
+                return ficha, url
+            return red(url, timeout)
+        v.descargar = falso
+        with redirect_stdout(io.StringIO()):
+            v.recordar(1, "buena", "precio mínimo en Idealo")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            v.dossier(["1", "99"])
+        d = json.loads(buf.getvalue())
+        self.assertIn("ficha", d[0], d)
+        f = d[0]["ficha"]
+        self.assertEqual((f["precio_ahora"], f["stock"], f["vendedor"]), (32.99, "sí", "MediaMarkt"))
+        self.assertIn("Envío gratis", f["envio"])
+        self.assertTrue(f["foto"].endswith("/foto-buds.jpg"))
+        self.assertIn("cancelación", f["resumen"])
+        self.assertIn("34.99 € -> 32.99 €", d[0]["aviso"])
+        self.assertTrue(d[0]["memoria"].startswith("buena"))
+        self.assertEqual(d[0]["num"], 1)
+        self.assertEqual(d[1], {"num": 99, "error": "no existe"})
+
+    def test_token_desde_env_de_hermes(self):
+        v.token_telegram = self._orig_tg[1]
+        (self.tmp / "scripts").mkdir()
+        (self.tmp / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-x\nTELEGRAM_BOT_TOKEN=\"123456:AbC-dEf\"\n", encoding="utf-8")
+        orig_base = v.BASE
+        v.BASE = self.tmp / "scripts"
+        viejo = {k: os.environ.pop(k, None) for k in ("VIGILANTE_TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN")}
+        try:
+            self.assertEqual(v.token_telegram(), "123456:AbC-dEf")
+        finally:
+            v.BASE = orig_base
+            for k, val in viejo.items():
+                if val is not None:
+                    os.environ[k] = val
+
+    def test_modelo_base(self):
+        self.assertEqual(v.modelo_base("Xiaomi Redmi Buds 6 Pro Negro"), v.modelo_base("Xiaomi Redmi Buds 6 Pro (Blanco)"))
+        self.assertNotEqual(v.modelo_base("Galaxy S26 128GB"), v.modelo_base("Galaxy S26 256GB"))
+
+
+# ------------------------------------------- reglas aprendidas de Instinct
+
+class ReglasInstinct(Base):
+    def cfg(self, **cambios):
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        for k, val in cambios.items():
+            c[k] = val
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        return c
+
+    def test_valoracion_y_resenas_se_leen(self):
+        html = ('<script type="application/ld+json">' + json.dumps({"@type": "Product", "name": "Xiaomi Redmi Buds 6",
+                "offers": {"price": 25}, "aggregateRating": {"ratingValue": "4,6", "reviewCount": "1.234"}}) + "</script>")
+        p = v.extraer(html, "https://t.es/")[0]
+        self.assertEqual((p["valoracion"], p["resenas"]), (4.6, 1234))
+        self.assertEqual(v.normalizar_nota(4.6), 92.0)
+        self.assertEqual(v.normalizar_nota(95), 95)
+
+    def test_reglas_por_tienda(self):
+        c = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        r = v.reglas_de(c, "videojuegos", "store.steampowered.com")
+        self.assertEqual((r["descuento_min"], r["min_resenas"], r["exigir_descuento"]), (0.80, 500, True))
+        self.assertEqual(v.reglas_de(c, "tecnologia", "mediamarkt.es")["descuento_min"], 0.20)
+        self.assertEqual(v.reglas_de(c, "hogar", "ikea.com/es")["descuento_min"], 0.30)
+
+    def test_sin_tope_de_precio_por_defecto(self):
+        c = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        self.assertEqual(v.reglas_de(c, "tecnologia", "mediamarkt.es")["precio_max"], float("inf"))
+        c["categorias"]["tecnologia"]["precio_max"] = 1500
+        self.assertEqual(v.reglas_de(c, "tecnologia", "mediamarkt.es")["precio_max"], 1500)
+
+    def test_entrega_en_5_mensajes(self):
+        enviados = []
+        orig = (v.enviar_telegram, v.token_telegram)
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: enviados.append((texto, foto)) or True
+        v.token_telegram = lambda: "x"
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["entrega"] = {"modo": "telegram", "chat_id": "1"}
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        try:
+            con = v.bd()
+            con.execute("INSERT INTO lista (id, fecha, base, precio, datos) VALUES (7, '2026-11-07', 'x', 1, ?)",
+                        (json.dumps({"img": "https://t.es/f.jpg"}),))
+            con.commit()
+            con.close()
+            bloques = {"titulo": "[MUY BUENA] JBL Flip 6 altavoz Bluetooth", "precios": "Precio inicial: 149 €",
+                       "info": "Mínimo histórico: 79 €", "enlace": "https://t.es/jbl", "descripcion": "Altavoz portátil."}
+            (v.DATOS / "entrega_7.json").write_text(json.dumps(bloques), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertTrue(v.entregar(7))
+            self.assertEqual([e[0] for e in enviados], list(bloques.values()))
+            self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "foto en el primer mensaje")
+            self.assertTrue(all(f is None for _, f in enviados[1:]))
+            self.assertFalse((v.DATOS / "entrega_7.json").exists())
+            (v.DATOS / "entrega_7.json").write_text(json.dumps({"titulo": "x"}), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertFalse(v.entregar(7), "si faltan bloques no envía nada a medias")
+        finally:
+            v.enviar_telegram, v.token_telegram = orig
+
+    def test_exclusiones(self):
+        cfg = {"filtros_codigo": {"excluir": ["xbox", "shein"]}}
+        self.assertTrue(v.excluido({"nombre": "Mando Xbox Wireless"}, "mediamarkt.es", cfg))
+        self.assertTrue(v.excluido({"nombre": "Vestido"}, "shein.com", cfg))
+        self.assertFalse(v.excluido({"nombre": "Xboxer Pro"}, "x.es", cfg))
+
+    def test_pocas_resenas_y_nota_baja_se_descartan(self):
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["reglas_tienda"] = {"mediamarkt.es": {"min_resenas": 100, "min_valoracion": 90}}
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.red.tiendas = {"mediamarkt": [], "pccomponentes": []}
+        self.ronda()
+        prods = [{"n": "Xiaomi Buds A", "m": "Xiaomi", "p": 20, "a": 50}, {"n": "Xiaomi Buds B", "m": "Xiaomi", "p": 20, "a": 50},
+                 {"n": "Xiaomi Buds C", "m": "Xiaomi", "p": 20, "a": 50}]
+        self.red.tiendas["mediamarkt"] = prods
+        orig = v.extraer
+
+        def con_notas(html, base, extra=()):
+            ps = orig(html, base, extra)
+            notas = {"Xiaomi Buds A": (4.8, 5000), "Xiaomi Buds B": (4.8, 12), "Xiaomi Buds C": (3.9, 9000)}
+            for p in ps:
+                p["valoracion"], p["resenas"] = notas.get(p["nombre"], (None, None))
+            return ps
+        v.extraer = con_notas
+        try:
+            self.ronda()  # siembra con productos
+            for x in prods:
+                x["p"] = 18
+            nombres = [c["n"] for c in self.ronda()]
+        finally:
+            v.extraer = orig
+        self.assertEqual(nombres, ["Xiaomi Buds A"])
+
+    def test_tus_publicaciones_no_se_repiten(self):
+        perfil = '<a href="/ofertas/xiaomi-redmi-buds-6-pro-2057000">Xiaomi Redmi Buds 6 Pro auriculares ANC</a>'
+        red = self.red
+
+        def falso(url, timeout=20):
+            if "/profile/" in url:
+                return perfil, url
+            return red(url, timeout)
+        v.descargar = falso
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["entrega"] = {"modo": "hermes", "perfil_chollometro": "PorLa_Jeta"}
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.red.tiendas = {"mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro Negro", "m": "Xiaomi", "p": 39.99, "a": 79.99},
+                                           {"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        self.ronda()
+        for x in self.red.tiendas["mediamarkt"]:
+            x["p"] = round(x["p"] * 0.8, 2)
+        self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
+
+
+class SilencioYUltimaComprobacion(Base):
+    def setUp(self):
+        super().setUp()
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["entrega"] = {"modo": "telegram", "chat_id": "1"}
+        c["horario"]["silencio_entregas"] = [["14:00", "15:00"]]
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.enviados = []
+        self._orig_sil = (v.enviar_telegram, v.token_telegram, v.ahora_madrid)
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: self.enviados.append(texto) or True
+        v.token_telegram = lambda: "x"
+        self.hora = "14:30"
+        v.ahora_madrid = lambda: datetime.strptime(self.hora, "%H:%M")
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+
+    def tearDown(self):
+        v.enviar_telegram, v.token_telegram, v.ahora_madrid = self._orig_sil
+        super().tearDown()
+
+    def test_guarda_en_silencio_y_envia_despues(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 79
+        self.ronda()
+        self.assertEqual(self.enviados, [], "de 14 a 15 no se envía")
+        self.hora = "15:05"
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1)
+        self.assertIn("JBL Flip 6", self.enviados[0])
+        self.ronda()
+        self.assertEqual(len(self.enviados), 1, "no se reenvía")
+
+    def test_ultima_comprobacion_antes_de_enviar(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 79
+        self.ronda()  # guardada en silencio
+        # mientras tanto alguien la publica en la misma tienda
+        self.red.chollometro = [hilo("JBL Flip 6", "MediaMarkt", 79.0)]
+        self.hora = "15:05"
+        self.ronda()
+        self.assertEqual(self.enviados, [])
+        estado = sqlite3.connect(v.DB).execute("SELECT enviado FROM lista").fetchone()[0]
+        self.assertEqual(estado, 2)
+
+
+# ----------------------------------------------- videojuegos por su fuente
+
+STEAM = json.dumps({"results_html": """
+<a href="https://store.steampowered.com/app/413150/Stardew_Valley/?snr=1" data-ds-appid="413150" class="search_result_row ds_collapse_flag">
+ <div class="col search_name ellipsis"><span class="title">Stardew Valley</span></div>
+ <span class="search_review_summary positive" data-tooltip-html="Extremadamente positivos&lt;br&gt;El 98 % de las 612.345 reseñas de los usuarios para este juego son positivas."></span>
+ <div class="discount_block"><div class="discount_pct">-80%</div><div class="discount_prices">
+ <div class="discount_original_price">13,99€</div><div class="discount_final_price">2,79€</div></div></div></a>
+<a href="https://store.steampowered.com/app/999/Juego_Raro/" data-ds-appid="999" class="search_result_row">
+ <span class="title">Juego Raro</span>
+ <span class="search_review_summary" data-tooltip-html="Positivos&lt;br&gt;El 85 % de las 37 reseñas de los usuarios para este juego son positivas."></span>
+ <div class="discount_original_price">9,99€</div><div class="discount_final_price">0,99€</div></a>
+<a href="https://store.steampowered.com/app/555/Solo_50/" data-ds-appid="555" class="search_result_row">
+ <span class="title">Solo Cincuenta</span>
+ <span class="search_review_summary" data-tooltip-html="Muy positivos&lt;br&gt;El 91 % de las 20.000 reseñas de los usuarios para este juego son positivas."></span>
+ <div class="discount_original_price">20,00€</div><div class="discount_final_price">10,00€</div></a>"""})
+
+EPIC = json.dumps({"data": {"Catalog": {"searchStore": {"elements": [
+    {"title": "Juego Gratis", "productSlug": "juego-gratis", "keyImages": [{"type": "OfferImageWide", "url": "https://cdn/x.jpg"}],
+     "price": {"totalPrice": {"discountPrice": 0, "originalPrice": 2499}},
+     "promotions": {"promotionalOffers": [{"promotionalOffers": [{"discountSetting": {"discountPercentage": 0}}]}]}},
+    {"title": "Próximamente", "productSlug": "luego", "price": {"totalPrice": {"discountPrice": 1999, "originalPrice": 1999}},
+     "promotions": {"promotionalOffers": [], "upcomingPromotionalOffers": [{}]}}]}}}})
+
+REDDIT = json.dumps({"data": {"children": [
+    {"data": {"title": "[Game] Monument Valley 2 ($4.99 -> Free)", "url": "https://play.google.com/store/apps/details?id=a.b"}},
+    {"data": {"title": "[App] Nova Launcher Prime - 4,99 € → 0,99 €", "url": "https://play.google.com/store/apps/details?id=c.d"}},
+    {"data": {"title": "[Game] Algo sin precio", "url": "https://play.google.com/store/apps/details?id=e.f"}},
+    {"data": {"title": "Discusión semanal", "url": "https://www.reddit.com/r/x"}}]}})
+
+
+class FuentesJuegos(unittest.TestCase):
+    def setUp(self):
+        self._orig = (v.descargar, v.time.sleep)
+        v.time.sleep = lambda s: None
+
+        def falso(url, timeout=20):
+            if "steampowered.com/search/results" in url:
+                return (STEAM if "start=0" in url else json.dumps({"results_html": ""})), url
+            if "freeGamesPromotions" in url:
+                return EPIC, url
+            if "reddit.com" in url:
+                return REDDIT, url
+            raise OSError("no esperado: " + url)
+        v.descargar = falso
+
+    def tearDown(self):
+        v.descargar, v.time.sleep = self._orig
+
+    def test_steam(self):
+        ps = {p["nombre"]: p for p in v.steam_ofertas()}
+        sv = ps["Stardew Valley"]
+        self.assertEqual((sv["precio"], sv["precio_antes"], sv["valoracion"], sv["resenas"]), (2.79, 13.99, 98.0, 612345))
+        self.assertEqual(sv["url"], "https://store.steampowered.com/app/413150/Stardew_Valley/")
+        self.assertTrue(sv["imagen_url"].endswith("/413150/header.jpg"))
+        self.assertEqual(ps["Juego Raro"]["resenas"], 37)
+
+    def test_epic_solo_lo_que_esta_en_promocion(self):
+        ps = v.epic_gratis()
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"]) for p in ps], [("Juego Gratis", 0.0, 24.99)])
+        self.assertEqual(ps[0]["url"], "https://store.epicgames.com/es-ES/p/juego-gratis")
+
+    def test_apps_desde_reddit(self):
+        ps = {p["nombre"]: (p["precio"], p["precio_antes"]) for p in v.ofertas_apps("googleplaydeals", "play.google.com")}
+        self.assertEqual(ps, {"Monument Valley 2": (0.0, 4.99), "Nova Launcher Prime": (0.99, 4.99)})
+
+    def test_reglas_de_juegos_en_la_ronda(self):
+        """80 % o más y 500 reseñas: pasa Stardew; fuera el de 37 reseñas y el del 50 %."""
+        cfg = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        r = v.reglas_de(cfg, "videojuegos", "store.steampowered.com")
+        pasan = []
+        for p in v.steam_ofertas():
+            d = 1 - p["precio"] / p["precio_antes"]
+            if d >= r["descuento_min"] and (p["resenas"] or 0) >= r["min_resenas"]:
+                pasan.append(p["nombre"])
+        self.assertEqual(pasan, ["Stardew Valley"])
+
+    def test_fuente_caida_no_rompe(self):
+        v.descargar = lambda url, timeout=20: (_ for _ in ()).throw(OSError("403"))
+        t, url, ps, err = v.leer_api("store.epicgames.com")
+        self.assertEqual((ps, "403" in err), ([], True))
+
+
+# ------------------------------------------------- sesiones, socio e informe
+
+class Sesiones(Base):
+    def setUp(self):
+        super().setUp()
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["entrega"] = {"modo": "hermes", "chat_id": "1"}
+        c["requiere_login"] = ["pccomponentes.com"]
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.avisos = []
+        self._o = (v.enviar_telegram, v.token_telegram)
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: self.avisos.append(texto) or True
+        v.token_telegram = lambda: "x"
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}],
+                            "pccomponentes": [{"n": "Sony WH-CH520", "m": "Sony", "p": 40, "a": 60}]}
+
+    def tearDown(self):
+        v.enviar_telegram, v.token_telegram = self._o
+        super().tearDown()
+
+    def test_aviso_cuando_caduca_la_sesion(self):
+        self.ronda()
+        self.red.tiendas["pccomponentes"] = []  # sesión caducada: ya no ve productos
+        self.ronda()
+        self.assertEqual(self.avisos, [], "un fallo suelto no avisa")
+        self.ronda()
+        self.assertEqual(len(self.avisos), 1)
+        self.assertIn("login pccomponentes.com", self.avisos[0])
+        self.ronda()
+        self.assertEqual(len(self.avisos), 1, "solo un aviso al día")
+        self.red.tiendas["pccomponentes"] = [{"n": "Sony WH-CH520", "m": "Sony", "p": 40, "a": 60}]
+        self.ronda()  # vuelve a ver productos: se reinicia el contador
+        n = sqlite3.connect(v.DB).execute("SELECT COUNT(*) FROM meta WHERE k='login_fallos:pccomponentes.com'").fetchone()[0]
+        self.assertEqual(n, 0)
+
+    def test_informe_por_tienda(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 79
+        self.ronda()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            v.informe()
+        texto = buf.getvalue()
+        self.assertIn("mediamarkt.es", texto)
+        fila = sqlite3.connect(v.DB).execute(
+            "SELECT rondas, leidos, candidatos, enviados FROM stats WHERE tienda='mediamarkt.es'").fetchone()
+        self.assertEqual(fila, (2, 2, 1, 1))
+
+    def test_precio_socio(self):
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["reglas_tienda"] = {"mediamarkt.es": {"socio": True}}
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 79
+        c = self.ronda()[0]
+        self.assertEqual(c["socio"], 1)
+        self.assertIn("(precio socio)", v.mensaje_candidato(1, {"tienda": "x", "nombre": "y", "precio": 1, "socio": True}))
+
+
+class Login(unittest.TestCase):
+    def test_abre_la_tienda_y_espera_a_que_cierres(self):
+        tmp = Path(tempfile.mkdtemp())
+        orig = {k: getattr(v, k) for k in ("DATOS", "DB", "CONFIG", "Navegador")}
+        v.DATOS, v.DB, v.CONFIG = tmp, tmp / "v.db", tmp / "t.json"
+        v.CONFIG.write_text(json.dumps({"logins": {"showroomprive.es": "https://www.showroomprive.es/login"}}), encoding="utf-8")
+        visto = {}
+
+        class Pagina:
+            def goto(self, url, **kw):
+                visto["url"] = url
+
+        class Ctx:
+            pages = [Pagina()]
+
+            def wait_for_event(self, ev, timeout=None):
+                visto["espera"] = ev
+
+        class NavFalso:
+            def __init__(self, cfg):
+                visto["visible"] = cfg["navegador"]["visible"]
+                self._ctx = Ctx()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                visto["cerrado"] = self._ctx is None
+
+        v.Navegador = NavFalso
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.login("showroomprive.es")
+        finally:
+            for k, val in orig.items():
+                setattr(v, k, val)
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(visto, {"visible": True, "url": "https://www.showroomprive.es/login", "espera": "close", "cerrado": True})
+
+    def test_varias_tiendas_en_pestanas(self):
+        tmp = Path(tempfile.mkdtemp())
+        orig = {k: getattr(v, k) for k in ("DATOS", "DB", "CONFIG", "Navegador")}
+        v.DATOS, v.DB, v.CONFIG = tmp, tmp / "v.db", tmp / "t.json"
+        v.CONFIG.write_text(json.dumps({"logins": {"veepee.es": "https://www.veepee.es/"}}), encoding="utf-8")
+        abiertas = []
+
+        class Pagina:
+            def goto(self, url, **kw):
+                abiertas.append(url)
+
+        class Ctx:
+            pages = [Pagina()]
+
+            def new_page(self):
+                return Pagina()
+
+            def wait_for_event(self, ev, timeout=None):
+                pass
+
+        class NavFalso:
+            def __init__(self, cfg):
+                self._ctx = Ctx()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        v.Navegador = NavFalso
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.login("veepee.es", "privalia.com")
+        finally:
+            for k, val in orig.items():
+                setattr(v, k, val)
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(len(abiertas), 2)
+        self.assertEqual(abiertas[0], "https://www.veepee.es/")
+
+
+# ------------------------------------------------------------------ viajes
+
+FEED = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel>
+<item><title>Escapada a Oporto: vuelos + 2 noches de hotel por 79€</title><link>https://www.blog.es/oporto</link>
+<media:content url="https://www.blog.es/oporto.jpg"/></item>
+<item><title>Nueva York 5 noches con vuelos desde 429 euros</title><link>https://www.blog.es/nyc</link></item>
+<item><title>Maldivas de lujo por 2.300€</title><link>https://www.blog.es/maldivas</link></item>
+<item><title>Consejos para hacer la maleta</title><link>https://www.blog.es/maleta</link></item>
+</channel></rss>"""
+
+
+class Viajes(Base):
+    def setUp(self):
+        super().setUp()
+        self.feed = FEED
+        red = self.red
+
+        def falso(url, timeout=20):
+            if url.endswith("/feed/"):
+                return self.feed, url
+            return red(url, timeout)
+        v.descargar = falso
+
+    def test_lee_el_feed(self):
+        ps = {p["nombre"]: (p["precio"], p["url"], p["imagen_url"]) for p in v.leer_rss("blog.es")}
+        self.assertEqual(ps["Escapada a Oporto: vuelos + 2 noches de hotel por 79€"],
+                         (79.0, "https://www.blog.es/oporto", "https://www.blog.es/oporto.jpg"))
+        self.assertEqual(ps["Nueva York 5 noches con vuelos desde 429 euros"][0], 429.0)
+        self.assertNotIn("Consejos para hacer la maleta", ps, "sin precio no entra")
+
+    def test_ronda_de_viajes(self):
+        c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        c["categorias"]["viajes"]["fuentes"] = ["blog.es"]
+        v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
+        self.assertEqual(self.ronda("viajes"), [], "primera vez: memoriza")
+        self.feed = FEED.replace("</channel>", """<item><title>Budapest 4 días con vuelos y hotel por 85€</title>
+            <link>https://www.blog.es/budapest</link></item><item><title>Bali 10 noches por 1.900€</title>
+            <link>https://www.blog.es/bali</link></item></channel>""")
+        nombres = [x["n"] for x in self.ronda("viajes")]
+        self.assertEqual(nombres, ["Budapest 4 días con vuelos y hotel por 85€"], "Bali supera los 450 €")
+        self.assertEqual(self.red.llamadas["idealo"], 0, "en viajes no se consulta Idealo")
+
+
+# ----------------------------------------------- pausa de tiendas que fallan
+
+class PausaPorFallos(Base):
+    def test_pausa_y_vuelta(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        self.red.caidas.add("pccomponentes")
+        for _ in range(3):
+            self.ronda()
+        con = sqlite3.connect(v.DB)
+        self.assertIsNotNone(con.execute("SELECT v FROM meta WHERE k='pausa:pccomponentes.com'").fetchone())
+        antes = len(self.red.pedidas)
+        self.ronda()
+        pedidas = self.red.pedidas[antes:]
+        self.assertTrue(pedidas and all("mediamarkt" in u for u in pedidas),
+                        f"solo mediamarkt (con su ?page=2): pccomponentes está en pausa -> {pedidas}")
+        # pasa la pausa y la tienda vuelve a funcionar: se reinicia
+        con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='pausa:pccomponentes.com'")
+        con.commit()
+        self.red.caidas.clear()
+        self.ronda()
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='fallos:pccomponentes.com'").fetchone())
+        con.close()
+
+    def test_pausa_crece(self):
+        con = v.bd()
+        for n in range(1, 7):
+            v.registrar_fallos(con, [("x.es", "", [], "403")])
+        fila = con.execute("SELECT v FROM meta WHERE k='pausa:x.es'").fetchone()[0]
+        minutos = (datetime.fromisoformat(fila) - datetime.now()).total_seconds() / 60
+        self.assertTrue(230 < minutos <= 240, minutos)  # 30 * 2**3
+        con.close()
+
+
+class NoSeLee(Base):
+    """Instrucciones de lectura, paso 4: si una web bloquea, "no se lee" y a la siguiente, sin bucles."""
+
+    def test_robots_o_antibot_fuera_24h_a_la_primera(self):
+        con = v.bd()
+        v.registrar_fallos(con, [("x.es", "", [], "robots.txt no permite leer https://x.es/")])
+        hasta = datetime.fromisoformat(con.execute("SELECT v FROM meta WHERE k='pausa:x.es'").fetchone()[0])
+        self.assertGreater((hasta - datetime.now()).total_seconds() / 3600, 23.9)
+        self.assertIn("robots.txt", con.execute("SELECT v FROM meta WHERE k='no_se_lee:x.es'").fetchone()[0])
+        v.registrar_fallos(con, [("x.es", "", [{"nombre": "a"}], None)])  # vuelve a leerse: se borra
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='no_se_lee:x.es'").fetchone())
+        con.close()
+
+    def test_muro_antibot_en_el_listado(self):
+        v.descargar = lambda url, timeout=20: ('<html><title>Just a moment...</title>'
+                                               '<div class="cf-chl-widget"></div></html>', url)
+        t, url, productos, error = v.leer_tienda("x.es", {"x.es": "https://x.es/ofertas"})
+        self.assertEqual(productos, [])
+        self.assertIn("antibot", error)
+
+
+class Catalogo(Base):
+    """Instrucciones de lectura, paso 3: también las categorías normales, no solo ofertas."""
+
+    def test_categorias_de_portada(self):
+        html = ('<nav><a href="/es/zapatillas-hombre">Zapatillas hombre</a><a href="/es/ropa-mujer/">Ropa mujer</a>'
+                '<a href="/es/ofertas">Ofertas</a><a href="/es/mi-cuenta">Mi cuenta</a>'
+                '<a href="/es/p/nike-pegasus-41-123456">Nike Pegasus 41</a><a href="https://otra.com/calzado">Calzado</a>'
+                '<a href="/es/ayuda/devoluciones">Devoluciones</a><a href="/es/zapatillas-hombre#top">Zapatillas</a>'
+                '<a href="/es/electrodomesticos">Electrodomésticos</a></nav>')
+        self.assertEqual(v.categorias_de_portada(html, "https://www.tienda.es/"),
+                         ["https://www.tienda.es/es/zapatillas-hombre", "https://www.tienda.es/es/ropa-mujer/",
+                          "https://www.tienda.es/es/electrodomesticos"])
+
+    def test_lee_una_categoria_por_turno(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        red, catalogo = self.red, [{"n": "JBL Tune 520BT", "m": "JBL", "p": 30, "a": 60}]
+
+        def falso(url, timeout=20):
+            if "/category/" in url:
+                red.pedidas.append(url)
+                return (tienda_html(catalogo), url) if "page=" not in url else ("<html></html>", url)
+            return red(url, timeout)
+        v.descargar = falso
+        v.guardar_catalogo({"mediamarkt.es": ["https://www.mediamarkt.es/es/category/auriculares",
+                                              "https://www.mediamarkt.es/es/category/televisores"]})
+        self.ronda()  # siembra ofertas y la primera categoría
+        self.assertIn("https://www.mediamarkt.es/es/category/auriculares", self.red.pedidas)
+        antes = len(self.red.pedidas)
+        self.ronda()
+        self.assertFalse([u for u in self.red.pedidas[antes:] if "/category/" in u], "como mucho una por hora")
+        con = sqlite3.connect(v.DB)
+        con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='cat_ultimo:mediamarkt.es'")
+        con.execute("UPDATE meta SET v='0' WHERE k='cat_turno:mediamarkt.es'")
+        con.commit()
+        con.close()
+        catalogo.append({"n": "JBL Live 770NC", "m": "JBL", "p": 50.0, "a": 150.0})
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Live 770NC"], "un producto nuevo de la categoría es candidato")
+
+    def test_varias_por_ronda_y_turno_circular(self):
+        con = v.bd()
+        v.guardar_catalogo({"a.es": ["u1", "u2", "u3", "u4", "u5"]})
+        cfg = {"catalogo_por_tienda": {"a.es": {"cada_min": 0, "por_ronda": 2}}}
+        vistos = [u for _ in range(3) for _, u in v.catalogo_turno(con, cfg, ["a.es"])]
+        self.assertEqual(vistos, ["u1", "u2", "u3", "u4", "u5", "u1"])
+        con.close()
+
+    def test_enlace_del_comparador_sin_visitar_goto(self):
+        # PCComTracker enlaza a PcComponentes por /goto/ (prohibido en su robots.txt): la URL real va dentro.
+        href = "/goto/pccomponentes?url=https%3A%2F%2Fwww.pccomponentes.com%2Fjbl-flip-6&amp;source=web&amp;productId=5"
+        self.assertEqual(v.enlace_real(v.unescape(href)), "https://www.pccomponentes.com/jbl-flip-6")
+        self.assertEqual(v.enlace_real("https://x.es/a"), "https://x.es/a")
+        html = ('<a href="/producto/jbl-flip-6-5">JBL Flip 6</a>'
+                f'<a href="{href}" aria-label="Ver JBL Flip 6 en PcComponentes por 89,99 €, mejor precio">ir</a>')
+        ps = v.via_comparador(html, [], "pccomponentes.com", "https://pccomtracker.com/black-friday")
+        self.assertEqual([(p["url"], p["precio"], p["historico_url"]) for p in ps],
+                         [("https://www.pccomponentes.com/jbl-flip-6", 89.99, "https://pccomtracker.com/producto/jbl-flip-6-5")])
+        # Tarjeta con el nombre en <h3> (subcategorías del comparador).
+        tarjeta = ('<a class="card" href="/producto/radio-blow-x-pro-20110331"><p>Blow</p><h3>Radio coche Blow X-PRO 1 '
+                   'Bluetooth</h3><span>20.99<!-- -->€</span><span>PCComponentes</span></a>') * 1
+        otras = "".join(f'<a href="/producto/otro-{i}-2011033{i}"><h3>Altavoz Blow modelo {i}</h3><span>{30 + i}€</span></a>'
+                        for i in range(3))
+        nombres = [p["name"] for p in v.tarjetas_html(tarjeta + otras, "https://pccomtracker.com/categoria/sonido/altavoz")]
+        self.assertIn("Radio coche Blow X-PRO 1 Bluetooth", nombres)
+
+    def test_categoria_que_no_existe_sale_de_la_lista(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        red = self.red
+
+        def falso(url, timeout=20):
+            if "/category/" in url:
+                raise OSError("HTTP Error 404: Not Found")
+            return red(url, timeout)
+        v.descargar = falso
+        v.guardar_catalogo({"mediamarkt.es": ["https://www.mediamarkt.es/es/category/vieja"]})
+        self.ronda()
+        self.assertEqual(v.urls_catalogo(), {"mediamarkt.es": []})
+        con = sqlite3.connect(v.DB)
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='pausa:mediamarkt.es'").fetchone(),
+                          "la tienda sigue leyéndose")
+        con.close()
+
+    def test_vacia_en_descarga_pasa_a_chrome(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["navegador_si_vacia"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}], "pccomponentes": []}
+        con_chrome = []
+        orig = v.leer_con_pestanas
+        v.leer_con_pestanas = lambda cfg, trabajos: con_chrome.extend(t for t, _, _ in trabajos) or [
+            (t, u, [], None) for t, u, _ in trabajos]
+        try:
+            self.ronda()
+            self.ronda()
+            self.assertEqual(con_chrome, [], "aún no")
+            antes = len(self.red.pedidas)
+            self.ronda()
+        finally:
+            v.leer_con_pestanas = orig
+        self.assertEqual(con_chrome, ["pccomponentes.com"])
+        self.assertFalse([u for u in self.red.pedidas[antes:] if "pccomponentes" in u], "ya no se descarga")
+
+
+class IdealoRutas(unittest.TestCase):
+    def test_prueba_la_segunda_ruta_y_la_recuerda(self):
+        pedidas = []
+
+        def falso(url, timeout=20):
+            pedidas.append(url)
+            if "resultados.html" in url:
+                return "<html>nada</html>", url
+            return ('<script type="application/ld+json">{"@type":"Product","name":"JBL Flip 6",'
+                    '"offers":{"lowPrice":"85,00"}}</script>'), url
+        orig = (v.descargar, v.time.sleep, v._IDEALO_BUENA[0])
+        v.descargar, v.time.sleep = falso, (lambda s: None)
+        v._IDEALO_BUENA[0] = None
+        try:
+            p = {"nombre": "JBL Flip 6", "ean": "6925281993145"}
+            self.assertEqual(v.idealo_red(p), 85.0)
+            self.assertEqual(len(pedidas), 2)
+            pedidas.clear()
+            self.assertEqual(v.idealo_red(p), 85.0)
+            self.assertEqual(len(pedidas), 1, "la siguiente vez va directa a la ruta buena")
+        finally:
+            v.descargar, v.time.sleep, v._IDEALO_BUENA[0] = orig
+
+
+# --------------------------------------------- dossier más completo y fuentes nuevas
+
+class DatosPorCodigo(unittest.TestCase):
+    def test_cupon_vigencia_y_especificaciones(self):
+        ficha = ('<p>Usa el código BLACK15 y ahorra un 15 %. Oferta válida hasta el 12/11 a las 23:59.</p>'
+                 '<table><tr><th>Potencia</th><td>1.700 W</td></tr><tr><th>Capacidad</th><td>5,5 L</td></tr>'
+                 '<tr><th>Programas</th><td>8</td></tr></table>'
+                 '<script type="application/ld+json">' + json.dumps({"@type": "Product", "name": "Cosori Dual Blaze",
+                 "offers": {"price": 99}, "additionalProperty": [{"name": "Color", "value": "Negro"}]}) + "</script>")
+        f = v.analizar_ficha(ficha, "https://t.es/p")
+        self.assertEqual(f["cupones"], ["BLACK15"])
+        self.assertIn("12/11", f["vigencia"])
+        self.assertIn("Potencia: 1.700 W", f["specs"])
+        self.assertIn("Color: Negro", f["specs"])
+
+    def test_sin_falsos_cupones(self):
+        self.assertEqual(v.cupones_en("Introduce tu código postal 23660 para ver el envío"), [])
+
+    def test_minimo_en_comparador(self):
+        self.assertEqual(v.minimo_en_texto("<div>Precio mínimo histórico: <b>79,90 €</b></div>"), 79.9)
+        self.assertIsNone(v.minimo_en_texto("<div>Sin datos</div>"))
+
+    def test_historico_en_dos_pasos(self):
+        paginas = {
+            "https://comp.es/buscar?q=JBL+Flip+6": '<a href="/p/jbl-flip-6">JBL Flip 6 altavoz</a><a href="/p/otro">Sony XB13</a>',
+            "https://comp.es/p/jbl-flip-6": "<p>Mínimo histórico 84,99 €</p>",
+        }
+        orig = v.descargar
+        v.descargar = lambda url, timeout=20: (paginas[url], url)
+        try:
+            self.assertEqual(v.historico_generico("https://comp.es/buscar?q={q}", "JBL Flip 6"),
+                             (84.99, "https://comp.es/p/jbl-flip-6"))
+            cfg = {"historicos": {"defecto": "comp", "busquedas": {"comp": "https://comp.es/buscar?q={q}"}}}
+            h = v.historico(cfg, {"n": "JBL Flip 6", "t": "mediamarkt.es", "p": 79})
+            self.assertEqual((h["minimo"], h["fuente"], h["es_minimo"]), (84.99, "comp", True))
+        finally:
+            v.descargar = orig
+
+    def test_verificador_por_tienda_y_categoria(self):
+        c = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))
+        self.assertEqual(v.verificador_de(c, {"t": "pccomponentes.com"}), "pccomtracker")
+        self.assertEqual(v.verificador_de(c, {"t": "store.steampowered.com"}), "isthereanydeal")
+        self.assertEqual(v.verificador_de(c, {"t": "druni.es"}), "perfumon")
+        self.assertEqual(v.verificador_de(c, {"t": "movistar.es", "cat": "moviles"}), "kimovil")
+        self.assertEqual(v.verificador_de(c, {"t": "ikea.com/es"}), "precioreal")
+
+    def test_juegos_gratis(self):
+        datos = json.dumps({"data": {"children": [
+            {"data": {"title": "[Steam] (Game) Juego Regalado", "url": "https://store.steampowered.com/app/1/"}},
+            {"data": {"title": "[Epic] (Game) Otro Regalo - Free until 13/11", "url": "https://store.epicgames.com/p/otro"}},
+            {"data": {"title": "[Steam] (Beta) Prueba", "url": "https://store.steampowered.com/app/2/"}},
+            {"data": {"title": "[GOG] (Game) Caducado", "url": "https://gog.com/x", "link_flair_text": "Expired"}}]}})
+        orig = v.descargar
+        v.descargar = lambda url, timeout=20: (datos, url)
+        try:
+            ps = v.juegos_gratis()
+        finally:
+            v.descargar = orig
+        self.assertEqual([(p["nombre"], p["precio"], p["gratis"]) for p in ps],
+                         [("Juego Regalado (Steam)", 0.0, True), ("Otro Regalo (Epic)", 0.0, True)])
+
+    def test_canal_telegram(self):
+        html = ('<div class="tgme_widget_message_text js-message_text">🔥 Xiaomi Redmi Buds 6 Pro por 34,99€ (antes 79,99€)<br/>'
+                '<a href="https://www.mediamarkt.es/es/product/_buds-123">https://www.mediamarkt.es/es/product/_buds-123</a></div>'
+                '<div class="tgme_widget_message_text">Buenos días a todos</div>')
+        orig = v.descargar
+        v.descargar = lambda url, timeout=20: (html, url)
+        try:
+            ps = v.leer_telegram("canalchollos")
+        finally:
+            v.descargar = orig
+        self.assertEqual(len(ps), 1)
+        self.assertEqual((ps[0]["precio"], ps[0]["precio_antes"]), (34.99, 79.99))
+        self.assertTrue(ps[0]["nombre"].startswith("Xiaomi Redmi Buds 6 Pro"))
+        self.assertEqual(ps[0]["url"], "https://www.mediamarkt.es/es/product/_buds-123")
+
+
+class ErrorDePrecio(Base):
+    def test_caida_fuerte_sin_precio_tachado(self):
+        # Sin precio anterior en la web y sin Idealo: normalmente no pasaría.
+        self.red.tiendas = {"mediamarkt": [{"n": "Philips Airfryer XXL", "m": "Philips", "p": 199}], "pccomponentes": []}
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 59  # -70 %: posible error de precio
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["Philips Airfryer XXL"])
+        self.assertEqual(c[0]["err"], 1)
+        texto = v.mensaje_candidato(1, {"tienda": "mediamarkt.es", "nombre": "x", "precio": 59,
+                                        "error_precio": True, "_min_previo": 199})
+        self.assertIn("posible error de precio (antes 199 €)", texto)
+
+    def test_bajada_normal_no_es_error(self):
+        self.red.tiendas = {"mediamarkt": [{"n": "Philips Airfryer XXL", "m": "Philips", "p": 199}], "pccomponentes": []}
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 179  # -10 %, sin tachado ni Idealo: no pasa
+        self.assertEqual(self.ronda(), [])
+
+
+# ------------------------------------------------------- navegador real
+
+try:
+    import playwright  # noqa: F401
+    HAY_PW = True
+except ImportError:
+    HAY_PW = False
+
+
+@unittest.skipUnless(HAY_PW, "Playwright no instalado (fase 2)")
+class NavegadorReal(unittest.TestCase):
+    """Página que carga los productos con JavaScript desde una API, como PcComponentes o Coolmod."""
+
+    def setUp(self):
+        api = json.dumps({"results": [
+            {"productName": "Logitech MX Master 3S", "promotionalPrice": 69.99, "originalPrice": 119.99,
+             "slug": "/logitech-mx-master-3s"},
+            {"productName": "Kingston NV3 1TB", "promotionalPrice": 54.9, "originalPrice": 79.9,
+             "slug": "/kingston-nv3"}]}).encode()
+        pagina = rb"""<html><body><div id=app>Cargando...</div><script>
+          fetch('/api/productos').then(r => r.json()).then(d => {
+            document.getElementById('app').innerHTML = d.results.map(p =>
+              '<div>' + p.productName + ' ' + p.promotionalPrice + ' \u20ac</div>').join('');
+          });</script></body></html>"""
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith("/scroll"):
+                    if getattr(self, "retraso", 0):
+                        time.sleep(self.retraso)  # tienda lenta
+                    cuerpo, tipo = self.pagina, "text/html"
+                else:
+                    cuerpo, tipo = (api, "application/json") if self.path.startswith("/api") else (pagina, "text/html")
+                self.send_response(200)
+                self.send_header("Content-Type", tipo)
+                self.end_headers()
+                self.wfile.write(cuerpo)
+
+            def log_message(self, *a):
+                pass
+
+        os.environ["NO_PROXY"] = os.environ["no_proxy"] = "127.0.0.1,localhost"
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_port}/ofertas"
+        self.tmp = Path(tempfile.mkdtemp())
+        self._datos, v.DATOS = v.DATOS, self.tmp
+
+    def tearDown(self):
+        self.srv.shutdown()
+        v.DATOS = self._datos
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_scroll_infinito(self):
+        pagina = b"""<html><body style="margin:0"><div id=l></div><script>
+          let n = 0; const l = document.getElementById('l');
+          function carga() { if (n >= 30) return; for (let i = 0; i < 10; i++, n++) {
+              const d = document.createElement('div'); d.style.height = '200px';
+              d.innerHTML = '<span itemscope itemtype="https://schema.org/Product"><b itemprop="name">Producto Philips ' + n +
+                '</b><span itemprop="offers" itemscope><meta itemprop="price" content="' + (10 + n) + '"></span></span>';
+              l.appendChild(d); } }
+          carga(); window.addEventListener('scroll', () => {
+            if (innerHeight + scrollY >= document.body.scrollHeight - 50) setTimeout(carga, 100); });
+          </script></body></html>"""
+        self.srv.RequestHandlerClass.pagina = pagina
+        with v.Navegador({"navegador": {"espera_ms": 900, "scroll_max": 10}}) as nav:
+            html, final, _ = nav.leer(self.url.replace("/ofertas", "/scroll"))
+        self.assertEqual(len(v.extraer(html, final)), 30)
+
+    def test_descarga_normal_no_ve_nada(self):
+        self.assertEqual(v.extraer(*v.descargar(self.url)), [])
+
+    def test_navegador_captura_la_api(self):
+        with v.Navegador({"navegador": {"espera_ms": 300}}) as nav:
+            t, url, productos, error = v.leer_tienda("prueba.es", {"prueba.es": self.url}, None, nav)
+        self.assertIsNone(error)
+        ps = {p["nombre"]: p for p in productos}
+        self.assertEqual(set(ps), {"Logitech MX Master 3S", "Kingston NV3 1TB"})
+        self.assertEqual((ps["Logitech MX Master 3S"]["precio"], ps["Logitech MX Master 3S"]["precio_antes"]),
+                         (69.99, 119.99))
+
+    def test_sin_playwright_no_rompe_la_ronda(self):
+        orig = v.leer_con_pestanas
+
+        def falla(cfg, trabajos):
+            raise ImportError("no playwright")
+        v.leer_con_pestanas = falla
+        try:
+            lect = v.leer_todas([], ["pccomponentes.com"], {}, "tecnologia", {})
+        finally:
+            v.leer_con_pestanas = orig
+        self.assertEqual(lect[0][3], "falta playwright (fase 2)")
+
+    def test_pestanas_en_paralelo(self):
+        import time as _t
+        lento = b"""<html><body><div id=a></div><script>
+          setTimeout(() => { document.getElementById('a').innerHTML =
+            '<span itemscope itemtype="https://schema.org/Product"><b itemprop="name">Philips Hue ' + location.pathname +
+            '</b><span itemprop="offers" itemscope><meta itemprop="price" content="20"></span></span>'; }, 100);
+          </script><img src="/foto.jpg"></body></html>"""
+        self.srv.RequestHandlerClass.pagina = lento
+        self.srv.RequestHandlerClass.retraso = 1.5
+        base = self.url.replace("/ofertas", "")
+        trabajos = [(f"t{i}.es", f"{base}/scroll{i}", 1) for i in range(4)]
+        cfg = {"navegador": {"pestanas": 4, "espera_ms": 600, "espera_red_ms": 2000, "scroll_max": 1}}
+        ini = _t.monotonic()
+        res = v.leer_con_pestanas(cfg, trabajos)
+        paralelo = _t.monotonic() - ini
+        self.assertEqual([len(r[2]) for r in res], [1, 1, 1, 1])
+        self.assertEqual([r[3] for r in res], [None] * 4)
+        cfg["navegador"]["pestanas"] = 1
+        ini = _t.monotonic()
+        v.leer_con_pestanas(cfg, trabajos)
+        secuencial = _t.monotonic() - ini
+        self.assertLess(paralelo, secuencial * 0.75, f"paralelo {paralelo:.1f}s vs una a una {secuencial:.1f}s")
+
+
+class AjusteBasura16Nov(unittest.TestCase):
+    """Casos reales de avisos malos del 15-16/11/2026."""
+
+    def test_precio_sospechoso(self):
+        # Secadora AEG leída a 9 € con el mercado a 738,90 €; DJI Power 1000 Mini a 49 € con 577,95 €.
+        self.assertTrue(v.precio_sospechoso({"precio": 9.0}, 738.9))
+        self.assertTrue(v.precio_sospechoso({"precio": 49.0}, 577.95))
+        # Localizador a 1 € sin mercado pero con mínimo histórico de PCComTracker.
+        self.assertTrue(v.precio_sospechoso({"precio": 1.0, "_hist": {"minimo": 14.9}}, None))
+        # Una bajada fuerte pero creíble sí pasa (-45 % sobre mercado).
+        self.assertFalse(v.precio_sospechoso({"precio": 55.0}, 100.0))
+        self.assertFalse(v.precio_sospechoso({"precio": 5.0}, None), "sin referencia no se juzga")
+
+    def test_sin_precio_oficial(self):
+        n = "AEG Secadora de bomba de calor AEG Series 8000 TR839T4PBC 9 kg Sin precio oficial de PCComponentes"
+        self.assertTrue(v.RE_SIN_PRECIO_OFICIAL.search(n))
+        self.assertFalse(v.RE_SIN_PRECIO_OFICIAL.search("Apple AirPods Max Naranja"))
+
+    def test_infantil(self):
+        for n in ("Zapatos Niña Zapatillas bajas Puma Smash 3.0 Hearty V Inf Blanco / Rosa",
+                  "Zapatillas bajas Puma Puma Caven III AC+ PS Blanco / Rosa",
+                  "Nike Air Max 90 - Bebés", "Camiseta infantil Adidas", "Nike Revolution 7 TD"):
+            self.assertTrue(v.RE_INFANTIL.search(n), n)
+        for n in ("Adidas Gazelle Bold júnior rosa", "New Balance 550 blancas", "Sonic Racing CrossWorlds - PS5",
+                  "Asics Gel-Rocket 12 Hombre"):
+            self.assertFalse(v.RE_INFANTIL.search(n), n)
+
+    def test_demanda_exige_mismo_producto_y_precio_creible(self):
+        # AirPods Max a 130 € contra un hilo caliente a 378,99 €: demasiado barato para ser lo mismo.
+        p = {"precio": 130.0, "_cm_hot": {"precio": 378.99, "caducado": True, "temp": 2817}}
+        self.assertFalse(v.demanda_probada_ok(p))
+        p = {"precio": 34.99, "_cm_hot": {"precio": 36.0, "caducado": True, "temp": 850}}
+        self.assertTrue(v.demanda_probada_ok(p))
+        self.assertFalse(v.mismo_producto_hot("Monitor Philips 27E1N1800AE 27\" UltraHD 4K",
+                                              "Monitor Samsung Odyssey G7 32\" 4K 144 Hz"))
+        self.assertTrue(v.mismo_producto_hot("Monitor Philips 27E1N1800AE 27\" UltraHD 4K IPS",
+                                             "Philips 27E1N1800AE monitor 4K"))
+        self.assertTrue(v.mismo_producto_hot("JBL Charge 5 altavoz", "JBL Charge 5"))
+        self.assertFalse(v.mismo_producto_hot("JBL Charge 5 altavoz", "JBL Charge 6"))
+
+    def test_repetido_reciente(self):
+        recientes = [("amazon.es", "PlayStation 5 - Mando inalámbrico DualSense Starlight Blue - Exclusivo para PS5", 54.99)]
+        p = {"tienda": "amazon.es", "precio": 54.9,
+             "nombre": "PlayStation 5 - Mando inalámbrico DualSense Galactic Purple - Exclusivo para PS5"}
+        self.assertTrue(v.repetido_reciente(p, recientes))
+        self.assertFalse(v.repetido_reciente({**p, "tienda": "mediamarkt.es"}, recientes), "otra tienda sí")
+        self.assertFalse(v.repetido_reciente({**p, "precio": 44.99}, recientes), "más barato sí")
+        self.assertFalse(v.repetido_reciente({**p, "nombre": "Xbox Wireless Controller Carbon Black"}, recientes))
+        jbl = [("mediamarkt.es", "JBL Charge 4", 50.0)]
+        self.assertFalse(v.repetido_reciente({"tienda": "mediamarkt.es", "precio": 50.0, "nombre": "JBL Charge 5"}, jbl))
+
+
+if __name__ == "__main__":
+    unittest.main()

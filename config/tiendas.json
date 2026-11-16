@@ -1,0 +1,634 @@
+{
+ "_ayuda": {
+  "horario": "Fuera de este horario no se ejecuta nada (hora de Madrid).",
+  "cada_min": "Frecuencia de cada categoría en minutos (se usa al crear las tareas en Hermes).",
+  "navegador": "Tiendas que cargan con JavaScript o bloquean descargas: se leen con un Chromium real controlado por código (0 tokens). Requiere Playwright. visible=true abre la ventana (ayuda con antibots); canal='chrome' usa el Chrome instalado. pestanas: cuántas tiendas a la vez (2 con 8 GB de RAM, 3-4 con 16 GB). paginas: páginas por tienda en navegador (1 = solo bajar la página). bloquear_recursos: no descarga imágenes ni fuentes.",
+  "min_bajo_mercado": "0.05 = tiene que estar al menos un 5 % más barato que el mejor precio de mercado (Idealo o PrecioReal). Sube a 0.10 para ser más exigente.",
+  "descuento_min_real": "0.20 = 20 % sobre el precio anterior de la propia tienda.",
+  "descuento_min_sin_idealo": "Solo con exigir_precio_mercado=false: si ningún comparador encuentra el producto, se exige este descuento.",
+  "exigir_precio_mercado": "true = sin precio de mercado (Idealo o, si bloquea, PrecioReal) no se envía: el 'antes' de la tienda suele estar inflado.",
+  "max_verificaciones_ia_por_dia": "Tope de gasto: candidatos que puede recibir la IA al día.",
+  "paginas": "Páginas del listado que se leen por tienda. Se para antes si una página no trae productos nuevos. Pon 1 en tiendas que ya enseñan todo en la primera.",
+  "entrega": "modo 'telegram': el script te manda la lista gratis y tú pides 'verifica N' a Hermes. modo 'hermes': la IA verifica todo automáticamente (gasta más).",
+  "reglas_tienda": "Reglas que mandan sobre las de su categoría: descuento_min, min_resenas, min_valoracion (0-100), precio_max.",
+  "bloqueadas": "Tiendas con antibot que no deja entrar a ningún navegador automático. No se leen (ahorra tiempo).",
+  "perfil_chollometro": "Tus publicaciones: lo que ya has publicado no te vuelve a llegar.",
+  "precio_max_eur": "null = sin tope de precio. Pon un número (en filtros, en una categoría o en una tienda) para limitarlo.",
+  "apis": "Tiendas que se leen por su fuente de datos y no por su web: Steam (buscador de ofertas, con reseñas), Epic (promociones), Android (r/googleplaydeals) e iOS (r/AppHookup).",
+  "requiere_login": "Tiendas que necesitan sesión. Inicia sesión una vez con 'vigilante.py login <tienda>'. Si una da 0 productos dos rondas seguidas, te llega un aviso por Telegram para repetirlo.",
+  "socio": "En reglas_tienda, \"socio\": true marca los precios como 'precio socio' (hay que explicarlo en Chollometro).",
+  "viajes": "Se leen los feeds RSS de los blogs de 'fuentes'. Precio máximo 450 € (larga distancia). La IA valora en el 'verifica' si es chollo de verdad: Europa 60-110 €, larga distancia 400-450 €.",
+  "historicos": "Verificador de histórico por tienda o categoría. El script lo consulta en el dossier y la IA solo lo revisa. itad_key: clave gratuita de isthereanydeal.com (o variable de entorno ITAD_KEY).",
+  "radar": "Fuentes que cubren muchas tiendas a la vez: bajadas de precio de Idealo y PrecioReal (pasa 'descubrir radar') y canales públicos de Telegram.",
+  "max_avisos_telegram_hora": "Freno de emergencia (modo telegram): si se pasa, manda solo hasta el límite, pausa los envíos 2 horas (o hasta el día siguiente con el tope diario) y te avisa una vez.",
+  "error_precio": "Si un producto cae un 40 % o más respecto a su mínimo visto, llega marcado como posible error de precio.",
+  "max_por_tienda_y_ronda": "Como mucho N candidatos de la misma tienda por ronda (evita que una tienda llene Telegram).",
+  "ahorro_min_eur": "Ahorro mínimo en euros frente al mercado (o al 'antes' si no hay mercado). Las categorías sin comparador piden 15 €.",
+  "antes_min_eur": "Precio original mínimo (juegos): GOG rebaja al 90 % juegos de 5 €.",
+  "historial_propio_dias": "Sin precio de mercado, solo se envía lo que baja al menos bajada_min_propia (10 %) de lo más barato que el vigilante le ha visto, con 14 días de seguimiento o más. Lo nuevo y el 'antes' de la tienda no cuentan.",
+  "solo_tiendas_con_demanda": "Solo se leen las tiendas con al menos demanda_min_hot posts calientes (300° o más) en Chollometro en demanda_dias días (copia local en vistos.db, tabla cm). siempre_leer: tiendas que se leen igualmente.",
+  "descuento_real_min": "Regla de Instinct: BUENA = al menos un 25 % de descuento REAL, sobre referencias independientes (mercado del mismo modelo, histórico de PCComTracker, mínimo visto por el vigilante o precio inicial de una oferta que ya fue caliente). El 'antes' de la tienda solo no cuenta. Gratis y errores de precio, exentos."
+ },
+ "horario": {
+  "inicio": "08:00",
+  "fin": "00:45",
+  "zona": "Europe/Madrid",
+  "silencio_entregas": [
+   [
+    "14:00",
+    "15:00"
+   ]
+  ]
+ },
+ "filtros_codigo": {
+  "min_bajo_mercado": 0.05,
+  "descuento_min_real": 0.3,
+  "precio_max_eur": null,
+  "descuento_min_sin_idealo": 0.35,
+  "max_consultas_idealo_por_tanda": 40,
+  "max_candidatos_ia_por_tanda": 15,
+  "max_verificaciones_ia_por_dia": 120,
+  "exigir_precio_mercado": true,
+  "max_avisos_telegram_hora": 40,
+  "max_avisos_telegram_dia": 200,
+  "excluir": [
+   "xbox",
+   "shein",
+   "temu",
+   "wallapop",
+   "glovo",
+   "just eat",
+   "uber eats",
+   "jardín",
+   "jardin",
+   "césped",
+   "cesped",
+   "cortacésped",
+   "cortacesped",
+   "desbrozadora",
+   "motosierra",
+   "manguera",
+   "riego",
+   "pulverizadora",
+   "barbacoa",
+   "piscina",
+   "maceta",
+   "macetas",
+   "invernadero",
+   "motos",
+   "motocicleta",
+   "neumático",
+   "neumáticos",
+   "neumatico",
+   "neumaticos",
+   "motocard",
+   "fc-moto",
+   "fcmoto",
+   "outletmoto",
+   "para moto",
+   "de moto",
+   "casco moto",
+   "cascos moto",
+   "motero"
+  ],
+  "max_por_tienda_y_ronda": 2,
+  "sin_infantil_en": ["moda", "deporte"],
+  "precio_sospechoso": 0.4,
+  "repetido_horas": 24,
+  "ahorro_min_eur": 5,
+  "historial_propio_dias": 14,
+  "bajada_min_propia": 0.1,
+  "error_precio_dias_min": 1,
+  "solo_tiendas_con_demanda": true,
+  "demanda_dias": 120,
+  "demanda_min_hot": 2,
+  "siempre_leer": [],
+  "descuento_real_min": 0.25
+ },
+ "navegador": {
+  "visible": false,
+  "canal": "chrome",
+  "espera_ms": 2500,
+  "scroll_max": 8,
+  "pestanas": 2,
+  "paginas": 1,
+  "bloquear_recursos": true,
+  "espera_red_ms": 8000
+ },
+ "paginas": {
+  "defecto": 3,
+  "mi.com/es": 1
+ },
+ "catalogo_cada_min": 60,
+ "paginas_catalogo": {"descarga": 5, "navegador": 3},
+ "catalogo_por_tienda": {
+  "pccomponentes.com": {"cada_min": 15, "por_ronda": 6, "_nota": "613 subcategorías de PCComTracker (solo los 40 primeros de cada una: el resto va por /api/, prohibido en su robots.txt). Vuelta completa en ~1 día."}
+ },
+ "entrega": {
+  "modo": "telegram",
+  "chat_id": "456808276",
+  "perfil_chollometro": "PorLa_Jeta"
+ },
+ "reglas_tienda": {
+  "aliexpress.com": {
+   "min_resenas": 100,
+   "min_valoracion": 90
+  },
+  "amazon.es": {
+   "min_resenas": 100,
+   "min_valoracion": 80,
+   "descuento_min": 0.2
+  },
+  "store.steampowered.com": {
+   "descuento_min": 0.8,
+   "min_resenas": 500
+  },
+  "store.epicgames.com": {
+   "descuento_min": 0.8
+  },
+  "play.google.com": {
+   "descuento_min": 0.8,
+   "min_resenas": 500
+  },
+  "apps.apple.com": {
+   "descuento_min": 0.8,
+   "min_resenas": 500
+  },
+  "costco.es": {
+   "socio": true
+  },
+  "gog.com/es": {
+   "descuento_min": 0.8,
+   "antes_min_eur": 15,
+   "min_resenas": 300
+  },
+  "instant-gaming.com/es": {
+   "descuento_min": 0.8,
+   "antes_min_eur": 15
+  },
+  "humblebundle.com": {
+   "descuento_min": 0.8,
+   "antes_min_eur": 15
+  }
+ },
+ "categorias": {
+  "tecnologia": {
+   "cada_min": 10,
+   "tiendas": [
+    "mediamarkt.es",
+    "mi.com/es",
+    "euronics.es",
+    "tien21.es",
+    "powerplanetonline.com",
+    "alternate.es",
+    "pcbox.com",
+    "lenovo.com/es",
+    "hp.com/es-es",
+    "backmarket.es",
+    "expert.es",
+    "milar.es",
+    "electrocosto.com",
+    "beep.es",
+    "k-tuin.com",
+    "apple.com/es",
+    "dell.com/es-es",
+    "garmin.com/es-ES",
+    "logitech.com/es-es",
+    "store.acer.com/es-es",
+    "ldlc.com/es-es",
+    "rebuy.es",
+    "pccomponentes.com"
+   ],
+   "_nota_pccomponentes": "Su antibot no deja entrar a navegadores automáticos: se lee por PCComTracker (urls_ofertas.json), que enlaza directamente a PcComponentes con su precio.",
+   "navegador": [
+    "coolmod.com",
+    "samsung.com/es",
+    "mielectro.es",
+    "neobyte.es",
+    "electrodepot.es",
+    "fnac.es",
+    "worten.es",
+    "lg.com/es",
+    "sony.es",
+    "huawei.com/es"
+   ],
+   "descuento_min": 0.2
+  },
+  "moviles": {
+   "cada_min": 15,
+   "tiendas": [
+    "movistar.es",
+    "simyo.es",
+    "orange.es",
+    "vodafone.es"
+   ],
+   "navegador": [
+    "phonehouse.es"
+   ],
+   "descuento_min": 0.2
+  },
+  "generalistas": {
+   "cada_min": 10,
+   "tiendas": [
+    "tiendasmgi.es",
+    "miravia.es",
+    "action.com/es-es",
+    "casadellibro.com",
+    "emp.es"
+   ],
+   "navegador": [
+    "amazon.es",
+    "aliexpress.com",
+    "carrefour.es",
+    "elcorteingles.es",
+    "ebay.es"
+   ],
+   "apartadas": {
+    "groupon.es": "Lee bien con navegador (18 ofertas), pero son servicios sin marca ni precio de mercado: con las reglas actuales nunca pasa nada. Necesitaría reglas propias.",
+    "flyingtiger.com/es-es": "Lee bien con navegador (120 productos, 48 rebajados), pero es marca propia: el filtro de marca lo descarta todo."
+   }
+  },
+  "electro_marcas": {
+   "cada_min": 15,
+   "tiendas": [
+    "dyson.es",
+    "ninjakitchen.es",
+    "sharkclean.es",
+    "philips.es",
+    "delonghi.com/es-es",
+    "rowenta.es",
+    "moulinex.es",
+    "tefal.es",
+    "krups.es",
+    "es.roborock.com",
+    "ecovacs.com/es",
+    "bosch-home.es",
+    "balay.es"
+   ],
+   "navegador": [
+    "cecotec.es"
+   ],
+   "descuento_min": 0.2
+  },
+  "videojuegos": {
+   "cada_min": 10,
+   "tiendas": [
+    "game.es",
+    "xtralife.com",
+    "versusgamers.com",
+    "gog.com/es",
+    "instant-gaming.com/es",
+    "gamesplanet.com",
+    "store.ubisoft.com/es"
+   ],
+   "navegador": [
+    "store.playstation.com/es-es",
+    "nintendo.com/es-es",
+    "fanatical.com",
+    "humblebundle.com"
+   ],
+   "descuento_min": 0.5,
+   "exigir_descuento": true,
+   "exigir_marca": false,
+   "sin_idealo": true,
+   "_nota_sin_idealo": "Idealo y PrecioReal comparan copias físicas: en juegos digitales el filtro es el descuento (80 % en Steam/Epic), las reseñas y el histórico (IsThereAnyDeal, psdeals) del 'verifica'.",
+   "apis": [
+    "store.steampowered.com",
+    "store.epicgames.com"
+   ],
+   "apartadas": {
+    "play.google.com": "Se leía de r/googleplaydeals.",
+    "apps.apple.com": "Se leía de r/AppHookup.",
+    "gratis.reddit": "Se leía de r/FreeGameFindings.",
+    "_por_que": "El robots.txt de Reddit prohíbe todo acceso automatizado (User-agent: * / Disallow: /) y devuelve 403 Blocked. Vía legítima: registrar una app gratuita en la cuenta de Reddit (API oficial, uso personal) y leer con sus credenciales.",
+    "driffle.com": "Revende claves: sus páginas son tarjetas regalo o fichas sueltas, sin precio anterior; con exigir_descuento nunca pasaría nada."
+   },
+   "antes_min_eur": 10
+  },
+  "supermercado": {
+   "cada_min": 30,
+   "tiendas": [
+    "alcampo.es",
+    "tienda.mercadona.es",
+    "eroski.es",
+    "aldi.es",
+    "tienda.consum.es",
+    "capraboacasa.com",
+    "gadisline.com",
+    "ahorramas.com",
+    "condisline.com",
+    "bonpreuesclat.cat"
+   ],
+   "navegador": [
+    "lidl.es",
+    "dia.es",
+    "hipercor.es",
+    "makro.es"
+   ],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.6,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "hogar": {
+   "cada_min": 15,
+   "tiendas": [
+    "ikea.com/es",
+    "jysk.es",
+    "conforama.es",
+    "bricomart.es",
+    "kavehome.com/es",
+    "sklum.com/es",
+    "westwing.es",
+    "zarahome.com/es",
+    "lampara.es",
+    "kenayhome.com",
+    "banak.com",
+    "manomano.es",
+    "bricoking.es"
+   ],
+   "navegador": [
+    "bricodepot.es",
+    "bauhaus.es",
+    "laredoute.es"
+   ],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "apartadas": {
+    "leroymerlin.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "aki.es": "Redirige a Leroy Merlin (fusionadas), que bloquea con antibot."
+   },
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "salud_belleza": {
+   "cada_min": 15,
+   "tiendas": [
+    "primor.eu",
+    "hsnstore.com",
+    "perfumerias.com",
+    "druni.es",
+    "arenal.com",
+    "maquillalia.com",
+    "perfumesclub.com",
+    "lookfantastic.es",
+    "perfumeriasaromas.com",
+    "farma2go.com",
+    "perfumeriasjulia.es",
+    "kikocosmetics.com/es-es",
+    "rituals.com/es-es"
+   ],
+   "navegador": [
+    "douglas.es",
+    "notino.es",
+    "yves-rocher.es",
+    "es.iherb.com"
+   ],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "apartadas": {
+    "mifarma.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "dosfarma.com": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar."
+   },
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "moda": {
+   "cada_min": 30,
+   "tiendas": [
+    "elganso.com/es",
+    "scalpers.com",
+    "calzedonia.com/es",
+    "intimissimi.com/es",
+    "tezenis.com/es",
+    "yesstyle.com",
+    "cortefiel.com/es",
+    "womensecret.com/es",
+    "desigual.com/es_ES",
+    "pepejeans.com/es_es",
+    "bimbaylola.com"
+   ],
+   "navegador": [
+    "zalando.es",
+    "mangooutlet.com",
+    "zara.com/es",
+    "hm.com/es_es",
+    "pullandbear.com/es",
+    "bershka.com/es",
+    "stradivarius.com/es",
+    "lefties.com/es",
+    "massimodutti.com/es",
+    "oysho.com/es",
+    "outlet-pc.es",
+    "esdemarca.com",
+    "asos.com/es"
+   ],
+   "apartadas": {
+    "zalando-prive.es": "Necesita tu sesión: ejecuta 'vigilante.py login zalando-prive.es' y vuelve a ponerla en la lista.",
+    "showroomprive.es": "Necesita tu sesión: ejecuta 'vigilante.py login showroomprive.es' y vuelve a ponerla en la lista.",
+    "privalia.com": "Necesita tu sesión: ejecuta 'vigilante.py login privalia.com' y vuelve a ponerla en la lista.",
+    "veepee.es": "Necesita tu sesión: ejecuta 'vigilante.py login veepee.es' y vuelve a ponerla en la lista.",
+    "levi.com/ES/es_ES": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "uniqlo.com/es/es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "springfield.com/es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+   },
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "deporte": {
+   "cada_min": 30,
+   "tiendas": [
+    "deporte-outlet.es",
+    "spartoo.es",
+    "eu.puma.com/es",
+    "nike.com/es",
+    "jdsports.es",
+    "intersport.es",
+    "skechers.es",
+    "crocs.es",
+    "converse.com/es",
+    "underarmour.es",
+    "camper.com/es_ES",
+    "forumsport.com",
+    "padelnuestro.com",
+    "tradeinn.com",
+    "sportisgood.com",
+    "atmosferasport.es",
+    "bstn.com",
+    "decimas.es",
+    "futbolemotion.com",
+    "basketballemotion.com"
+   ],
+   "navegador": [
+    "adidas.es",
+    "footlocker.es",
+    "sprinter.es",
+    "motocard.com",
+    "sportsdirect.com"
+   ],
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Con filtro de marca (casi todo es Nike, Adidas, Asics...); sin precio de mercado, 50 %.",
+   "apartadas": {
+    "decathlon.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "vans.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "thenorthface.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "columbiasportswear.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "timberland.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "asics.com/es/es-es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "reebok.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+   },
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "juguetes_bebe": {
+   "cada_min": 60,
+   "tiendas": [
+    "toysrus.es",
+    "eurekakids.es",
+    "juguettos.com",
+    "imaginarium.es",
+    "smythstoys.com/es",
+    "playmobil.es",
+    "bebitus.com",
+    "prenatal.es",
+    "chicco.es",
+    "juguetilandia.com"
+   ],
+   "navegador": [
+    "lego.com/es-es"
+   ],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "mascotas": {
+   "cada_min": 60,
+   "tiendas": [
+    "kiwoko.com",
+    "tiendanimal.es",
+    "zooplus.es",
+    "miscota.es",
+    "bitiba.es",
+    "piensoymascotas.com"
+   ],
+   "navegador": [],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "apartadas": {
+    "maxizoo.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+   },
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15
+  },
+  "viajes": {
+   "cada_min": 60,
+   "tiendas": [],
+   "navegador": [],
+   "fuentes": [],
+   "verificacion": [
+    "skyscanner.es",
+    "ryanair.com",
+    "booking.com",
+    "trip.com",
+    "traventia.es",
+    "logitravel.com",
+    "nh-hotels.es"
+   ],
+   "exigir_marca": false,
+   "sin_idealo": true,
+   "precio_max": 110,
+   "descuento_min": 0,
+   "historial_propio_dias": 0,
+   "_nota_filtros": "Viajes: tope 110 € (umbral europeo del SKILL.md). Sin histórico propio: cada anuncio es nuevo.",
+   "apartadas": {
+    "viajerospiratas.es": "Regla de Instinct (7/11/2026): fuera las webs de viajes 'piratas'.",
+    "buscounchollo.com": "Apagada el 16/11/2026 a petición de Zeta: 11 avisos en 9 días, todos dudosos (sin fechas ni precio de referencia). El reglamento de Instinct v2 no lee viajes 'desde'."
+   }
+  },
+  "radar": {
+   "cada_min": 10,
+   "tiendas": [
+    "precioreal.com"
+   ],
+   "navegador": [],
+   "canales_telegram": [],
+   "descuento_min": 0.3,
+   "_nota": "Páginas de bajadas de precio de los comparadores (cubren miles de tiendas) y canales públicos de chollos. Añade en canales_telegram el nombre de canales públicos (lo que va detrás de t.me/).",
+   "apartadas": {
+    "idealo.es": "Antibot Akamai: 403 a todo acceso automático, hasta en robots.txt."
+   }
+  }
+ },
+ "bloqueadas": {
+  "motivo": "antibot Akamai/DataDome o error 405 según Instinct (6/11/2026)",
+  "tiendas": [
+   "newbalance.es",
+   "sephora.es",
+   "hm.com/es_es/home",
+   "maisonsdumonde.com/ES/es",
+   "promofarma.com"
+  ]
+ },
+ "requiere_login": [
+  "zalando-prive.es",
+  "showroomprive.es",
+  "privalia.com",
+  "veepee.es"
+ ],
+ "logins": {
+  "zalando-prive.es": "https://www.zalando-prive.es/",
+  "showroomprive.es": "https://www.showroomprive.es/",
+  "privalia.com": "https://www.privalia.com/",
+  "veepee.es": "https://www.veepee.es/"
+ },
+ "historicos": {
+  "defecto": "precioreal",
+  "por_tienda": {
+   "pccomponentes": "pccomtracker",
+   "amazon": "keepa",
+   "store.playstation": "psdeals",
+   "nintendo.com": "psdeals",
+   "steampowered": "isthereanydeal",
+   "epicgames": "isthereanydeal",
+   "gog.com": "isthereanydeal",
+   "fanatical": "isthereanydeal",
+   "humblebundle": "isthereanydeal",
+   "instant-gaming": "isthereanydeal",
+   "druni": "perfumon",
+   "primor": "perfumon",
+   "notino": "perfumon",
+   "douglas": "perfumon",
+   "perfumerias.com": "perfumon",
+   "perfumesclub": "perfumon"
+  },
+  "por_categoria": {
+   "moviles": "kimovil"
+  },
+  "itad_key": "",
+  "busquedas": {
+   "precioreal": "https://precioreal.com/comparador/catalogo?q={q}",
+   "comparaloo": "https://www.comparaloo.es/search?q={q}",
+   "kimovil": "https://www.kimovil.com/es/buscar?q={q}",
+   "perfumon": "https://perfumon.com/buscar?q={q}",
+   "psdeals": "https://psdeals.net/es-store/search?search_query={q}",
+   "pccomtracker": "https://pccomtracker.com/buscar?q={q}"
+  },
+  "_nota": "Las direcciones de búsqueda están sin probar: si un comparador falla, el 'verifica' lo busca a mano como antes. Keepa no se lee por código (bloquea)."
+ }
+}

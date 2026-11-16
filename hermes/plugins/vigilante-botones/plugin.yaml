@@ -1,0 +1,4 @@
+name: vigilante-botones
+version: 1.0.0
+description: Botón "Verificar" debajo de cada candidato del vigilante de chollos; al pulsarlo, Hermes recibe "verifica N" como si lo hubiera escrito el usuario.
+author: Zeta

@@ -1,0 +1,19 @@
+# Datos que genera el vigilante (personales o regenerables): no van al repositorio
+data/*
+!data/LEEME.md
+
+# Secretos
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema y editores
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

@@ -1,0 +1,145 @@
+# Lista blanca de marcas conocidas (una por línea). Añade o quita las que quieras.
+# Tecnología e imagen
+apple
+samsung
+xiaomi
+redmi
+huawei
+honor
+oppo
+realme
+oneplus
+motorola
+google
+sony
+lg
+philips
+panasonic
+tcl
+hisense
+asus
+acer
+lenovo
+hp
+dell
+msi
+gigabyte
+microsoft
+logitech
+razer
+corsair
+hyperx
+steelseries
+jbl
+bose
+sennheiser
+anker
+soundcore
+ugreen
+baseus
+belkin
+tp-link
+netgear
+amazfit
+garmin
+fitbit
+polar
+suunto
+kindle
+gopro
+dji
+canon
+nikon
+fujifilm
+western digital
+wd
+seagate
+crucial
+kingston
+sandisk
+nintendo
+playstation
+xbox
+bang & olufsen
+marshall
+beats
+nothing phone
+nothing ear
+# Pequeño electrodoméstico y hogar
+cecotec
+rowenta
+moulinex
+tefal
+krups
+braun
+de'longhi
+delonghi
+nespresso
+dolce gusto
+taurus
+bosch
+siemens
+balay
+whirlpool
+electrolux
+aeg
+dyson
+roborock
+roomba
+irobot
+dreame
+conga
+ninja
+cosori
+russell hobbs
+smeg
+kenwood
+oral-b
+remington
+babyliss
+ghd
+lékué
+ikea
+# Salud y belleza
+l'oréal
+loreal
+nivea
+garnier
+isdin
+la roche-posay
+vichy
+cerave
+neutrogena
+olay
+gillette
+colgate
+# Moda y deporte
+nike
+adidas
+puma
+new balance
+asics
+reebok
+vans
+converse
+under armour
+the north face
+columbia
+levi's
+tommy hilfiger
+calvin klein
+lacoste
+skechers
+hoka
+salomon
+quechua
+kipsta
+# Juguetes
+lego
+playmobil
+hasbro
+mattel
+barbie
+hot wheels
+fisher-price
+vtech
