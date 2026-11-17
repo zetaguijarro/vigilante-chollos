@@ -460,9 +460,29 @@ class Piezas(unittest.TestCase):
             antes = len([u for u in pedidas if "idealo" in u])
             self.assertEqual(v.idealo_red(p), 32.95)
             self.assertEqual(len([u for u in pedidas if "idealo" in u]), antes, "tras un 403 no se vuelve a pedir a Idealo")
+            # La pausa dura 3 h y vale para las rondas siguientes (otro proceso: la marca del proceso empieza apagada).
+            self.assertTrue(v.idealo_en_pausa())
+            v._IDEALO_BLOQUEADO[0] = False
+            self.assertEqual(v.idealo_red(p), 32.95)
+            self.assertEqual(len([u for u in pedidas if "idealo" in u]), antes, "en pausa: ni una petición más")
+            # Pasadas las 3 h se vuelve a probar, y si Idealo ya responde se usa.
+            vieja = time.time() - (v.IDEALO_REINTENTO_H + 1) * 3600
+            os.utime(v._archivo_pausa_idealo(), (vieja, vieja))
+            self.assertFalse(v.idealo_en_pausa())
+            v._IDEALO_BLOQUEADO[0] = False
+            idealo_ok = '<script type="application/ld+json">' + json.dumps({"@type": "ItemList", "itemListElement": [
+                {"@type": "Product", "name": "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4", "offers": {"price": 29.9}}]}) + "</script>"
+            v.descargar = lambda url, timeout=20, reintentos=1: (idealo_ok, url)
+            self.assertEqual(v.idealo_red(p), 29.9)
+            self.assertFalse(v.idealo_en_pausa() and v._IDEALO_BLOQUEADO[0], "si responde, no se pausa")
+            # Enlace para mirarlo a mano en cada aviso sin precio de mercado.
+            self.assertIn("idealo.es/resultados.html?q=", v.enlace_idealo(p))
+            self.assertIn("Idealo, a mano: https://www.idealo.es/", v.mensaje_candidato(
+                5, {**p, "tienda": "t.es", "precio_antes": 50.0, "ch": "no", "url": "https://t.es/p"}))
         finally:
             v.descargar, v.time.sleep = orig, sleep
             v._IDEALO_BLOQUEADO[0] = False
+            v._archivo_pausa_idealo().unlink(missing_ok=True)
         self.assertFalse(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 512GB"))
         self.assertTrue(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 256GB"))
         # Mismo código exacto aunque el comparador añada palabras; código distinto, fuera.
@@ -473,6 +493,14 @@ class Piezas(unittest.TestCase):
         self.assertFalse(v.mismo_modelo(book6, 'Portátiles Samsung Samsung Galaxy Book6 Pro 16" Intel Core Ultra 7 358H 32GB'))
         self.assertTrue(v.mismo_modelo(book6, 'Samsung Galaxy Book6 16" Intel Core Ultra 5 325 16GB 512GB'))
         self.assertEqual(v.codigos_modelo(book6), set(), "BOOK6 es la familia, no un código de modelo")
+        # 17/11/2026: el procesador no es el modelo ('lenovo I5-13420H' buscaba cualquier Lenovo, '3700U' placas
+        # de inducción) y dos portátiles con el mismo procesador no son "el mismo código exacto".
+        for cpu in ("I5-13420H", "I7-1185G7", "7533HS", "3700U", "I3-1315U"):
+            self.assertEqual(v.lista_codigos(f"Portátil Lenovo IdeaPad {cpu} 16GB 512GB"), [], cpu)
+        self.assertEqual(v.lista_codigos("Portátil Lenovo IdeaPad Slim 3 15IRH10 i5-13420H"), ["15IRH10"])
+        self.assertEqual(v.consulta_comparador({"nombre": "Portátil Lenovo IdeaPad Slim 3 15IRH10 i5-13420H",
+                                                "precio": 579.0, "tienda": "mediamarkt.es"}).split()[-1], "15IRH10")
+        self.assertFalse(v.mismo_modelo("Portátil Lenovo IdeaPad 15,6 i5-13420H 16GB", "Lenovo ThinkPad L14 i5-13420H 16GB"))
         # Caso real: 'Bluetooth 5.4' hacía pasar a los Buds 4 y Buds 5 por los Buds 6.
         buds6 = "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4 42h IP54 Auriculares"
         self.assertFalse(v.mismo_modelo(buds6, "Xiaomi Redmi Buds 4"))
@@ -823,6 +851,25 @@ class Rondas(Base):
         self.assertEqual(v.descuento_real({"precio": 50, "precio_antes": 200}, None), (None, None),
                          "solo el 'antes' de la tienda: no hay descuento real")
 
+    def test_minimo_propio_necesita_14_dias(self):
+        # 17/11: B&O Beoplay HX pasó con "-28 % sobre mínimo visto por el vigilante en 1 días".
+        p = {"precio": 429.0, "estado": "bajada", "_min_previo": 599.0, "_seguido_dias": 1}
+        self.assertEqual(v.descuento_real(p, None), (None, None))
+        p["_seguido_dias"] = 14
+        self.assertIn("14 días", v.descuento_real(p, None)[1])
+
+    def test_accesorios_para_otro_producto(self):
+        for n in ("Carcasa Inferior para Portátil Acer Aspire 5750/5750G/5750Z",
+                  'HP Protective Funda Reversible Negra/Plata para Portátil 15"',
+                  "Cable de carga para DJI Power 1000", "Filtro HEPA para Conga 2090"):
+            self.assertTrue(v.es_accesorio(n), n)
+        for n in ('HP Campus XL Mochila Tie Dye para Portátil de 16"',   # mochilas se calientan como la media
+                  "Green Cell Ad74p Adaptador de Corriente 45W para HP",
+                  "Funda Nórdica 150x220 algodón",                        # sin "para": es el producto
+                  "Portátil Lenovo V15 G5 con funda para transporte",     # la funda no va al principio
+                  "Fuente de Alimentación MSI 750W 80 PLUS Gold"):
+            self.assertFalse(v.es_accesorio(n), n)
+
     def test_mensaje_sin_emojis_y_con_busqueda_manual(self):
         p = {"tienda": "mediamarkt.es", "nombre": "JBL Charge 5 Negro", "precio": 99.0, "precio_antes": 179.0,
              "idealo": 149.0, "ch": "no", "url": "https://x.es/jbl", "estado": "bajada", "gratis": True,
@@ -900,8 +947,9 @@ class Rondas(Base):
         self.assertTrue(v.ficha_se_intenta(cfg_real, "mediamarkt.es"))
         self.assertFalse(v.ficha_se_intenta(cfg_real, "amazon.es"), "se lee con navegador")
         self.assertFalse(v.ficha_se_intenta(cfg_real, "pccomponentes.com"), "antibot: ficha_no_leer")
-        # Idealo da 403 hasta en su robots.txt: sigue sin pedirse aunque robots.txt esté desactivado.
-        self.assertIn("idealo.es", cfg_real["filtros_codigo"]["robots_siempre"])
+        # Idealo vuelve a intentarse (17/11/2026): ya no está en robots_siempre; el 403 lo gestiona la pausa de 3 h.
+        self.assertNotIn("idealo.es", cfg_real["filtros_codigo"]["robots_siempre"])
+        self.assertIn("chollometro.com", cfg_real["filtros_codigo"]["robots_siempre"])
         real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
         self.assertIs(real["confirmar_ficha"], True)
         # Una sola vara con la habilidad: SUBIENDO empieza en el 20 % real (Modo Clásico, 16/11/2026).
@@ -2842,9 +2890,11 @@ class IdealoRutas(unittest.TestCase):
                 return "<html>nada</html>", url
             return ('<script type="application/ld+json">{"@type":"Product","name":"JBL Flip 6",'
                     '"offers":{"lowPrice":"85,00"}}</script>'), url
-        orig = (v.descargar, v.time.sleep, v._IDEALO_BUENA[0])
+        orig = (v.descargar, v.time.sleep, v._IDEALO_BUENA[0], v.DATOS, v._IDEALO_BLOQUEADO[0])
         v.descargar, v.time.sleep = falso, (lambda s: None)
         v._IDEALO_BUENA[0] = None
+        # Sin carpeta propia leía data\idealo_pausa.txt de producción y se iba a PrecioReal.
+        v.DATOS, v._IDEALO_BLOQUEADO[0] = Path(tempfile.mkdtemp()), False
         try:
             p = {"nombre": "JBL Flip 6", "ean": "6925281993145"}
             self.assertEqual(v.idealo_red(p), 85.0)
@@ -2853,7 +2903,7 @@ class IdealoRutas(unittest.TestCase):
             self.assertEqual(v.idealo_red(p), 85.0)
             self.assertEqual(len(pedidas), 1, "la siguiente vez va directa a la ruta buena")
         finally:
-            v.descargar, v.time.sleep, v._IDEALO_BUENA[0] = orig
+            v.descargar, v.time.sleep, v._IDEALO_BUENA[0], v.DATOS, v._IDEALO_BLOQUEADO[0] = orig
 
 
 # --------------------------------------------- dossier más completo y fuentes nuevas

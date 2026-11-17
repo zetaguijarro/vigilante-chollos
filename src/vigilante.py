@@ -1023,6 +1023,35 @@ IDEALO_BUSQUEDAS = ["https://www.idealo.es/resultados.html?q={q}",
                     "https://www.idealo.es/precios/MainSearchProductCategory.html?q={q}"]
 _IDEALO_BUENA = [None]
 _IDEALO_BLOQUEADO = [False]  # por proceso (= por ronda): Idealo bloquea con Akamai
+IDEALO_REINTENTO_H = 3  # tras un 403 no se le vuelve a pedir en estas horas (en todas las rondas, no solo en la actual)
+
+
+def _archivo_pausa_idealo():
+    return DATOS / "idealo_pausa.txt"
+
+
+def idealo_en_pausa(horas=IDEALO_REINTENTO_H):
+    """True si Idealo dio 403 hace menos de `horas`. Su antibot (Akamai) cierra el paso a programas y navegadores
+    (17/11/2026: 403 también con Chromium), así que no se insiste; pero tampoco se deja fuera: pasado el plazo se
+    vuelve a probar una vez, y si ya responde se usa solo."""
+    try:
+        return time.time() - _archivo_pausa_idealo().stat().st_mtime < horas * 3600
+    except OSError:
+        return False
+
+
+def pausar_idealo():
+    _IDEALO_BLOQUEADO[0] = True
+    try:
+        DATOS.mkdir(parents=True, exist_ok=True)
+        _archivo_pausa_idealo().write_text(datetime.now().isoformat(timespec="minutes"), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def enlace_idealo(p):
+    """Búsqueda de Idealo para que la mire Zeta a mano cuando el script no puede."""
+    return IDEALO_BUSQUEDAS[0].format(q=quote_plus(p.get("ean") or consulta_comparador(p)))
 
 
 def idealo_red(p):
@@ -1031,8 +1060,8 @@ def idealo_red(p):
     consulta = clave_idealo(p)
     if not identificable(p):
         return None  # genérico: cualquier coincidencia sería otro producto
-    if _IDEALO_BLOQUEADO[0]:
-        return precioreal_red(p)  # ya dio 403 en esta ronda: no insistir producto por producto
+    if _IDEALO_BLOQUEADO[0] or idealo_en_pausa():
+        return precioreal_red(p)  # dio 403 hace poco: no insistir producto por producto ni ronda por ronda
     q = quote_plus(p["ean"] or p["nombre"])
     rutas = sorted(IDEALO_BUSQUEDAS, key=lambda r: r != _IDEALO_BUENA[0])  # primero la que ya funcionó
     resultados, fallo = [], None
@@ -1043,8 +1072,8 @@ def idealo_red(p):
         except Exception as e:
             fallo = e
             if "403" in str(e) or isinstance(e, BloqueadoPorRobots):
-                _IDEALO_BLOQUEADO[0] = True
-                log(f"idealo no se puede leer ({str(e)[:40]}): el resto de la ronda va directo a PrecioReal")
+                pausar_idealo()
+                log(f"idealo no se puede leer ({str(e)[:40]}): PrecioReal durante {IDEALO_REINTENTO_H} h y se vuelve a probar")
                 break
             continue
         resultados = extraer(html, url)
@@ -1126,10 +1155,17 @@ def nombre_con_marca(p):
     return f"{marca} {p['nombre']}".strip() if marca and marca.lower() not in p["nombre"].lower() else p["nombre"]
 
 
+# Procesadores: I5-13420H, I7-1185G7, 7533HS, 3700U. No son el modelo del portátil: la búsqueda 'lenovo I5-13420H'
+# devolvía otros Lenovo y '3700U' placas de inducción, y dos portátiles con el mismo procesador contaban como
+# "mismo código exacto" (17/11/2026: 5 de las 7 comparaciones fallidas de una página de portátiles de MediaMarkt).
+RE_PROCESADOR = re.compile(r"I[3579]-\d{4,5}[A-Z]{0,2}\d?|\d{4}(?:U|H|HS|HX|HK|X|X3D|G|GE|P)")
+
+
 def lista_codigos(nombre):
     """Códigos de modelo del nombre, en orden, sin especificaciones (IP54, 256GB, 120Hz, USB3...)."""
     # Al menos 2 cifras: 'BOOK6' o 'PIXEL9' son la familia, no el modelo exacto.
     return [c for c in RE_CODIGO_MODELO.findall(nombre.upper()) if len(c) >= 5 and len(re.findall(r"\d", c)) >= 2
+            and not RE_PROCESADOR.fullmatch(c)
             and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P)?", c)
             and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE)\d*\w?", c)
             and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)]  # medidas: 135X190, 75X45CM
@@ -1473,9 +1509,11 @@ def filtrar_por_demanda(con, cfg, tiendas):
     return [t for t in tiendas if t in siempre or con_demanda(t, cuenta, minimo)]
 
 
-def descuento_real(p, mejor):
+def descuento_real(p, mejor, dias_min=14):
     """Descuento sobre referencias independientes, no sobre el "antes" de la tienda (regla de Instinct:
     BUENA = al menos un 25 % sobre comparables exactos actuales o sobre un precio inicial verificado).
+    El mínimo propio solo cuenta con `dias_min` días de seguimiento (regla de Zeta: histórico propio de
+    14+ días; el 17/11 pasaron unos B&O con "mínimo visto en 1 días").
     -> (descuento, de qué referencia) o (None, None)."""
     refs = []
     if mejor:
@@ -1483,7 +1521,7 @@ def descuento_real(p, mejor):
     h = p.get("_hist") or {}
     if h.get("habitual"):
         refs.append((h["habitual"], "precio habitual en la tienda (PCComTracker)"))
-    if p.get("estado") == "bajada" and p.get("_min_previo") and p.get("_seguido_dias", 0) >= 1:
+    if p.get("estado") == "bajada" and p.get("_min_previo") and p.get("_seguido_dias", 0) >= max(1, dias_min):
         refs.append((p["_min_previo"], f"mínimo visto por el vigilante en {p['_seguido_dias']} días"))
     if demanda_probada_ok(p) and p.get("precio_antes"):
         refs.append((p["precio_antes"], "precio inicial de la tienda (ya fue chollo caliente a ese precio o más)"))
@@ -1519,6 +1557,23 @@ def mismo_producto_hot(nombre, titulo):
     AirPods Max a 130 € con otro de 378,99 €, zapatillas Puma de niña con otro modelo.
     Hace falta el mismo código de modelo o el mismo modelo con la regla estricta del comparador."""
     return bool(codigos_modelo(nombre) & codigos_modelo(titulo)) or mismo_modelo(nombre, titulo)
+
+
+# Accesorios y recambios "para" otro producto: heredan la familia del producto principal (una carcasa de
+# Acer 5750 pesaba como un portátil) pero casi nadie los busca. Solo los tipos que en la copia de
+# Chollometro (17/11, 14.949 hilos) llegan poco a 300°: fundas 7 %, bolsas 10 %, cables y filtros 0 %,
+# recambios 0 %, frente al 25 % de media. Mochilas, cargadores, adaptadores y teclados "para" algo
+# se calientan como la media: no se cortan.
+RE_ACCESORIO = re.compile(
+    r"^(?:\S+\s+){0,3}?(?:carcasa|funda|bolsa|cable|repuesto|recambio|bisagra|t[oó]ner|cartucho|filtro|"
+    r"kit\s+de\s+montaje)(?!\w)", re.I)
+
+
+def es_accesorio(nombre):
+    """Accesorio o recambio PARA otro producto ("Funda ... para Portátil 15"", "Adaptador de corriente
+    para HP"). Una mochila o un cargador a secas no cuentan: sin "para" puede ser el producto buscado."""
+    n = nombre or ""
+    return bool(RE_ACCESORIO.search(n) and re.search(r"(?<!\w)para(?!\w)", n, re.I))
 
 
 def demanda_probada_ok(p):
@@ -2758,7 +2813,7 @@ def mensaje_candidato(n, p):
     antes = f" (referencia de la tienda: {p['precio_antes']:g} €{d})" if p.get("precio_antes") else ""
     # Etiquetas honestas (instrucciones de lectura, paso 7): lo comprobado y lo que NO se ha comprobado.
     idealo = (f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
-              else "Mercado: sin comparar con otras tiendas")
+              else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
     if p.get("_hist"):
         h = p["_hist"]
         hist = (f"Histórico (comparador): mínimo {h['minimo']:g} €"
@@ -4178,6 +4233,9 @@ def ronda(categoria, solo=None):
         if not ok and mejor is None and not p.get("gratis") and demanda_probada_ok(p):
             # Sin comparador, pero la comunidad ya lo calentó a este precio o más caro: precio y demanda probados.
             ok = True
+        if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
+            log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
+            ok = False
         if ok and not p.get("gratis") and precio_sospechoso(p, mejor, f.get("precio_sospechoso", PRECIO_SOSPECHOSO)):
             log(f"precio sospechoso, no se envía: {p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
             ok = False
@@ -4185,7 +4243,7 @@ def ronda(categoria, solo=None):
         exento = p.get("gratis") or p.get("error_precio") or (sin_idealo and not dias_hist)
         dto_min = cat_cfg.get("descuento_real_min", f.get("descuento_real_min", 0))
         if ok and dto_min and not exento:
-            dto, ref = descuento_real(p, mejor)
+            dto, ref = descuento_real(p, mejor, dias_hist or 14)
             ok = dto is not None and dto >= dto_min
             if ok:
                 p["dto_real"], p["ref_real"] = round(dto, 3), ref
