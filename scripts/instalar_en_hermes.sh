@@ -5,7 +5,7 @@
 set -e
 HERMES="${HERMES_DIR:-/c/Users/Zeus/AppData/Local/hermes}"
 [ -d "$HERMES" ] || { echo "No encuentro la carpeta de Hermes en $HERMES (pon HERMES_DIR=...)"; exit 1; }
-for s in verifica-chollo redacta-chollo; do
+for s in verifica-chollo redacta-chollo comprueba-chollo; do
   mkdir -p "$HERMES/skills/$s"
   cp "hermes/skills/$s/SKILL.md" "$HERMES/skills/$s/SKILL.md"
   echo "habilidad $s instalada"

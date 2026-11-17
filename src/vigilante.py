@@ -3234,8 +3234,10 @@ def dossier(ids):
     print(json.dumps(dossier_items(ids), ensure_ascii=False, separators=(",", ":")))
 
 
-def dossier_items(ids):
-    """Los datos de cada candidato, con su ficha leída en vivo: lo usan `dossier` (para la IA) y `decidir`."""
+def dossier_items(ids, ficha_manual=None):
+    """Los datos de cada candidato, con su ficha leída en vivo: lo usan `dossier` (para la IA) y `decidir`.
+    ficha_manual: precio, stock y vendedor que ha leído Hermes con su navegador en una tienda que el script
+    no puede abrir (PcComponentes: 403). Entonces no se pide la ficha y se usan esos datos."""
     cfg = cargar_config()
     con_nav = {t for c in cfg["categorias"].values() for t in c.get("navegador", [])}
     con = bd()
@@ -3257,14 +3259,19 @@ def dossier_items(ids):
                 item["memoria"] = f"{m[0]} ({m[2][:10]}): {m[1]}"
             if c.get("u"):
                 # La ficha de la tienda puede fallar (PcComponentes: antibot); lo demás se hace igual.
-                try:
-                    usar_nav = nav if c.get("t") in con_nav else None
-                    item["ficha"] = leer_ficha(c["u"], usar_nav)
-                except Exception as e:
-                    item["ficha"] = {"error": f"no se pudo leer la ficha de la tienda: {str(e)[:80]}"}
-                # Manual de Instinct: un 200 con página genérica, un shell de JavaScript o un muro antibot no
-                # verifica nada. Si no se ve el producto esperado con su precio: "sin validar" y se retiene.
-                item["validada"], item["validacion"] = validar_ficha(item["ficha"], c)
+                if ficha_manual:
+                    item["ficha"] = {"titulo": c["n"], "fuente": "leída por Hermes con su navegador",
+                                     **{k: x for k, x in ficha_manual.items() if x is not None}}
+                    item["validada"], item["validacion"] = True, "ficha leída por Hermes con su navegador"
+                else:
+                    try:
+                        usar_nav = nav if c.get("t") in con_nav else None
+                        item["ficha"] = leer_ficha(c["u"], usar_nav)
+                    except Exception as e:
+                        item["ficha"] = {"error": f"no se pudo leer la ficha de la tienda: {str(e)[:80]}"}
+                    # Manual de Instinct: un 200 con página genérica, un shell de JavaScript o un muro antibot no
+                    # verifica nada. Si no se ve el producto esperado con su precio: "sin validar" y se retiene.
+                    item["validada"], item["validacion"] = validar_ficha(item["ficha"], c)
                 item["comprobado"] = ahora_madrid().strftime("%d/%m %H:%M")  # stock y precio caducan en minutos
                 item["buscar_chollometro"] = busquedas_chollometro(c)
                 try:
@@ -3287,7 +3294,7 @@ def dossier_items(ids):
                         item["ficha"]["specs"] = (item["ficha"].get("specs") or []) + extra["specs"]
                         item["ficha"]["specs_fuente"] = extra["url"]
             salida[pos] = item
-    if any(json.loads(d).get("t") in con_nav for _, _, _, d in filas):
+    if not ficha_manual and any(json.loads(d).get("t") in con_nav for _, _, _, d in filas):
         try:
             with Navegador(cfg) as nav:
                 con_lector(nav)
@@ -3472,13 +3479,32 @@ def plantilla_redaccion(r):
     return {"titulo": titulo, "descripcion": cuerpo + ("\n\n" + specs if specs else "")}
 
 
-def decidir(n, avisar=True):
+def ficha_de_args(args):
+    """`--precio 30,00 --stock si --vendedor PcComponentes` -> {"precio_ahora": 30.0, "stock": "sí", ...}.
+    None si no hay --precio. Es lo que Hermes apunta tras abrir la ficha con su navegador."""
+    valores, clave = {}, None
+    for a in args:
+        if a.startswith("--"):
+            clave = a[2:]
+            valores[clave] = ""
+        elif clave:
+            valores[clave] = (valores[clave] + " " + a).strip()
+    precio = a_numero(valores.get("precio")) if valores.get("precio") else None
+    if not precio:
+        return None
+    stock = valores.get("stock", "").lower()
+    return {"precio_ahora": precio,
+            "stock": "no" if stock in ("no", "agotado", "sin stock") else "sí" if stock else None,
+            "vendedor": valores.get("vendedor") or None}
+
+
+def decidir(n, avisar=True, ficha_manual=None):
     """`decidir N`: lee la ficha en vivo, aplica los filtros por código y actúa. Imprime una línea JSON.
     - descartado: guarda el veredicto del modelo y manda "#N descartado: motivo" a Telegram.
     - pasa: deja data/decision_N.json con los bloques hechos; con `redaccion: plantilla` entrega ya.
     - sin_validar: no hace nada más (el botón se lo pasa a la IA, que puede abrir la ficha con su navegador)."""
     cfg = cargar_config()
-    item = dossier_items([n])[0]
+    item = dossier_items([n], ficha_manual=ficha_manual)[0]
     d = decidir_item(item, cfg)
     archivo = DATOS / f"decision_{int(n)}.json"
     if d["veredicto"] == "pasa":
@@ -3492,12 +3518,11 @@ def decidir(n, avisar=True):
         archivo.unlink(missing_ok=True)
         if d["veredicto"] == "descartado" and d.get("memoria"):
             recordar(n, d["memoria"], d["motivo"], callado=True)
-        if avisar and not item.get("error"):
+        # "Sin validar" no se avisa: el botón se lo pasa a Hermes para que lea la ficha ("comprueba N").
+        if avisar and not item.get("error") and d["veredicto"] == "descartado":
             token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
             if token and chat:
-                texto = (f"#{n} descartado: {d['motivo']}" if d["veredicto"] == "descartado"
-                         else f"#{n} sin validar por código: {d['motivo']}. Se lo paso a Hermes.")
-                enviar_telegram(token, chat, texto)
+                enviar_telegram(token, chat, f"#{n} descartado: {d['motivo']}")
     log(f"decidir #{n}: {d['veredicto']} {d.get('etiqueta', '')} {d['motivo'][:140]}")
     print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
     return d
@@ -4493,7 +4518,7 @@ if __name__ == "__main__":
     elif len(args) == 2 and args[0] == "entregar":
         entregar(args[1])
     elif len(args) >= 2 and args[0] == "decidir":
-        decidir(args[1], avisar="--callado" not in args)
+        decidir(args[1], avisar="--callado" not in args, ficha_manual=ficha_de_args(args[2:]))
     elif len(args) == 2 and args[0] == "redaccion":
         redaccion(args[1])
     elif len(args) >= 3 and args[0] == "recordar":

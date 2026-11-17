@@ -8,7 +8,9 @@ plugin registra un manejador acotado a "vg:" (API pública: ctx.register_platfor
   3. según el resultado:
        - descartado: el script ya ha mandado "#N descartado: motivo". No se despierta a la IA.
        - pasa: entrega a Hermes "redacta N", una tarea corta (solo título y descripción).
-       - sin validar, o cualquier fallo: entrega "verifica N", el camino completo de siempre.
+       - sin validar (la ficha no se pudo leer: PcComponentes da 403 al script): entrega "comprueba N".
+         Hermes solo abre la ficha con su navegador, apunta precio y stock, y el código decide con eso.
+       - cualquier fallo del script: entrega "verifica N", el camino completo de siempre.
 
 Desde el 17/11/2026 (Zeta: "¿siempre tenemos que hacerlo a través de una IA el último paso?").
 """
@@ -60,6 +62,8 @@ def accion_de(salida, n):
         if d.get("entregado"):
             return None, f"Enviado #{n}"
         return f"redacta {n}", f"Redactando #{n} ({d.get('etiqueta', '')})"
+    if veredicto == "sin_validar":
+        return f"comprueba {n}", f"Leyendo la ficha #{n}..."
     return f"verifica {n}", f"Verificando #{n}..."
 
 

@@ -1774,7 +1774,7 @@ class ModoTelegram(Base):
                           ficha={"specs": ["Autonomía: 36 h", "Bluetooth: 5.3"], "resumen": "Auriculares con cancelación de ruido."},
                           buscar_chollometro={"nombre": "https://www.chollometro.com/search?q=x"})
         try:
-            v.dossier_items = lambda ids: [item]
+            v.dossier_items = lambda ids, **k: [item]
             with redirect_stdout(io.StringIO()) as salida:
                 d = v.decidir(n)
             self.assertEqual(json.loads(salida.getvalue().strip().splitlines()[-1])["veredicto"], "pasa")
@@ -1798,7 +1798,7 @@ class ModoTelegram(Base):
             self.assertFalse((v.DATOS / f"decision_{n}.json").exists())
             # Descarte: lo dice el código por Telegram, con números, y guarda el veredicto del modelo.
             self.enviados.clear()
-            v.dossier_items = lambda ids: [self._item(num=n, id=33.0)]
+            v.dossier_items = lambda ids, **k: [self._item(num=n, id=33.0)]
             with redirect_stdout(io.StringIO()):
                 v.decidir(n)
             self.assertEqual(len(self.enviados), 1)
@@ -1812,7 +1812,7 @@ class ModoTelegram(Base):
             cfg["entrega"]["redaccion"] = "plantilla"
             v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
             item.pop("memoria", None)
-            v.dossier_items = lambda ids: [item]
+            v.dossier_items = lambda ids, **k: [item]
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n)
             self.assertTrue(d["entregado"])
@@ -1820,6 +1820,44 @@ class ModoTelegram(Base):
             self.assertIn("• Autonomía: 36 h", self.enviados[4][1])
         finally:
             v.dossier_items = orig
+
+    def test_decidir_con_la_ficha_que_lee_hermes(self):
+        # #189 (17/11/2026): PcComponentes da 403 al script. Hermes abre la ficha y pasa precio y stock.
+        self.assertEqual(v.ficha_de_args(["--precio", "30,00", "--stock", "si", "--vendedor", "PcComponentes"]),
+                         {"precio_ahora": 30.0, "stock": "sí", "vendedor": "PcComponentes"})
+        self.assertEqual(v.ficha_de_args(["--precio", "1.299,90", "--stock", "agotado"])["precio_ahora"], 1299.9)
+        self.assertEqual(v.ficha_de_args(["--precio", "12", "--stock", "agotado"])["stock"], "no")
+        self.assertEqual(v.ficha_de_args(["--precio", "12", "--vendedor", "Tech", "Store", "SL"])["vendedor"], "Tech Store SL")
+        self.assertIsNone(v.ficha_de_args([]))
+        self.assertIsNone(v.ficha_de_args(["--callado"]))
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()
+        con = sqlite3.connect(v.DB)
+        n = con.execute("SELECT max(id) FROM lista").fetchone()[0]
+        con.close()
+        leidas = []
+        orig_ficha, orig_hist = v.leer_ficha, v.historico
+        try:
+            v.leer_ficha = lambda url, nav=None: leidas.append(url) or {"error": "HTTP Error 403: Forbidden"}
+            v.historico = lambda cfg, item: {"minimo": 29.0, "habitual": 39.99, "fuente": "pccomtracker.com"}
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n, avisar=False)
+            self.assertEqual(d["veredicto"], "sin_validar", "sin datos de Hermes: no se puede decidir")
+            leidas.clear()
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n, avisar=False, ficha_manual=v.ficha_de_args(["--precio", "30", "--stock", "si"]))
+            self.assertEqual(leidas, [], "con la ficha de Hermes no se vuelve a pedir la de la tienda")
+            self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "DESTACADOS"))
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n, avisar=False, ficha_manual=v.ficha_de_args(["--precio", "38,00", "--stock", "si"]))
+            self.assertEqual(d["veredicto"], "descartado", "38 € con habitual de 39,99 € baja solo un 5 %")
+            self.assertIn("baja un 5 %", d["motivo"])
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n, avisar=False, ficha_manual=v.ficha_de_args(["--precio", "30", "--stock", "no"]))
+            self.assertIn("agotado", d["motivo"])
+        finally:
+            v.leer_ficha, v.historico = orig_ficha, orig_hist
 
     def test_plugin_del_boton_decide_por_codigo(self):
         import importlib.util
@@ -1835,11 +1873,12 @@ class ModoTelegram(Base):
                          ("redacta 47", "Redactando #47 (DESTACADOS)"))
         self.assertEqual(b.accion_de('{"num":47,"veredicto":"pasa","etiqueta":"SUBIENDO","entregado":true}', "47"),
                          (None, "Enviado #47"))
-        self.assertEqual(b.accion_de('{"num":47,"veredicto":"sin_validar","motivo":"antibot"}', "47")[0], "verifica 47")
+        # Sin validar (PcComponentes da 403 al script): Hermes solo lee la ficha y el código decide.
+        self.assertEqual(b.accion_de('{"num":47,"veredicto":"sin_validar","motivo":"HTTP Error 403"}', "47")[0], "comprueba 47")
         for roto in (None, "", "Traceback (most recent call last)", "{}"):
             self.assertEqual(b.accion_de(roto, "47")[0], "verifica 47", repr(roto))
         # El plugin usa el mismo python y el mismo script que declara la habilidad instalada.
-        for nombre in ("verifica-chollo", "redacta-chollo"):
+        for nombre in ("verifica-chollo", "redacta-chollo", "comprueba-chollo"):
             skill = (CONF.parent / "hermes" / "skills" / nombre / "SKILL.md").read_text(encoding="utf-8")
             py, script = b.rutas_de_skill(skill)
             self.assertTrue(py.endswith("python.exe"), nombre)
@@ -1848,6 +1887,9 @@ class ModoTelegram(Base):
         redacta = (CONF.parent / "hermes" / "skills" / "redacta-chollo" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("V redaccion N", redacta)
         self.assertIn("V entregar N", redacta)
+        comprueba = (CONF.parent / "hermes" / "skills" / "comprueba-chollo" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("V decidir N --precio", comprueba)
+        self.assertIn("comprueba-chollo", (CONF.parent / "scripts" / "instalar_en_hermes.sh").read_text(encoding="utf-8"))
         self.assertEqual(json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["entrega"]["redaccion"], "hermes")
 
     def test_boton_para_verificar(self):

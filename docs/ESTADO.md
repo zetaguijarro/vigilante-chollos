@@ -341,3 +341,9 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - `entrega.redaccion`: "hermes" o "plantilla" (título y descripción por código, 0 tokens, sin Hermes).
   - Instalación: `bash scripts/instalar_en_hermes.sh` y reiniciar Hermes.
   - **Sin probar con Hermes real:** el plugin usa su API interna (`asyncio.to_thread` + `subprocess`); si algo falla, cae al camino antiguo. El #189 (30,00 € con habitual de 39,99 €) sale ahora como DESTACADOS; el #188 (21,99 € = habitual), descartado con "baja un 0 %".
+
+- **"Comprueba N" para las fichas que el script no puede leer (17/11, autorizado por Zeta).** `decidir 189` salía `sin_validar` por el 403 de PcComponentes, y entonces el botón mandaba el "verifica N" completo: para PcComponentes el ahorro era cero.
+  - Ahora el botón manda "comprueba N". Habilidad nueva `comprueba-chollo`: Hermes abre la ficha con su navegador, apunta precio, stock y vendedor, y lanza `decidir N --precio X --stock si --vendedor Y` (`ficha_de_args`). El código decide con esos datos y no vuelve a pedir la ficha (`dossier_items(ficha_manual=...)`). Si pasa, Hermes sigue con `redacta-chollo` en el mismo turno.
+  - `sin_validar` ya no manda mensaje a Telegram; solo `descartado`.
+  - Descartado: fiarse del precio de PCComTracker sin abrir la tienda (el #188: tracker 15,98 €, tienda 21,99 €).
+  - Instalar: `bash scripts/instalar_en_hermes.sh` (ya copia las tres habilidades) y reiniciar Hermes.
