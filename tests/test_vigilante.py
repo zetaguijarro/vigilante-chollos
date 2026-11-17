@@ -2357,6 +2357,19 @@ class Catalogo(Base):
                          ["https://www.tienda.es/es/zapatillas-hombre", "https://www.tienda.es/es/ropa-mujer/",
                           "https://www.tienda.es/es/electrodomesticos"])
 
+    def test_direcciones_con_tildes(self):
+        # MediaMarkt (17/11/2026): sus categorías llevan tildes y eñes en la dirección y la descarga fallaba
+        # con "'ascii' codec can't encode character".
+        self.assertEqual(v.url_ascii("https://www.mediamarkt.es/es/category/televisión-398.html"),
+                         "https://www.mediamarkt.es/es/category/televisi%C3%B3n-398.html")
+        self.assertEqual(v.url_ascii("https://www.mediamarkt.es/es/category/pequeños-electrodomésticos-6201.html?page=2"),
+                         "https://www.mediamarkt.es/es/category/peque%C3%B1os-electrodom%C3%A9sticos-6201.html?page=2")
+        ya = "https://www.mediamarkt.es/es/category/port%C3%A1tiles-153.html?a=1&b=x%20y"
+        self.assertEqual(v.url_ascii(ya), ya, "lo que ya viene codificado no se toca")
+        self.assertEqual(v.url_ascii("https://t.es/búsqueda?q=cámara réflex"), "https://t.es/b%C3%BAsqueda?q=c%C3%A1mara%20r%C3%A9flex")
+        from urllib.request import Request
+        Request(v.url_ascii("https://www.mediamarkt.es/es/category/televisión-398.html")).full_url.encode("ascii")
+
     def test_catalogo_sin_repetidas_y_con_subcategorias(self):
         # MediaMarkt (17/11/2026): la portada daba 12, con "electrodomésticos-553" dos veces (con tildes y
         # codificada), y faltaban auriculares, consolas o tablets, que cuelgan de los índices.

@@ -35,7 +35,7 @@ from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, unquote, urljoin, urlparse, urlsplit, urlunsplit
 from http.cookiejar import CookieJar
 import threading
 import ssl
@@ -270,8 +270,27 @@ def descargar(url, timeout=20, reintentos=1):
         time.sleep(2)
 
 
+def url_ascii(url):
+    """La misma dirección con tildes, eñes y espacios codificados. urllib no admite caracteres que no
+    sean ASCII: "https://www.mediamarkt.es/es/category/televisión-398.html" fallaba con
+    "'ascii' codec can't encode character" (17/11/2026). Lo que ya viene codificado no se toca."""
+    try:
+        url.encode("ascii")
+        return url
+    except UnicodeEncodeError:
+        pass
+    p = urlsplit(url)
+    try:
+        host = p.netloc.encode("idna").decode("ascii")
+    except UnicodeError:
+        host = p.netloc
+    seguro = "/%:@!$&'()*+,;=~-._"
+    return urlunsplit((p.scheme, host, quote(p.path, safe=seguro), quote(p.query, safe=seguro + "?"),
+                       quote(p.fragment, safe=seguro)))
+
+
 def _descargar(url, timeout):
-    req = Request(url, headers={
+    req = Request(url_ascii(url), headers={
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9",

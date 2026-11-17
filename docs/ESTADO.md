@@ -319,3 +319,11 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 - **Catálogo de MediaMarkt (17/11, 00:36).** `catalogo mediamarkt.es` dio 12 categorías: dos repetidas (la misma ruta con tildes y codificada), varios índices (informática, televisión) y faltaban auriculares, consolas, tablets o monitores. Arreglos: `categorias_de_portada` ya no repite la misma ruta, y `catalogo_por_tienda` admite `niveles: 2` y `max` (MediaMarkt: 2 y 40) para entrar en cada categoría de la portada y recoger sus subcategorías. **Zeta tiene que volver a pasar `catalogo mediamarkt.es`.** El archivo `data\urls_catalogo.json` se puede editar a mano.
 
 - **Navegador: 4 pestañas y 3 páginas (17/11).** Antes 2 y 1. Portátil de Zeta: 16 GB de RAM, i5-8265U (4 núcleos, bajo consumo), **dedicado solo al vigilante**. Con 3 páginas se lee hasta el triple de Amazon, AliExpress, Carrefour y Zalando. A vigilar en el diario: que la ronda de navegador no pase de 14 min (límite) y que no suban las lecturas vacías; si pasa, bajar primero las páginas a 2.
+
+- **Primera mañana en producción (17/11, 08:36).** Las rondas corren solas. Del diario:
+  - **Fallo corregido: direcciones con tildes.** Las categorías de MediaMarkt (`televisión-398`, `pequeños-electrodomésticos-6201`) fallaban con "'ascii' codec can't encode character": urllib no admite caracteres que no sean ASCII. `url_ascii` las codifica dentro de `_descargar`. Afectaba a cualquier tienda con tildes en la dirección.
+  - MediaMarkt: principal 13 productos (las 3 páginas no añaden), adicionales 23 (Braun) y 4. Tecnología: 794 productos en 6 lecturas (PCComTracker).
+  - **Radar: 1 lectura, 0 productos.** PrecioReal ya se lee, pero su página de bajadas no da productos. Pendiente de mirar con `volcar precioreal.com`.
+  - Generalistas por descarga: 33 productos en 2 lecturas. Las grandes de ahí van con navegador.
+  - Aviso de "sesión caducada" en ventas privadas: probablemente falso (0 productos en la portada con la sesión iniciada). Pendiente de `volcar`.
+  - Hermes respondía "#187 no existe": seguía con la habilidad antigua en memoria, que llama al `vigilante.py` y a los datos de la carpeta vieja. Hay que reiniciarlo tras pasar a producción.
