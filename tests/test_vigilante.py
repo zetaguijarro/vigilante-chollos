@@ -889,6 +889,26 @@ class Rondas(Base):
         d = v.decidir_item({**item, "validada": True, "id": 4.5, "ficha": {"precio_ahora": 4.0, "titulo": item["n"]}}, cfg)
         self.assertEqual(d.get("precio"), 2.6, d)
 
+    def test_pcct_y_chollo_previo(self):
+        # 1) Ficha de PCComTracker del mismo modelo, guardada al leer su catálogo, para un producto de Amazon.
+        con = v.bd()
+        v.guardar_pcct(con, [{"nombre": "Fuente MSI MAG A750GLS PCIe5 750W", "historico_url": "https://pccomtracker.com/producto/msi-99470"},
+                             {"nombre": "Ratón sin ficha", "historico_url": None}])
+        self.assertEqual(v.pcct_de(con, {"nombre": "MSI MAG A750GLS PCIE5 750W 80 Plus Gold"}), "https://pccomtracker.com/producto/msi-99470")
+        self.assertIsNone(v.pcct_de(con, {"nombre": "MSI MAG A850GLS PCIE5 850W"}), "otro modelo")
+        self.assertIsNone(v.pcct_de(con, {"nombre": "Fuente genérica 750W"}), "sin código no se busca")
+        # 2) Chollo previo: mismo código, 200° o más en los últimos 6 meses, y ahora igual o más barato.
+        v.guardar_hilos(con, v.hilos_chollometro(cm_html([
+            hilo("Samsung TQ55Q7F5AU 55 QLED", "Amazon", 399.0, temp=250, dias=40),
+            hilo("Samsung TQ55Q7F5AU 55 QLED 4K", "Amazon", 349.0, temp=120, dias=10),     # poco caliente
+            hilo("Samsung TQ55Q7F5AU QLED", "MediaMarkt", 330.0, temp=900, dias=300)])))   # demasiado antiguo
+        con.close()
+        tv = "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED HDR10+ Tizen Smart TV"
+        self.assertEqual(v.chollo_previo({"nombre": tv, "precio": 389.0})["precio"], 399.0)
+        self.assertIsNone(v.chollo_previo({"nombre": tv, "precio": 410.0}), "más caro que el chollo")
+        self.assertIsNone(v.chollo_previo({"nombre": tv, "precio": 150.0}), "demasiado barato: otro producto")
+        self.assertIsNone(v.chollo_previo({"nombre": "Televisor 55 pulgadas QLED", "precio": 300.0}), "sin código")
+
     def test_historial_de_precios(self):
         # 17/11/2026: solo se guarda una fila cuando cambia el precio; el mínimo sale con su fecha.
         con = v.bd()

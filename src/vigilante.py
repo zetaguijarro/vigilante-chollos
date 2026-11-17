@@ -998,6 +998,9 @@ def bd():
         CREATE INDEX IF NOT EXISTS precios_fecha ON precios(fecha);
         -- Códigos de modelo de cada hilo de Chollometro (17/11/2026): cruce inmediato producto -> hilos.
         CREATE TABLE IF NOT EXISTS cm_codigos (codigo TEXT, id INTEGER, PRIMARY KEY (codigo, id)) WITHOUT ROWID;
+        -- Fichas de PCComTracker por código de modelo (17/11/2026): sirven de histórico para el mismo modelo en
+        -- Amazon, MediaMarkt... Se llena al leer su catálogo; su buscador va por /api/ (prohibido en su robots.txt).
+        CREATE TABLE IF NOT EXISTS pcct (codigo TEXT, url TEXT, nombre TEXT, PRIMARY KEY (codigo, url)) WITHOUT ROWID;
     """)
     if not con.execute("SELECT 1 FROM meta WHERE k='cm_codigos_v1'").fetchone():
         # Una vez: los hilos que ya estaban en la copia. Los nuevos los indexa guardar_hilos.
@@ -1801,7 +1804,7 @@ def descuento_real(p, mejor, dias_min=14):
         refs.append((h["habitual"], "precio habitual en la tienda (PCComTracker)"))
     if p.get("estado") == "bajada" and p.get("_min_previo") and p.get("_seguido_dias", 0) >= max(1, dias_min):
         refs.append((p["_min_previo"], f"mínimo visto por el vigilante en {p['_seguido_dias']} días"))
-    if demanda_probada_ok(p) and p.get("precio_antes"):
+    if (demanda_probada_ok(p) or p.get("_chollo_previo")) and p.get("precio_antes"):
         refs.append((p["precio_antes"], "precio inicial de la tienda (ya fue chollo caliente a ese precio o más)"))
     mejores = [((r - p["precio"]) / r, etiqueta) for r, etiqueta in refs if r and r > 0]
     return max(mejores) if mejores else (None, None)
@@ -1827,6 +1830,40 @@ def busquedas_chollometro(c):
 
 
 HOT_PRECIO_MIN = 0.6  # más barato que el 60 % del hilo caliente = casi seguro otro producto (o un pack)
+CHOLLO_PREVIO_GRADOS = 200
+CHOLLO_PREVIO_DIAS = 180
+PCCT_MAX_RONDA = 10  # fichas de PCComTracker que se piden por ronda para productos de otras tiendas
+
+
+def chollo_previo(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
+    """El mismo modelo (mismo código, por el índice cm_codigos) se publicó en Chollometro en los últimos `dias` con
+    `grados` o más, y ahora está igual o más barato (sin bajar del 60 %: sería otro producto). La comunidad validó
+    ese precio: es contraste real aunque no haya comparador. Sin código de modelo no se intenta. -> hilo o None."""
+    if not codigos_modelo(p["nombre"]):
+        return None
+    desde = (datetime.now() - timedelta(days=dias)).timestamp()
+    buenos = [h for h in hilos_del_producto(p["nombre"]) if h["precio"] and (h["temp"] or 0) >= grados
+              and (h["publicado"] or 0) >= desde and h["precio"] * HOT_PRECIO_MIN <= p["precio"] <= h["precio"] * 1.0]
+    return max(buenos, key=lambda h: h["temp"]) if buenos else None
+
+
+def guardar_pcct(con, productos):
+    """Apunta el código de modelo y la ficha de PCComTracker de cada producto que la trae."""
+    filas = [(c, p["historico_url"], p["nombre"][:150]) for p in productos
+             if "pccomtracker" in (p.get("historico_url") or "") for c in codigos_modelo(p["nombre"])]
+    if filas:
+        con.executemany("INSERT OR IGNORE INTO pcct VALUES (?,?,?)", filas)
+
+
+def pcct_de(con, p):
+    """Ficha de PCComTracker del mismo modelo (mismo código y misma regla estricta) o None."""
+    cods = sorted(codigos_modelo(p["nombre"]))
+    if not cods:
+        return None
+    for url, nombre in con.execute(f"SELECT url, nombre FROM pcct WHERE codigo IN ({','.join('?' * len(cods))})", cods):
+        if mismo_producto_hot(p["nombre"], nombre):
+            return url
+    return None
 
 
 def mismo_producto_hot(nombre, titulo):
@@ -3110,7 +3147,8 @@ def mensaje_candidato(n, p):
               else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
     if p.get("_hist"):
         h = p["_hist"]
-        hist = (f"Histórico (comparador): mínimo {h['minimo']:g} €"
+        hist = (f"Histórico ({'PcComponentes, según PCComTracker' if p.get('_pcct_otra') else 'comparador'}): "
+                f"mínimo {h['minimo']:g} €"
                 + (f" · habitual {h['habitual']:g} €" if h.get("habitual") else ""))
     elif p.get("_min_previo") and p.get("_seguido_dias"):
         hist = f"Histórico propio: mínimo {p['_min_previo']:g} € en {p['_seguido_dias']} días"
@@ -3562,7 +3600,10 @@ def historico(cfg, item):
             r = historico_comparador(item["h"])
             if not r:
                 return None
-            salida = {"minimo": r["minimo"], "fuente": urlparse(r["url"]).netloc.replace("www.", ""),
+            fuente = urlparse(r["url"]).netloc.replace("www.", "")
+            if "pccomtracker" in fuente and "pccomponentes" not in (item.get("t") or "pccomponentes"):
+                fuente = "PcComponentes, según PCComTracker"  # producto de otra tienda: el histórico es de PcComponentes
+            salida = {"minimo": r["minimo"], "fuente": fuente,
                       "url": r["url"], "es_minimo": item.get("p") is not None and item["p"] <= r["minimo"] * 1.03}
             if r.get("habitual"):
                 salida["habitual"] = r["habitual"]
@@ -4532,6 +4573,7 @@ def ronda(categoria, solo=None):
                 recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> ERROR: {str(error)[:100]}")
             continue
         n_cambios, n_previos = 0, len(previos)
+        guardar_pcct(con, productos)
         # Se siembra por página leída: una URL nueva de la misma tienda no inunda de avisos.
         pagina = f"{tienda}|{url_leida}"
         sembrada = con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
@@ -4644,6 +4686,16 @@ def ronda(categoria, solo=None):
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
     pesos = pesos_demanda(con, cfg)
+    # Sin precio de mercado: histórico de PCComTracker del mismo modelo para productos de otras tiendas (Amazon,
+    # MediaMarkt...), si su ficha está en el índice. Como mucho PCCT_MAX_RONDA fichas por ronda.
+    n_pcct = 0
+    for i, p in enumerate(lote):
+        if sin_idealo or precios_idealo.get(i) or p.get("historico_url") or n_pcct >= PCCT_MAX_RONDA:
+            continue
+        url = pcct_de(con, p)
+        if url:
+            p["historico_url"], p["_pcct_otra"] = url, True
+            n_pcct += 1
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
         d = p["d"]
@@ -4681,6 +4733,13 @@ def ronda(categoria, solo=None):
                 ok = d is not None and d >= cat_cfg.get("descuento_min_sin_mercado", desc_sin_idealo)
         if not ok and mejor is None and not p.get("gratis") and demanda_probada_ok(p):
             # Sin comparador, pero la comunidad ya lo calentó a este precio o más caro: precio y demanda probados.
+            ok = True
+        elif not ok and mejor is None and not p.get("gratis") and (cp := chollo_previo(p)):
+            # Lo mismo con un chollo de 200° o más de los últimos 6 meses (17/11/2026): igual o más barato ahora.
+            p["_cm_hot"] = {"temp": round(cp["temp"]), "precio": cp["precio"], "titulo": cp["titulo"][:80],
+                            "dias": int((datetime.now().timestamp() - cp["publicado"]) // 86400),
+                            "caducado": bool(cp["caducado"])}
+            p["_chollo_previo"] = True
             ok = True
         if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
             log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
