@@ -1834,6 +1834,7 @@ CM_FRESCA_MIN = 30       # sin actualizar en 30 min, "no publicado" pasa a "sin 
 CM_RECIENTE_DIAS = 30    # un post de hace más de 30 días y caducado ya no es duplicado
 CM_HOT = 300             # temperatura a partir de la que un post "se calentó"
 CM_GUARDAR_DIAS = 400
+CM_GUARDAR_HOT_DIAS = 800  # los de 200° o más se guardan más tiempo: son la base de la lista de vigilancia
 CM_PORTADA_PAGINAS = 8   # la portada son destacados por orden de llegada: 8 páginas ≈ una semana
 
 
@@ -1908,7 +1909,9 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
         log(f"chollometro (copia local): {str(e)[:120]}")
         return chollometro_fresca(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (ahora.isoformat(timespec="minutes"),))
-    con.execute("DELETE FROM cm WHERE publicado < ?", (int((ahora - timedelta(days=CM_GUARDAR_DIAS)).timestamp()),))
+    con.execute("DELETE FROM cm WHERE publicado < ? AND (temp < 200 OR publicado < ?)",
+                (int((ahora - timedelta(days=CM_GUARDAR_DIAS)).timestamp()),
+                 int((ahora - timedelta(days=CM_GUARDAR_HOT_DIAS)).timestamp())))
     con.commit()
     return True
 
@@ -2567,14 +2570,17 @@ def avisos_recientes(con, horas=24):
     return salida
 
 
-def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5):
+def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None):
     """Primera carga: /nuevos de los últimos días (duplicados) y la portada hacia atrás (lo que se
-    calentó, ~1 día por página). Educada: una página cada `pausa` segundos."""
+    calentó, ~1 día por página). Educada: una página cada `pausa` segundos.
+    desde (fecha 'AAAA-MM-DD'): la portada para al llegar ahí. También para si una página no va más atrás
+    que la anterior (pasado el final, Chollometro puede devolver otra vez lo de hoy)."""
     con = bd()
+    tope = datetime.fromisoformat(desde).timestamp() if desde else 0
     limite = (datetime.now() - timedelta(days=dias_nuevos)).timestamp()
     total = 0
-    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (CM_PORTADA, paginas_portada, 0)):
-        n = 0
+    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (CM_PORTADA, paginas_portada, tope)):
+        n, anterior = 0, None
         for n in range(1, paginas + 1):
             try:
                 html, _ = descargar(_pagina(base, n))
@@ -2584,10 +2590,17 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5):
             hilos = hilos_chollometro(html)
             if not hilos:
                 break
+            viejo = min(h["publicado"] for h in hilos)
+            if base == CM_PORTADA and anterior is not None and viejo >= anterior + 86400:
+                print(f"  la página {n} vuelve a fechas recientes: fin del historial")
+                break
             guardar_hilos(con, hilos)
             total += len(hilos)
-            if min(h["publicado"] for h in hilos) < hasta:
+            anterior = min(viejo, anterior) if anterior is not None else viejo
+            if viejo < hasta:
                 break
+            if base == CM_PORTADA and n % 50 == 0:
+                print(f"  portada página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}")
             time.sleep(pausa)
         print(f"{base}: hasta la página {n}, {total} posts guardados")
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (datetime.now().isoformat(timespec="minutes"),))
@@ -6057,7 +6070,7 @@ if __name__ == "__main__":
     elif len(args) >= 3 and args[0] == "recordar":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:
-        precargar_chollometro(*(int(a) for a in args[1:3]))
+        precargar_chollometro(*(int(a) for a in args[1:3]), desde=args[3] if len(args) > 3 else None)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:

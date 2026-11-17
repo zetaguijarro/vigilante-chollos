@@ -260,6 +260,60 @@ class Cupones(unittest.TestCase):
         self.assertIn("cupón de 10 % desde 60 € con el código ES11", buf.getvalue())
 
 
+class PrecargaHistorial(unittest.TestCase):
+    """Historial largo de Destacados (17/11/2026): parar en una fecha o cuando la página vuelve a hoy,
+    y guardar los calientes 800 días."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB, v.descargar, v.time.sleep
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        v.time.sleep = lambda s: None
+
+    def tearDown(self):
+        v.DATOS, v.DB, v.descargar, v.time.sleep = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def red(self, ultima):
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "nuevos" in url:
+                return cm_html([hilo("nuevo hoy", "Amazon", 5, dias=0), hilo("viejo", "Amazon", 5, dias=5)]), url
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            dias = n if n <= ultima else 0  # pasado el final, Chollometro devuelve lo de hoy
+            return cm_html([hilo(f"hilo {n}-{i}", "Amazon", 10 + i, temp=250, dias=dias) for i in range(3)]), url
+        v.descargar = red
+        return pedidas
+
+    def portada(self, pedidas):
+        return [u for u in pedidas if "nuevos" not in u]
+
+    def test_para_cuando_vuelve_a_hoy(self):
+        pedidas = self.red(ultima=5)
+        with redirect_stdout(io.StringIO()) as buf:
+            v.precargar_chollometro(1, 20)
+        self.assertEqual(len(self.portada(pedidas)), 6)
+        self.assertIn("fin del historial", buf.getvalue())
+
+    def test_para_en_la_fecha_desde(self):
+        pedidas = self.red(ultima=100)
+        desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 50, desde=desde)
+        self.assertLessEqual(len(self.portada(pedidas)), 5)
+
+    def test_los_calientes_se_guardan_mas_tiempo(self):
+        con = v.bd()
+        v.guardar_hilos(con, v.hilos_chollometro(cm_html([hilo("caliente", temp=250, dias=500),
+                                                          hilo("frio", temp=50, dias=500),
+                                                          hilo("muy viejo", temp=900, dias=900)])))
+        v.descargar = lambda url, **k: (cm_html([hilo("hoy", dias=0)]), url)
+        v.actualizar_chollometro(con, forzar=True, max_paginas=1)
+        self.assertEqual([t for (t,) in con.execute("SELECT titulo FROM cm ORDER BY titulo")], ["caliente", "hoy"])
+
+
 class ComparaPropio(unittest.TestCase):
     """Habitual propio y mercado propio, con el historial que ya guarda el vigilante (17/11/2026)."""
 
