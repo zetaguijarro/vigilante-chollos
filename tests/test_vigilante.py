@@ -835,6 +835,44 @@ class Rondas(Base):
         self.red.chollometro = [hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 36.0)]
         self.assertEqual(self.ronda()[0]["ch"], "otra:36")
 
+    def test_tarjetas_amazon_con_enlace_a_opiniones(self):
+        # 17/11: los más vendidos de Amazon salían con el nombre "4,6 de 5 estrellas 292.057".
+        tarjeta = ('<div><a href="/Tapo-C210-Vigilancia/dp/B07XLML2YS/ref=zg_bs"><img alt="Tapo C210 camara">'
+                   '<div>Tapo C210 - Cámara de Vigilancia WiFi Interior 360º, 2K</div></a>'
+                   '<a href="/product-reviews/B07XLML2YS/ref=zg_bs_rv" title="4,6 de 5 estrellas 292.057">'
+                   '4,6 de 5 estrellas 292.057</a><span>22,99 €</span></div>')
+        ps = v.extraer("<html>" + tarjeta * 1 + "</html>", "https://www.amazon.es/gp/bestsellers/electronics")
+        self.assertEqual([(p["nombre"][:9], p["precio"]) for p in ps], [("Tapo C210", 22.99)])
+        # Menú de Carrefour: las categorías de la tienda sí, los subdominios (seguros) y los servicios no.
+        menu = ('<a href="https://www.carrefour.es/informatica">Informática</a>'
+                '<a href="https://seguros.carrefour.es/hogar">Seguro de hogar</a>'
+                '<a href="https://www.carrefour.es/servicios/instalacion.e">Instalación electrodomésticos</a>')
+        self.assertEqual(v.categorias_de_portada(menu, "https://www.carrefour.es/"),
+                         ["https://www.carrefour.es/informatica"])
+
+    def test_portada_refresca_temperaturas(self):
+        # 17/11: el 92 % de los hilos guardaba la temperatura de recién publicado (la de /nuevos).
+        h = hilo("Samsung Galaxy S26 256GB", "Amazon", 599.0, temp=40, dias=3)
+        caliente = dict(h, temperature=720)
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "/nuevos" in url:
+                return cm_html([RELLENO_CM, h]), url
+            if url.endswith("?page=2"):
+                return cm_html([caliente]), url
+            return cm_html([RELLENO_CM]), url
+        v.descargar = red
+        con = v.bd()
+        v.actualizar_chollometro(con, forzar=True)
+        self.assertEqual(con.execute("SELECT temp FROM cm WHERE id=?", (h["threadId"],)).fetchone()[0], 720)
+        for _ in range(v.CM_PORTADA_PAGINAS):
+            v.actualizar_chollometro(con, forzar=True)
+        portada = [u.rsplit("=", 1)[-1] for u in pedidas if "chollometro.com/?page=" in u]
+        self.assertEqual(portada, [str(n) for n in [2, 3, 4, 5, 6, 7, 8, 2, 3]], "rota de la 2 a la 8")
+        con.close()
+
     def test_descuento_real_minimo(self):
         # Regla de Instinct: BUENA = 25 % real sobre comparables exactos; el "antes" de la tienda no cuenta.
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))

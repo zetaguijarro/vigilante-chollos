@@ -186,6 +186,36 @@
    "cada_min": 15,
    "por_ronda": 6,
    "_nota": "613 subcategorías de PCComTracker (solo los 40 primeros de cada una: el resto va por /api/, prohibido en su robots.txt). Vuelta completa en ~1 día."
+  },
+  "amazon.es": {
+   "cada_min": 15,
+   "por_ronda": 2,
+   "urls": [
+    "https://www.amazon.es/gp/bestsellers/electronics",
+    "https://www.amazon.es/gp/bestsellers/computers",
+    "https://www.amazon.es/gp/bestsellers/kitchen",
+    "https://www.amazon.es/gp/bestsellers/videogames",
+    "https://www.amazon.es/gp/bestsellers/toys",
+    "https://www.amazon.es/gp/bestsellers/sports",
+    "https://www.amazon.es/gp/bestsellers/beauty",
+    "https://www.amazon.es/gp/bestsellers/hpc",
+    "https://www.amazon.es/gp/bestsellers/appliances",
+    "https://www.amazon.es/gp/bestsellers/baby",
+    "https://www.amazon.es/gp/bestsellers/pet-supplies",
+    "https://www.amazon.es/gp/bestsellers/fashion",
+    "https://www.amazon.es/gp/bestsellers/grocery"
+   ],
+   "_nota": "17/11/2026: la portada de Amazon no da categorías (son /b?node=...). Lista fija de más vendidos por categoría: 47-50 productos cada una con navegador (~6 s). diy, shoes y home no existen con ese nombre. Amazon es el 46 % de los hilos de Chollometro."
+  },
+  "elcorteingles.es": {
+   "cada_min": 15,
+   "por_ronda": 2,
+   "_nota": "17/11/2026: 243 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
+  },
+  "carrefour.es": {
+   "cada_min": 15,
+   "por_ronda": 2,
+   "_nota": "17/11/2026: 322 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
   }
  },
  "entrega": {

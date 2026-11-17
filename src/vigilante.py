@@ -694,6 +694,8 @@ RE_NO_PRECIO = re.compile(r"ahorr|env[ií]o|reembolso|cashback|regalo|hasta|cuot
 RE_NO_PRECIO_DESPUES = re.compile(r"\s*(?:/\s*mes|al mes|mes\b|extra|de dto|dto|de descuento|descuento|"
                                   r"descontad|de ahorro|menos|off\b)", re.I)
 RE_PRECIO_PARTIDO = re.compile(r"(\d)\s*([.,])\s*(\d{2})(?=\s*(?:€|EUR))")
+RE_ENLACE_OPINIONES = re.compile(r"product-reviews|customer-?reviews|/opiniones/|/reviews?/", re.I)
+RE_VALORACION = re.compile(r"\d(?:[.,]\d)?\s+(?:de|out of)\s+5\s+estrellas|\d(?:[.,]\d)? de 5\b", re.I)
 RE_TEXTO_GENERICO =re.compile(r"^(?:ver|comprar|añadir|acceder|más|mas|detalles|ficha)\b", re.I)
 
 
@@ -714,6 +716,8 @@ def tarjetas_html(html, base_url, tope=6000):
         partes = urlparse(url)
         if not partes.netloc.replace("www.", "").endswith(host) or not RE_RUTA_FICHA.search(partes.path + "?"):
             continue
+        if RE_ENLACE_OPINIONES.search(partes.path):
+            continue  # Amazon: el enlace a las opiniones partía la tarjeta y se quedaba con su precio
         texto = " ".join(unescape(re.sub(r"<[^>]+>", " ", m.group(2))).split())
         f = fichas.setdefault(url, [m.start(), []])
         if texto:
@@ -738,7 +742,8 @@ def tarjetas_html(html, base_url, tope=6000):
             precio = a_numero(e.group(1).replace(" ", ""))
             break
         buenos = [t for t in nombres if 8 <= len(t) <= 250 and re.search(r"[a-zA-Z]{3}", t)
-                  and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t) and not RE_EUROS_DELANTE.search(t)]
+                  and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t) and not RE_EUROS_DELANTE.search(t)
+                  and not RE_VALORACION.match(t)]
         if precio and 0.5 <= precio <= 20000 and buenos:
             salida.append({"name": max(buenos, key=len), "price": precio, "url": url})
     return salida
@@ -1287,6 +1292,7 @@ CM_FRESCA_MIN = 30       # sin actualizar en 30 min, "no publicado" pasa a "sin 
 CM_RECIENTE_DIAS = 30    # un post de hace más de 30 días y caducado ya no es duplicado
 CM_HOT = 300             # temperatura a partir de la que un post "se calentó"
 CM_GUARDAR_DIAS = 400
+CM_PORTADA_PAGINAS = 8   # la portada son destacados por orden de llegada: 8 páginas ≈ una semana
 
 
 def hilos_chollometro(html):
@@ -1344,6 +1350,15 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
                 break  # ya enlaza con lo guardado
             time.sleep(1)
         html, _ = descargar(CM_PORTADA)
+        guardar_hilos(con, hilos_chollometro(html))
+        # Una página más de la portada, rotando de la 2 a la CM_PORTADA_PAGINAS: cada una se refresca cada
+        # ~30 min. Sin esto la temperatura se quedaba la de /nuevos, recién publicado (17/11/2026: el 92 % de
+        # los hilos de hace 3-10 días congelados; los calientes al día bajaron de 150-300 a 14-43).
+        fila = con.execute("SELECT v FROM meta WHERE k='cm_portada_rot'").fetchone()
+        n = int(fila[0]) % (CM_PORTADA_PAGINAS - 1) + 2 if fila else 2
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_portada_rot', ?)", (str(n - 1),))
+        time.sleep(1)
+        html, _ = descargar(_pagina(CM_PORTADA, n))
         guardar_hilos(con, hilos_chollometro(html))
     except Exception as e:
         log(f"chollometro (copia local): {str(e)[:120]}")
@@ -2345,7 +2360,7 @@ RE_RUTA_NO_CATEGORIA = re.compile(
     r"login|cuenta|account|cart|carrito|cesta|checkout|ayuda|help|blog|contact|nuestras-tiendas|store-?locator|faq|"
     r"pol[ií]tica|legal|cookie|newsletter|registro|regist|wishlist|favorit|track|pedido|order|devoluc|search|"
     r"buscar|busqueda|\?q=|/p/|/dp/|/product/|/producto/|\.(?:jpg|png|pdf)$|\d{5,}|ofertas?|rebajas|outlet|"
-    r"sale\b|promo|descuento|black-?friday|cyber", re.I)
+    r"sale\b|promo|descuento|black-?friday|cyber|servicios?/", re.I)
 
 
 def categorias_de_portada(html, base_url, maximo=12):
@@ -2359,7 +2374,8 @@ def categorias_de_portada(html, base_url, maximo=12):
             continue
         url = urljoin(base_url, unescape(h.group(1))).split("#")[0]
         partes = urlparse(url)
-        if partes.scheme not in ("http", "https") or not partes.netloc.replace("www.", "").endswith(host):
+        # El mismo host, no subdominios: Carrefour enlaza seguros.carrefour.es/hogar en el menú.
+        if partes.scheme not in ("http", "https") or partes.netloc.replace("www.", "") != host:
             continue
         # La misma ruta puede venir escrita con tildes o codificada (MediaMarkt: "electrodomésticos-553"
         # y "electrodom%C3%A9sticos-553"): es una sola categoría.
@@ -2501,6 +2517,11 @@ def catalogo(*nombres):
         # recoge sus subcategorías (MediaMarkt: la portada solo enlaza 12, y varias son índices).
         por = cfg.get("catalogo_por_tienda", {}).get(t, {})
         maximo = int(por.get("max", 12))
+        if por.get("urls"):
+            # Lista fija: Amazon tiene sus categorías como /b?node=599370031, y la portada no las da por categorías.
+            guardado[t] = [u for u in por["urls"] if permitido(u)]
+            print(f"{t:30} {len(guardado[t]):3} categorías (lista fija)")
+            return
         lista = [u for u in categorias_de_portada(html, final, maximo=min(12, maximo)) if permitido(u)]
         if bajar and int(por.get("niveles", 1)) >= 2:
             vistas = {unquote(urlparse(u).path).rstrip("/").lower() for u in lista}
