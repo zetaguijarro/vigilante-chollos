@@ -2728,20 +2728,47 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
         cerrojo.unlink(missing_ok=True)
 
 
-def aviso_precarga(texto):
+SEGUIR = "precarga_seguir.json"  # cómo seguir una carga que se paró (lo usa el botón "Seguir" de Telegram)
+TECLADO_SEGUIR = json.dumps({"inline_keyboard": [[{"text": "▶️ Seguir", "callback_data": "vg:seguir:1"}]]})
+
+
+def aviso_precarga(texto, seguir=False):
     """Precarga: el progreso también por Telegram (Zeta, 18/11/2026: "avísame cada 50 páginas"). Sin token o sin
-    red, solo en pantalla."""
+    red, solo en pantalla. seguir: con el botón "Seguir" (Zeta, 18/11: seguir desde Telegram si se para)."""
     print(texto)
     try:
         token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
         if token and chat:
-            enviar_telegram(token, chat, "📚 Precarga Chollometro: " + texto.strip())
+            enviar_telegram(token, chat, "📚 Precarga Chollometro: " + texto.strip(),
+                            teclado=TECLADO_SEGUIR if seguir else None)
     except Exception as e:
         log(f"aviso de precarga: {str(e)[:80]}")
 
 
+def guardar_seguir(**datos):
+    (DATOS / SEGUIR).write_text(json.dumps(datos, ensure_ascii=False), encoding="utf-8")
+
+
+def seguir_precarga(hasta_hora=None):
+    """`seguir`: retoma la última carga que se paró (por error, reto o la hora), desde la página donde se quedó.
+    Tras pararse por la hora sigue sin hora tope, salvo que se le dé otra ("seguir 08:30")."""
+    if carga_en_marcha():
+        aviso_precarga("ya hay una carga en marcha: no lanzo otra")
+        return False
+    try:
+        datos = json.loads((DATOS / SEGUIR).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        aviso_precarga("no hay ninguna carga parada que seguir")
+        return False
+    datos["hasta_hora"] = hasta_hora
+    aviso_precarga(f"sigo con {datos['listado']} desde la página {datos['inicio']}")
+    precargar_chollometro(**datos)
+    return True
+
+
 def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora):
     portada = CM_LISTADOS.get(listado, listado)
+    parada = None  # página donde se paró antes de acabar (hora o fallo)
     con = bd()
     tope = datetime.fromisoformat(desde).timestamp() if desde else 0
     limite = (datetime.now() - timedelta(days=dias_nuevos)).timestamp()
@@ -2752,17 +2779,25 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
         n, anterior, primera = 0, None, None
         for n in (range(inicio, inicio + paginas) if base == portada else range(1, paginas + 1)):
             if base == portada and fin and datetime.now() >= fin:
-                aviso_precarga(f"  {listado}: son las {hasta_hora}, paro. Para seguir otra noche, página de inicio {n}")
+                parada = n
+                aviso_precarga(f"  {listado}: son las {hasta_hora}, paro (página de inicio para seguir: {n}). "
+                               "Pulsa Seguir cuando quieras continuar (seguirá sin hora tope).", seguir=True)
                 break
             try:
                 html, _ = descargar(_pagina(base, n))
             except Exception as e:
                 log(f"precarga chollometro {base} p{n}: {e}")
                 if base == portada:
-                    aviso_precarga(f"  {listado}: la página {n} falla ({str(e)[:60]}), paro. No se reintenta")
+                    parada = n
+                    aviso_precarga(f"  {listado}: la página {n} falla ({str(e)[:60]}), paro. Si es un bloqueo, "
+                                   "espera unas horas antes de pulsar Seguir.", seguir=True)
                 break
             hilos = hilos_chollometro(html)
             if not hilos:
+                if base == portada:
+                    parada = n
+                    aviso_precarga(f"  {listado}: la página {n} no trae hilos (¿reto?), paro. Espera unas horas "
+                                   "antes de pulsar Seguir.", seguir=True)
                 break
             (DATOS / "precarga.lock").touch()
             # Fecha de la página: la mediana, no el más antiguo. La página 1 de la portada lleva hilos fijados
@@ -2785,6 +2820,11 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
                 aviso_precarga(f"  {listado} página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}, {total} hilos leídos")
             time.sleep(pausa * random.uniform(0.8, 1.2) if base == portada else pausa)
         print(f"{base}: hasta la página {n}, {total} posts guardados")
+    if parada:
+        guardar_seguir(dias_nuevos=0, paginas_portada=paginas_portada - (parada - inicio), pausa=pausa, desde=desde,
+                       listado=listado, inicio=parada)
+    else:
+        (DATOS / SEGUIR).unlink(missing_ok=True)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (datetime.now().isoformat(timespec="minutes"),))
     con.commit()
     n_hot = con.execute("SELECT COUNT(*) FROM cm WHERE temp>=?", (CM_HOT,)).fetchone()[0]
@@ -6307,6 +6347,8 @@ if __name__ == "__main__":
                               pausa=float(args[4]) if len(args) > 4 else 1.5,
                               listado=args[5] if len(args) > 5 else "destacados",
                               inicio=int(args[6]) if len(args) > 6 else 1)
+    elif args[:1] == ["seguir"]:
+        seguir_precarga(args[1] if len(args) > 1 else None)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:

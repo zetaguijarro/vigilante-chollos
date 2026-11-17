@@ -490,6 +490,46 @@ class PrecargaHistorial(unittest.TestCase):
         v.guardar_hilos(con, [{**v.hilos_chollometro(cm_html([h]))[0], "extra": None, "temp": 500}])
         self.assertIsNotNone(con.execute("SELECT extra FROM cm").fetchone()[0], "una página sin datos no borra los guardados")
 
+    def test_si_falla_guarda_por_donde_seguir_y_seguir_retoma(self):
+        avisos = []
+        orig = v.aviso_precarga
+        v.aviso_precarga = lambda texto, seguir=False: avisos.append((texto, seguir))
+        caida = {"desde": 4}
+
+        def red(url, timeout=20, reintentos=1):
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            if n >= caida["desde"]:
+                raise OSError("HTTP Error 429")
+            return cm_html([hilo(f"s {n}-{i}", "Amazon", 10 + i, temp=250, dias=n) for i in range(3)]), url
+        v.descargar = red
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.precargar_chollometro(0, 100, pausa=5, desde="2025-01-01", listado="subiendo")
+            self.assertTrue(any(s for _, s in avisos), "el aviso de la parada lleva el botón Seguir")
+            datos = json.loads((self.tmp / v.SEGUIR).read_text(encoding="utf-8"))
+            self.assertEqual((datos["listado"], datos["inicio"], datos["paginas_portada"], datos["pausa"]),
+                             ("subiendo", 4, 97, 5))
+            caida["desde"] = 7
+            pedidas = []
+            red_orig = v.descargar
+            v.descargar = lambda url, **k: (pedidas.append(url), red_orig(url))[1]
+            with redirect_stdout(io.StringIO()):
+                self.assertTrue(v.seguir_precarga())
+            self.assertTrue(pedidas[0].endswith("subiendo?page=4"), "sigue donde se paró")
+            self.assertEqual(json.loads((self.tmp / v.SEGUIR).read_text(encoding="utf-8"))["inicio"], 7)
+            (self.tmp / "precarga.lock").write_text("1")
+            with redirect_stdout(io.StringIO()):
+                self.assertFalse(v.seguir_precarga(), "con una carga en marcha no lanza otra")
+        finally:
+            v.aviso_precarga = orig
+
+    def test_si_acaba_bien_no_queda_nada_que_seguir(self):
+        self.red(ultima=3)
+        (self.tmp / v.SEGUIR).write_text("{}")
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(0, 20)
+        self.assertFalse((self.tmp / v.SEGUIR).exists())
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
@@ -2787,6 +2827,10 @@ class ModoTelegram(Base):
         b = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(b)
         self.assertEqual(b.texto_de("vg:verifica:47"), "verifica 47")
+        # Botón "Seguir" de la precarga (18/11/2026): lanza `vigilante.py seguir` con las rutas de la habilidad.
+        self.assertRegex("vg:seguir:1", b.PATRON_SEGUIR)
+        self.assertEqual(b.orden_seguir(("py.exe", r"C:\v\src\vigilante.py")), ["py.exe", r"C:\v\src\vigilante.py", "seguir"])
+        self.assertIsNone(b.orden_seguir(None))
         self.assertIsNone(b.texto_de("otra:cosa"))
         # Descartado: no se despierta a la IA. Pasa: tarea corta. Sin validar o fallo: el camino completo.
         self.assertEqual(b.accion_de('{"num":47,"veredicto":"descartado","motivo":"x"}', "47"), (None, "Descartado #47"))

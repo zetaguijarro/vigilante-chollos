@@ -15,6 +15,11 @@ plugin registra un manejador acotado a "vg:" (API pública: ctx.register_platfor
        - cualquier fallo del script: entrega "verifica N", el camino completo de siempre.
 
 Desde el 17/11/2026 (Zeta: "¿siempre tenemos que hacerlo a través de una IA el último paso?").
+
+Botón "Seguir" (18/11/2026, Zeta: "si se parara el script, decirle desde Telegram que siga"): cuando la precarga
+del historial de Chollometro se para (fallo, reto o la hora), el aviso lleva "vg:seguir:1". El plugin lanza
+`vigilante.py seguir` en segundo plano (no espera: la carga dura horas) y el script avisa por Telegram de cómo va.
+No despierta a la IA.
 """
 
 import asyncio
@@ -28,6 +33,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PATRON = r"^vg:verifica:\d{1,7}$"
+PATRON_SEGUIR = r"^vg:seguir:\d{1,3}$"
 ESPERA_S = 240  # leer una ficha con navegador puede tardar; pasado esto se usa el camino de la IA
 
 
@@ -89,6 +95,29 @@ def decidir_por_codigo(n):
         return None
 
 
+def orden_seguir(rutas):
+    """Línea de comandos para retomar la precarga (None si no se sabe dónde está el script)."""
+    return [rutas[0], rutas[1], "seguir"] if rutas else None
+
+
+def lanzar_seguir():
+    """Lanza `vigilante.py seguir` sin esperar. -> True si arrancó."""
+    try:
+        orden = orden_seguir(rutas_de_skill(_skill_instalada().read_text(encoding="utf-8")))
+    except OSError:
+        orden = None
+    if not orden:
+        return False
+    banderas = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    try:
+        subprocess.Popen(orden, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                         cwd=str(Path(orden[1]).resolve().parent.parent), creationflags=banderas)
+        return True
+    except Exception as exc:
+        logger.warning("vigilante-botones: seguir no arrancó: %s", exc)
+        return False
+
+
 def register(ctx):
     def _wire(application, adapter):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -138,10 +167,32 @@ def register(ctx):
                 reply_to_is_own_message=True)
             await adapter.handle_message(evento)
 
+        async def _seguir(update, context):
+            query = update.callback_query
+            if not query or not query.message:
+                return
+            try:
+                autorizado = await adapter._callback_authorized(query, adapter._callback_ctx(query), "No autorizado")
+            except Exception as exc:
+                logger.warning("vigilante-botones: no se pudo comprobar la autorización: %s", exc)
+                await query.answer(text="No disponible")
+                return
+            if not autorizado:
+                return
+            ok = await asyncio.to_thread(lanzar_seguir)
+            await query.answer(text="Sigo con la carga" if ok else "No he podido lanzarla")
+            try:
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Siguiendo..." if ok else "Falló: lanza 'seguir' a mano",
+                                           callback_data="vg:hecho:0")]]))
+            except Exception:
+                pass
+
         async def _ya_pulsado(update, context):
             await update.callback_query.answer(text="Ya está comprobado")
 
         application.add_handler(CallbackQueryHandler(_pulsado, pattern=PATRON))
         application.add_handler(CallbackQueryHandler(_ya_pulsado, pattern=r"^vg:hecho:\d{1,7}$"))
+        application.add_handler(CallbackQueryHandler(_seguir, pattern=PATRON_SEGUIR))
 
     ctx.register_platform_handler("telegram", _wire)
