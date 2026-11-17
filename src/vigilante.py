@@ -841,9 +841,21 @@ RE_NXM = re.compile(r"(?<![\d.,x×])([2-5])\s*[x×]\s*([1-4])(?![\d.,x×])(?!\s*
                     r"|ll[eé]vate\s+([2-5])\s*,?\s*paga\s+([1-4])|([3-5])\s+por\s+([2-4])\b(?!\s*(?:cm|m)\b)", re.I)
 
 
-def promo_multicompra(texto):
+# "NxM" que es una característica del producto, no una promoción (17/11/2026: un aire acondicionado "Split 2x1",
+# dos unidades interiores y una exterior, salió como oferta 2x1 a mitad de precio).
+RE_NXM_TECNICO = re.compile(r"split|multi\s*-?split|inverter|frigor|btu|\bkw\b|\bw\b|conductor|cable|hilo|manguera|"
+                            r"hdmi|usb|\bvga\b|displayport|kvm|conmutador|splitter|switch|matriz|puertos?|entradas?|"
+                            r"salidas?|enchufes?|regleta|bocas|v[ií]as|tomas|canales|altavoces|"
+                            r"tracci[oó]n|rueda|neum[aá]tico|ejes?|\bcm\b|\bmm\b|pulgadas|\bpanel", re.I)
+# En el NOMBRE del producto, un NxM solo es promoción si lo dice ("oferta 2x1", "promoción 3x2", "llévate"...).
+RE_NXM_PROMO = re.compile(r"oferta|promo|ll[eé]vate|paga|regalo|gratis|en\s+toda|comprando|\bpack\s+ahorro", re.I)
+
+
+def promo_multicompra(texto, nombre=False):
     """-> (descripción, unidades, factor del precio por unidad) o None.
-    '2.ª unidad al -70 %' -> ('2.ª unidad al -70 %', 2, 0.65); '3x2' -> ('3x2', 3, 0.667)."""
+    '2.ª unidad al -70 %' -> ('2.ª unidad al -70 %', 2, 0.65); '3x2' -> ('3x2', 3, 0.667).
+    nombre=True: el texto es el nombre del producto, donde "2x1" suele ser una característica (Split 2x1,
+    switch HDMI 2x1): solo cuenta si va con una palabra de promoción."""
     t = unescape(texto or "")
     for m in RE_SEGUNDA_PCT.finditer(t):
         # "2.ª unidad -50 % acum. en tu tarjeta" (Alcampo): es saldo para otra compra, no descuento en caja.
@@ -855,11 +867,16 @@ def promo_multicompra(texto):
             return f"2.ª unidad al -{pct} %", 2, round((2 - pct / 100) / 2, 4)
     if RE_SEGUNDA_GRATIS.search(t):
         return "2.ª unidad gratis", 2, 0.5
-    m = RE_NXM.search(t)
-    if m:
+    for m in RE_NXM.finditer(t):
         n, pagas = [int(x) for x in m.groups() if x][:2]
-        if n > pagas:
-            return f"{n}x{pagas}", n, round(pagas / n, 4)
+        if n <= pagas:
+            continue
+        cerca = t[max(0, m.start() - 30):m.end() + 30]
+        if RE_NXM_TECNICO.search(cerca) and not RE_NXM_PROMO.search(cerca):
+            continue  # "Split 2x1", "switch HDMI 3x1": es el producto, no la oferta
+        if nombre and not RE_NXM_PROMO.search(cerca) and not m.group(3):
+            continue
+        return f"{n}x{pagas}", n, round(pagas / n, 4)
     return None
 
 
@@ -876,12 +893,16 @@ def promos_html(html, productos, ventana=4000):
             primera[k] = min(posiciones)
     inicios = sorted(set(primera.values()))
     for k, p in enumerate(productos):
-        hallada = promo_multicompra(p["nombre"])
+        hallada = promo_multicompra(p["nombre"], nombre=True)
         if not hallada and k in primera:
             i = primera[k]
             siguientes = [x for x in inicios if x > i]
             trozo = plano[i:min(i + ventana, siguientes[0] if siguientes else len(plano))]
-            hallada = promo_multicompra(re.sub(r"<[^>]+>", " ", trozo))
+            # Sin el nombre del producto: su "2x1" de característica no es la etiqueta de la tarjeta.
+            trozo = re.sub(r"<[^>]+>", " ", trozo)
+            for a in {p["nombre"], escape(p["nombre"])}:
+                trozo = trozo.replace(a, " ")
+            hallada = promo_multicompra(trozo)
         if hallada:
             p["promo"], p["unidades"] = hallada[0], hallada[1]
             p["precio_unidad"] = round(p["precio"] * hallada[2], 2)

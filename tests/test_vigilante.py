@@ -870,8 +870,19 @@ class Rondas(Base):
         for texto in ("Cable eléctrico 2x1,5 mm", "Alfombra 2x1 m", "Monitor 27 2560x1440", "Pack 4x4 pilas AA",
                       "Sofá de 3 plazas", "Samsung Galaxy S26 128GB", "Descuento del 70 %",
                       "2ª unidad -50% acum en tu tarjeta",       # Alcampo: saldo, no descuento en caja
-                      "Guisantes Bonduelle 3 x 130 g"):
+                      "Guisantes Bonduelle 3 x 130 g",
+                      # 17/11/2026: características del producto, no promociones.
+                      "Aire acondicionado Split 2x1 Daikin 2MXM50A + 2 x FTXM25A", "Mitsubishi MXZ-2F42 multisplit 2x1",
+                      "Switch HDMI 3x1 4K", "Conmutador KVM 2x1 USB", "Regleta 4x1 enchufes"):
             self.assertIsNone(v.promo_multicompra(texto), texto)
+        # En el nombre, un NxM solo cuenta si dice que es una promoción.
+        self.assertIsNone(v.promo_multicompra("Daikin Sensira 2x1", nombre=True))
+        self.assertEqual(v.promo_multicompra("Oferta 2x1 Coca-Cola Zero 2 L", nombre=True), ("2x1", 2, 0.5))
+        self.assertEqual(v.promo_multicompra("Llévate 3, paga 2 en pañales Dodot", nombre=True), ("3x2", 3, 0.6667))
+        split = ('<a href="/p/daikin-split-2x1-1">Aire acondicionado Split 2x1 Daikin</a><span>1.299,00 €</span>'
+                 '<a href="/p/otro-2">Ventilador Cecotec</a><span>39,00 €</span>')
+        ps = v.extraer("<html>" + split + "</html>", "https://tienda.es/ofertas")
+        self.assertFalse([p for p in ps if p.get("promo")], "el Split 2x1 no es un 2x1")
         tarjetas = ('<a href="/p/gel-ducha-123456">Gel de ducha Sanex 600 ml</a><span>4,00 €</span>'
                     '<span class="badge">2ª unidad al 70%</span>'
                     '<a href="/p/champu-654321">Champú H&S 300 ml</a><span>5,00 €</span>') * 1
