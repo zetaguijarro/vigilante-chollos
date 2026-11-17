@@ -2588,6 +2588,16 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
         fin = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
         if fin <= datetime.now():
             fin += timedelta(days=1)
+    DATOS.mkdir(parents=True, exist_ok=True)
+    cerrojo = DATOS / "precarga.lock"
+    cerrojo.write_text(str(os.getpid()), encoding="utf-8")  # las rondas no arrancan mientras exista
+    try:
+        _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora)
+    finally:
+        cerrojo.unlink(missing_ok=True)
+
+
+def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora):
     portada = CM_LISTADOS.get(listado, listado)
     con = bd()
     tope = datetime.fromisoformat(desde).timestamp() if desde else 0
@@ -2607,6 +2617,7 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
             hilos = hilos_chollometro(html)
             if not hilos:
                 break
+            (DATOS / "precarga.lock").touch()
             viejo = min(h["publicado"] for h in hilos)
             ids = sorted(h["id"] for h in hilos)
             primera = primera or ids
@@ -5297,10 +5308,24 @@ def compacto(p):
 GRUPOS = {"rapidas": "descarga", "navegador": "navegador"}
 
 
+def carga_en_marcha():
+    """Hay una precarga larga de Chollometro en marcha (su cerrojo se renueva en cada página). Si lleva más de
+    15 min sin renovarse, la carga murió: no cuenta."""
+    cerrojo = DATOS / "precarga.lock"
+    try:
+        return time.time() - cerrojo.stat().st_mtime < 900
+    except FileNotFoundError:
+        return False
+
+
 def ronda_grupo(grupo):
     """Una sola tarea para todas las categorías, separadas por forma de lectura: 'rapidas' (descarga normal
     y fuentes de datos, cada pocos minutos) o 'navegador' (las tiendas que necesitan Chrome). Cada tienda
     sigue con las reglas de su categoría; solo cambia cuándo se lee."""
+    if carga_en_marcha():  # Zeta (18/11): mientras se carga el historial de Chollometro, no hay rondas
+        log(f"ronda {grupo}: saltada, hay una carga de Chollometro en marcha")
+        print(SILENCIO)
+        return
     if grupo == "rapidas" and en_horario(cargar_config()):
         # La copia de Chollometro se mantiene al día en cada ronda rápida (si no, tendría huecos).
         try:

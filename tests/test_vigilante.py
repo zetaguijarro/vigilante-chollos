@@ -339,6 +339,30 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertIn("página de inicio", buf.getvalue())
         self.assertLess(len(self.portada(pedidas)), 100)
 
+    def test_sin_rondas_mientras_carga(self):
+        dentro = []
+
+        def red(url, timeout=20, reintentos=1):
+            dentro.append(v.carga_en_marcha())
+            return cm_html([hilo(f"h {url}", dias=1)]), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 2)
+        self.assertTrue(dentro and all(dentro), "mientras carga, el cerrojo está puesto")
+        self.assertFalse(v.carga_en_marcha(), "al terminar se quita")
+        (self.tmp / "precarga.lock").write_text("1")
+        orig = v.ronda
+        v.ronda = lambda *a, **k: self.fail("no debe haber ronda durante la carga")
+        try:
+            with redirect_stdout(io.StringIO()) as buf:
+                v.ronda_grupo("rapidas")
+        finally:
+            v.ronda = orig
+        self.assertEqual(buf.getvalue().strip(), v.SILENCIO)
+        viejo = time.time() - 1000
+        os.utime(self.tmp / "precarga.lock", (viejo, viejo))
+        self.assertFalse(v.carga_en_marcha(), "un cerrojo de una carga muerta no cuenta")
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
