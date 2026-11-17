@@ -94,6 +94,8 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 
 - Más reglas y lo aprendido del chat con Instinct: `LECCIONES_INSTINCT.md`.
 
+- **robots.txt, en ninguna web (17/11/2026, "todo mi robots déjalo vacío, es un proyecto doméstico").** `robots_siempre` vacío: Chollometro deja de ser la excepción. Siguen sin saltarse antibot ni captcha.
+
 - **Idealo con navegador visible (17/11/2026, "a partir de ahora que sea así").** A la descarga y al Chrome oculto les da 403; a una ventana visible normal le responde. Zeta autoriza consultarlo así: Chrome visible, sin perfil, sin cambiar el agente ni ocultar la automatización. Pocas consultas (`idealo_navegador_max`, 15 por ronda) y, si también da 403, se para 3 h. Excepción expresa a "no saltarse antibot": no se resuelven retos ni captchas.
 
 

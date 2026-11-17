@@ -1104,7 +1104,7 @@ class Rondas(Base):
         self.assertFalse(v.ficha_se_intenta(cfg_real, "pccomponentes.com"), "antibot: ficha_no_leer")
         # Idealo vuelve a intentarse (17/11/2026): ya no está en robots_siempre; el 403 lo gestiona la pausa de 3 h.
         self.assertNotIn("idealo.es", cfg_real["filtros_codigo"]["robots_siempre"])
-        self.assertIn("chollometro.com", cfg_real["filtros_codigo"]["robots_siempre"])
+        self.assertEqual(cfg_real["filtros_codigo"]["robots_siempre"], [], "17/11/2026: Zeta lo vacía")
         real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
         self.assertIs(real["confirmar_ficha"], True)
         # Una sola vara con la habilidad: SUBIENDO empieza en el 20 % real (Modo Clásico, 16/11/2026).
@@ -1483,10 +1483,10 @@ Disallow: /
             v._ROBOTS_MEM.clear()
             v._ROBOTS_CFG[:] = [None, None]
             shutil.rmtree(tmp, ignore_errors=True)
-        # El archivo real lleva la decisión: desactivado, con Chollometro como excepción.
+        # El archivo real lleva la decisión: desactivado, sin excepciones desde el 17/11/2026.
         real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["filtros_codigo"]
         self.assertIs(real["respetar_robots"], False)
-        self.assertIn("chollometro.com", real["robots_siempre"])
+        self.assertEqual(real["robots_siempre"], [])
 
     def test_descargar_respeta_robots(self):
         tmp = Path(tempfile.mkdtemp())
