@@ -404,6 +404,13 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertEqual(len(portada), 5)
         self.assertIn("fin del historial", buf.getvalue())
 
+    def test_sin_nuevos_con_cero_dias(self):
+        pedidas = self.red(ultima=100)
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(0, 3, listado="subiendo")
+        self.assertFalse(any("nuevos" in u for u in pedidas), pedidas)
+        self.assertEqual(len(pedidas), 3)
+
     def test_empieza_en_la_pagina_que_se_le_diga(self):
         pedidas = self.red(ultima=100)
         with redirect_stdout(io.StringIO()):

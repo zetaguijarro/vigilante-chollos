@@ -2710,7 +2710,9 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
     tope = datetime.fromisoformat(desde).timestamp() if desde else 0
     limite = (datetime.now() - timedelta(days=dias_nuevos)).timestamp()
     total = 0
-    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (portada, paginas_portada, tope)):
+    # dias_nuevos = 0: sin /nuevos, solo el listado (Zeta, 18/11/2026: "solo destacados y subiendo").
+    tramos = ((CM_NUEVOS, 40 * dias_nuevos + 10, limite),) if dias_nuevos > 0 else ()
+    for base, paginas, hasta in tramos + ((portada, paginas_portada, tope),):
         n, anterior, primera = 0, None, None
         for n in (range(inicio, inicio + paginas) if base == portada else range(1, paginas + 1)):
             if base == portada and fin and datetime.now() >= fin:
