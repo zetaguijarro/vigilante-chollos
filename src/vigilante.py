@@ -2725,7 +2725,11 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
             if not hilos:
                 break
             (DATOS / "precarga.lock").touch()
-            viejo = min(h["publicado"] for h in hilos)
+            # Fecha de la página: la mediana, no el más antiguo. La página 1 de la portada lleva hilos fijados
+            # antiguos (18/11/2026: uno del 04/11 entre los del 17/11) y la página 2 parecía "volver a hoy".
+            # /nuevos va por fecha: ahí sí vale el más antiguo.
+            fechas = sorted(h["publicado"] for h in hilos)
+            viejo = fechas[len(fechas) // 2] if base == portada else fechas[0]
             ids = sorted(h["id"] for h in hilos)
             primera = primera or ids
             if base == portada and n > inicio and (ids == primera or (listado == "destacados" and anterior is not None

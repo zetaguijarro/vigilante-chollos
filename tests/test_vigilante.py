@@ -364,6 +364,27 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertEqual(len(self.portada(pedidas)), 6)
         self.assertIn("fin del historial", buf.getvalue())
 
+    def test_un_hilo_fijado_antiguo_en_la_pagina_1_no_corta(self):
+        # 18/11/2026: la página 1 de la portada llevaba un hilo fijado del 04/11 entre los del 17/11, y la página 2
+        # (del 16/11) parecía "volver a hoy": la carga paró en la página 2.
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "nuevos" in url:
+                return cm_html([hilo("viejo", "Amazon", 5, dias=5)]), url
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            dias = n - 1 if n <= 6 else 0
+            hilos = [hilo(f"p{n}-{i}", "Amazon", 10 + i, temp=250, dias=dias) for i in range(5)]
+            if n == 1:
+                hilos.append(hilo("fijado", "Amazon", 99, temp=900, dias=14))
+            return cm_html(hilos), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()) as buf:
+            v.precargar_chollometro(1, 20)
+        self.assertEqual(len(self.portada(pedidas)), 7, buf.getvalue())
+        self.assertIn("fin del historial", buf.getvalue())
+
     def test_subiendo_para_cuando_repite_la_pagina_1(self):
         pedidas = []
 
