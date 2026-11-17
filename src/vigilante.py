@@ -996,7 +996,16 @@ def bd():
         CREATE TABLE IF NOT EXISTS precios (clave TEXT, fecha TEXT, precio REAL,
                                             PRIMARY KEY (clave, fecha)) WITHOUT ROWID;
         CREATE INDEX IF NOT EXISTS precios_fecha ON precios(fecha);
+        -- Códigos de modelo de cada hilo de Chollometro (17/11/2026): cruce inmediato producto -> hilos.
+        CREATE TABLE IF NOT EXISTS cm_codigos (codigo TEXT, id INTEGER, PRIMARY KEY (codigo, id)) WITHOUT ROWID;
     """)
+    if not con.execute("SELECT 1 FROM meta WHERE k='cm_codigos_v1'").fetchone():
+        # Una vez: los hilos que ya estaban en la copia. Los nuevos los indexa guardar_hilos.
+        con.executemany("INSERT OR IGNORE INTO cm_codigos VALUES (?,?)",
+                        [(c, i) for i, t in con.execute("SELECT id, titulo FROM cm").fetchall()
+                         for c in codigos_modelo(t or "")])
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_codigos_v1', '1')")
+        con.commit()
     columnas = {c[1] for c in con.execute("PRAGMA table_info(lista)")}
     if "enviado" not in columnas:  # bases de versiones anteriores
         con.execute("ALTER TABLE lista ADD COLUMN enviado INTEGER DEFAULT 1")
@@ -1461,6 +1470,8 @@ def guardar_hilos(con, hilos):
                        ON CONFLICT(id) DO UPDATE SET precio=excluded.precio, temp=excluded.temp,
                        caducado=excluded.caducado, visto=excluded.visto""",
                     [{**h, "visto": ahora} for h in hilos])
+    con.executemany("INSERT OR IGNORE INTO cm_codigos VALUES (?,?)",
+                    [(c, h["id"]) for h in hilos for c in codigos_modelo(h["titulo"])])
     con.commit()
 
 
@@ -1592,23 +1603,51 @@ def enlace_hilo(h):
     return f"https://www.chollometro.com/ofertas/{slug}-{h['id']}"
 
 
-def antecedentes_chollometro(nombre, copia=None, n=3):
-    """Hasta `n` hilos del mismo producto (o parecidos) en la copia local, del más reciente al más antiguo.
-    Reglas de formato de Zeta (17/11/2026): precio, grados, enlace completo y fecha; exacto o alternativa."""
-    if copia is None:
+def hilos_del_producto(nombre, copia=None):
+    """Hilos de Chollometro del mismo producto, del más reciente al más antiguo. Solo el mismo producto: mismo
+    código de modelo o, sin código, mismo modelo con la regla estricta (con mismo_post salían televisores de
+    Philips y Xiaomi como antecedentes de una Samsung TQ55Q7F5AU, 17/11/2026). Con código y sin `copia`, va
+    por el índice cm_codigos: no recorre los 15.000 títulos."""
+    cods = codigos_modelo(nombre)
+    if copia is None and cods:
         con = bd()
         try:
-            copia = cargar_chollometro(con)
+            filas = con.execute(
+                "SELECT DISTINCT cm.id, titulo, precio, tienda, host, temp, publicado, caducado FROM cm_codigos "
+                f"JOIN cm ON cm.id = cm_codigos.id WHERE codigo IN ({','.join('?' * len(cods))})", sorted(cods)).fetchall()
         finally:
             con.close()
-    # Solo el mismo producto: mismo código de modelo o mismo modelo con la regla estricta. Con mismo_post salían
-    # televisores de Philips y Xiaomi como antecedentes de una Samsung TQ55Q7F5AU (17/11/2026).
-    cods = codigos_modelo(nombre)
-    hilos = sorted((h for h in copia["hilos"] if (cods & codigos_modelo(h["titulo"]))
-                    or (not cods and mismo_modelo(nombre, h["titulo"]))), key=lambda h: -h["publicado"])
-    return [{"precio": h["precio"], "temp": round(h["temp"]), "caducado": bool(h["caducado"]),
-             "fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "url": enlace_hilo(h),
-             "exacto": True, "titulo": h["titulo"][:80]} for h in hilos[:n]]
+        claves = ("id", "titulo", "precio", "tienda", "host", "temp", "publicado", "caducado")
+        hilos = [dict(zip(claves, f)) for f in filas]
+    else:
+        if copia is None:
+            con = bd()
+            try:
+                copia = cargar_chollometro(con)
+            finally:
+                con.close()
+        hilos = [h for h in copia["hilos"] if (cods & codigos_modelo(h["titulo"]))
+                 or (not cods and mismo_modelo(nombre, h["titulo"]))]
+    return sorted(hilos, key=lambda h: -(h["publicado"] or 0))
+
+
+def _hilo_ficha(h):
+    return {"precio": h["precio"], "temp": round(h["temp"] or 0), "caducado": bool(h["caducado"]),
+            "fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "url": enlace_hilo(h),
+            "exacto": True, "titulo": h["titulo"][:80]}
+
+
+def antecedentes_chollometro(nombre, copia=None, n=3):
+    """Hasta `n` hilos del mismo producto, del más reciente al más antiguo. Reglas de formato de Zeta
+    (17/11/2026): precio, grados, enlace completo y fecha."""
+    return [_hilo_ficha(h) for h in hilos_del_producto(nombre, copia)[:n]]
+
+
+def mejor_chollometro(nombre, copia=None):
+    """El precio más bajo al que se ha publicado el mismo producto en Chollometro (con fecha y grados), o None.
+    Son precios de chollo, no el habitual: sirve para saber si el precio de ahora es bueno."""
+    con_precio = [h for h in hilos_del_producto(nombre, copia) if h["precio"]]
+    return _hilo_ficha(min(con_precio, key=lambda h: (h["precio"], -h["publicado"]))) if con_precio else None
 
 
 # Familias de producto: no pesa lo mismo una categoría de móviles que una de impresoras (Zeta, 17/11/2026).
@@ -2148,6 +2187,8 @@ def via_comparador(html, productos, tienda, base_url, estricto=False):
 
 RE_FICHA_COMPARADOR = re.compile(r'href="((?:https?://[^"/]+)?/(?:producto|productos|product)/[^"]+)"', re.I)
 RE_HABITUAL = re.compile(r"precio habitual (?:es )?de ([\d.,]+)\s*€", re.I)
+RE_HABITUAL_DATOS = re.compile(r'averagePrice\\?"\s*:\s*([\d]+(?:\.\d+)?)')
+RE_FECHA_MINIMO = re.compile(r'minPriceDate\\?"\s*:\s*\\?"\$?D?(\d{4}-\d{2}-\d{2})')
 
 
 def _historico_seguro(url):
@@ -2167,7 +2208,15 @@ def historico_comparador(url):
         return None
     texto = _texto(re.sub(r"<script\b.*?</script>|<style\b.*?</style>", " ", html, flags=re.S | re.I))
     m = RE_HABITUAL.search(texto)
-    salida = {"minimo": minimo, "habitual": a_numero(m.group(1)) if m else None, "url": final}
+    habitual = a_numero(m.group(1)) if m else None
+    if not habitual:  # "Precio habitual · Mediana de los últimos 12 meses 153,98 €" = "averagePrice":153.98
+        a = RE_HABITUAL_DATOS.search(html)
+        habitual = float(a.group(1)) if a else None
+    salida = {"minimo": minimo, "habitual": habitual, "url": final}
+    # Fecha del mínimo (17/11/2026): viene en sus datos ("minPriceDate":"$D2026-11-16T06:06:39.000Z").
+    f = RE_FECHA_MINIMO.search(html)
+    if f:
+        salida["minimo_fecha"] = f.group(1)
     # Enlace directo a la tienda (dentro del /goto/ del comparador, sin visitarlo).
     for h in RE_GOTO.findall(html):
         real = enlace_real(urljoin(final, unescape(h)))
@@ -3517,6 +3566,8 @@ def historico(cfg, item):
                       "url": r["url"], "es_minimo": item.get("p") is not None and item["p"] <= r["minimo"] * 1.03}
             if r.get("habitual"):
                 salida["habitual"] = r["habitual"]
+            if r.get("minimo_fecha"):
+                salida["minimo_fecha"] = r["minimo_fecha"]
             return salida
         if v == "isthereanydeal":
             clave = os.environ.get("ITAD_KEY") or cfg.get("historicos", {}).get("itad_key")
@@ -3607,6 +3658,7 @@ def dossier_items(ids, ficha_manual=None):
                     c_ch = estado_chollometro({"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]})
                     item["ch_ahora"] = c_ch
                     item["antecedentes"] = antecedentes_chollometro(c["n"])
+                    item["mejor_cm"] = mejor_chollometro(c["n"])
                     item["minimo_propio"] = minimo_con_fecha(con, clave_vista(c["t"], {"url": c.get("u"),
                                                                                        "nombre": c["n"]}))
                     if c_ch == "misma":
@@ -3832,7 +3884,9 @@ def bloques_de_codigo(item, d):
     info += ["", f"🚚 Envío: {envio}." if envio else "🚚 Portes no verificados: total según cesta.", "",
              _hora_entrega(item.get("detectada")), ""]
     if h.get("minimo"):
-        info.append(f"📉 Mínimo registrado en {fuente}: {eur(h['minimo'])}"
+        fm = h.get("minimo_fecha") or ""
+        cuando = f" ({fm[8:10]}/{fm[5:7]}/{fm[:4]})" if len(fm) >= 10 else ""
+        info.append(f"📉 Mínimo registrado en {fuente}: {eur(h['minimo'])}{cuando}"
                     + (f"; habitual {eur(h['habitual'])}." if h.get("habitual") else "."))
     elif item.get("id"):
         info.append(f"📉 Comparación puntual: siguiente precio en otras tiendas {eur(item['id'])}. "
@@ -3841,6 +3895,12 @@ def bloques_de_codigo(item, d):
         info.append(f"📉 Ya fue chollo caliente en Chollometro: {item['hot']}.")
     else:
         info.append("📉 Habitual no acreditado.")
+    mc = item.get("mejor_cm")
+    if mc:
+        comp = ("igual o mejor que ahora" if precio <= mc["precio"] * 1.005
+                else f"ahora {round((precio - mc['precio']) / mc['precio'] * 100)} % más caro")
+        info.append(f"📉 Mejor precio publicado en Chollometro: {eur(mc['precio'])} ({mc['fecha']}, {mc['temp']}°); "
+                    f"{comp}.")
     mp = item.get("minimo_propio")
     if mp and mp[2][:10] != datetime.now().strftime("%Y-%m-%d"):
         f, desde = mp[1], mp[2]

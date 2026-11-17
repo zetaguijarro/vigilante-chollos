@@ -2074,6 +2074,23 @@ class ModoTelegram(Base):
                                                      hilo("Samsung TQ55Q7F5AU 55 QLED 4K", "Amazon", 399.0)])), "fresca": True}
         self.assertEqual([x["precio"] for x in v.antecedentes_chollometro(
             "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED HDR10+ Tizen Smart TV", tv)], [399.0])
+        # Índice por código de modelo (sin copia: va a la base) y mejor precio publicado, con su fecha.
+        con = v.bd()
+        v.guardar_hilos(con, v.hilos_chollometro(cm_html([
+            hilo("Samsung TQ55Q7F5AU 55 QLED 4K", "Amazon", 399.0, temp=640, dias=20),
+            hilo("TV Samsung TQ55Q7F5AU 55 pulgadas", "MediaMarkt", 349.0, temp=210, dias=3),
+            hilo("TV Philips LED 55PUS7000 HDR10+", "Amazon", 297.99)])))
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM cm_codigos WHERE codigo='TQ55Q7F5AU'").fetchone()[0], 2)
+        con.close()
+        nombre = "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED HDR10+ Tizen Smart TV"
+        self.assertEqual([x["precio"] for x in v.antecedentes_chollometro(nombre)], [349.0, 399.0])
+        mejor = v.mejor_chollometro(nombre)
+        self.assertEqual((mejor["precio"], mejor["temp"]), (349.0, 210))
+        info = v.bloques_de_codigo({"num": 1, "n": nombre, "u": "https://x.es/tv", "p": 365.95, "mejor_cm": mejor,
+                                    "historico": {"minimo": 330.0, "minimo_fecha": "2026-11-16", "fuente": "pccomtracker.com"}},
+                                   {"precio": 365.95, "etiqueta": "SUBIENDO", "prueba": "x"})["info"]
+        self.assertIn(f"📉 Mejor precio publicado en Chollometro: 349 € ({mejor['fecha']}, 210°); ahora 5 % más caro.", info)
+        self.assertIn("📉 Mínimo registrado en pccomtracker.com: 330 € (16/11/2026).", info)
         self.assertEqual(v.limpiar_envio("Envío: Desde 15,95 € Devolución: Gratuita 30 días Garantía: 3 años"), "Desde 15,95 €")
 
     def test_decidir_con_la_ficha_que_lee_hermes(self):
