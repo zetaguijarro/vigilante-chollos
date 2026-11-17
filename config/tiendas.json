@@ -92,7 +92,10 @@
    "motero"
   ],
   "max_por_tienda_y_ronda": 2,
-  "sin_infantil_en": ["moda", "deporte"],
+  "sin_infantil_en": [
+   "moda",
+   "deporte"
+  ],
   "precio_sospechoso": 0.4,
   "repetido_horas": 24,
   "ahorro_min_eur": 5,
@@ -135,23 +138,16 @@
    "footlocker.es",
    "pccomponentes.com",
    "coolmod.com",
-   "nbastore.eu",
-   "ninjakitchen.es",
-   "sharkclean.es",
    "toysrus.es",
    "fnac.es",
    "runningemotion.com",
    "samsung.com/es",
-   "aldi.es",
    "game.es",
    "sportsdirect.com",
    "store.playstation.com/es-es",
-   "nintendo.com/es-es",
    "humblebundle.com",
    "sprinter.es",
    "nike.com/es",
-   "zalando-prive.es",
-   "showroomprive.es",
    "privalia.com",
    "privatesportshop.es",
    "precioreal.com"
@@ -174,9 +170,23 @@
   "mi.com/es": 1
  },
  "catalogo_cada_min": 60,
- "paginas_catalogo": {"descarga": 5, "navegador": 3},
- "catalogo_por_tienda": {"mediamarkt.es": {"cada_min": 10, "por_ronda": 2, "niveles": 2, "max": 40, "_nota": "17/11/2026: sus páginas de campaña solo traen unos 13 productos en el HTML (el resto carga con JavaScript al hacer scroll). Se compensa leyendo 2 categorías del catálogo cada 10 min, con más turnos para las de más demanda (móviles, consolas, portátiles...)."}, 
-  "pccomponentes.com": {"cada_min": 15, "por_ronda": 6, "_nota": "613 subcategorías de PCComTracker (solo los 40 primeros de cada una: el resto va por /api/, prohibido en su robots.txt). Vuelta completa en ~1 día."}
+ "paginas_catalogo": {
+  "descarga": 5,
+  "navegador": 3
+ },
+ "catalogo_por_tienda": {
+  "mediamarkt.es": {
+   "cada_min": 10,
+   "por_ronda": 2,
+   "niveles": 2,
+   "max": 40,
+   "_nota": "17/11/2026: sus páginas de campaña solo traen unos 13 productos en el HTML (el resto carga con JavaScript al hacer scroll). Se compensa leyendo 2 categorías del catálogo cada 10 min, con más turnos para las de más demanda (móviles, consolas, portátiles...)."
+  },
+  "pccomponentes.com": {
+   "cada_min": 15,
+   "por_ronda": 6,
+   "_nota": "613 subcategorías de PCComTracker (solo los 40 primeros de cada una: el resto va por /api/, prohibido en su robots.txt). Vuelta completa en ~1 día."
+  }
  },
  "entrega": {
   "modo": "telegram",
@@ -288,7 +298,6 @@
    "tiendas": [
     "tiendasmgi.es",
     "miravia.es",
-    "action.com/es-es",
     "casadellibro.com",
     "emp.es"
    ],
@@ -301,7 +310,8 @@
    ],
    "apartadas": {
     "groupon.es": "Lee bien con navegador (18 ofertas), pero son servicios sin marca ni precio de mercado: con las reglas actuales nunca pasa nada. Necesitaría reglas propias.",
-    "flyingtiger.com/es-es": "Lee bien con navegador (120 productos, 48 rebajados), pero es marca propia: el filtro de marca lo descarta todo."
+    "flyingtiger.com/es-es": "Lee bien con navegador (120 productos, 48 rebajados), pero es marca propia: el filtro de marca lo descarta todo.",
+    "action.com/es-es": "0 productos en todas sus lecturas del 17/11/2026 (111); apartada para no gastar tiempo de ronda."
    }
   },
   "electro_marcas": {
@@ -309,8 +319,6 @@
    "tiendas": [
     "www.aeg.com.es",
     "dyson.es",
-    "ninjakitchen.es",
-    "sharkclean.es",
     "philips.es",
     "delonghi.com/es-es",
     "rowenta.es",
@@ -325,7 +333,11 @@
    "navegador": [
     "cecotec.es"
    ],
-   "descuento_min": 0.2
+   "descuento_min": 0.2,
+   "apartadas": {
+    "ninjakitchen.es": "0 productos en todas sus lecturas del 17/11/2026 (27); apartada para no gastar tiempo de ronda.",
+    "sharkclean.es": "0 productos en todas sus lecturas del 17/11/2026 (27); apartada para no gastar tiempo de ronda."
+   }
   },
   "videojuegos": {
    "cada_min": 10,
@@ -333,15 +345,12 @@
     "game.es",
     "xtralife.com",
     "versusgamers.com",
-    "gog.com/es",
     "instant-gaming.com/es",
     "gamesplanet.com",
     "store.ubisoft.com/es"
    ],
    "navegador": [
     "store.playstation.com/es-es",
-    "nintendo.com/es-es",
-    "fanatical.com",
     "humblebundle.com"
    ],
    "descuento_min": 0.5,
@@ -358,7 +367,10 @@
     "apps.apple.com": "Se leía de r/AppHookup.",
     "gratis.reddit": "Se leía de r/FreeGameFindings.",
     "_por_que": "El robots.txt de Reddit prohíbe todo acceso automatizado (User-agent: * / Disallow: /) y devuelve 403 Blocked. Vía legítima: registrar una app gratuita en la cuenta de Reddit (API oficial, uso personal) y leer con sus credenciales.",
-    "driffle.com": "Revende claves: sus páginas son tarjetas regalo o fichas sueltas, sin precio anterior; con exigir_descuento nunca pasaría nada."
+    "driffle.com": "Revende claves: sus páginas son tarjetas regalo o fichas sueltas, sin precio anterior; con exigir_descuento nunca pasaría nada.",
+    "gog.com/es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
+    "nintendo.com/es-es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
+    "fanatical.com": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador."
    },
    "antes_min_eur": 10
   },
@@ -368,7 +380,6 @@
     "alcampo.es",
     "tienda.mercadona.es",
     "eroski.es",
-    "aldi.es",
     "tienda.consum.es",
     "capraboacasa.com",
     "gadisline.com",
@@ -387,7 +398,10 @@
    "descuento_min_sin_mercado": 0.6,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
    "ahorro_min_eur": 15,
-   "min_bajo_mercado": 0.15
+   "min_bajo_mercado": 0.15,
+   "apartadas": {
+    "aldi.es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador."
+   }
   },
   "hogar": {
    "cada_min": 15,
@@ -473,7 +487,6 @@
    ],
    "navegador": [
     "zalando.es",
-    "mangooutlet.com",
     "zara.com/es",
     "hm.com/es_es",
     "pullandbear.com/es",
@@ -485,15 +498,16 @@
     "outlet-pc.es",
     "esdemarca.com",
     "asos.com/es",
-    "zalando-prive.es",
-    "showroomprive.es",
     "privalia.com"
    ],
    "apartadas": {
     "veepee.es": "Necesita tu sesión: ejecuta 'vigilante.py login veepee.es' y vuelve a ponerla en la lista.",
     "levi.com/ES/es_ES": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "uniqlo.com/es/es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
-    "springfield.com/es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+    "springfield.com/es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante.",
+    "mangooutlet.com": "0 productos en todas sus lecturas del 17/11/2026 (10); apartada para no gastar tiempo de navegador.",
+    "zalando-prive.es": "0 productos en todas sus lecturas del 17/11/2026 (20); apartada para no gastar tiempo de navegador. TEMPORAL: tiene mucha demanda (289 hilos); vuelve cuando se lean las campañas de dentro en vez de la portada (CLAUDE.md, punto 4).",
+    "showroomprive.es": "0 productos en todas sus lecturas del 17/11/2026 (20); apartada para no gastar tiempo de navegador. TEMPORAL: tiene mucha demanda (242 hilos); vuelve cuando se lean las campañas de dentro en vez de la portada (CLAUDE.md, punto 4)."
    },
    "exigir_marca": false,
    "exigir_precio_mercado": false,
@@ -533,8 +547,7 @@
     "sprinter.es",
     "motocard.com",
     "sportsdirect.com",
-    "privatesportshop.es",
-    "nbastore.eu"
+    "privatesportshop.es"
    ],
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
@@ -546,7 +559,8 @@
     "columbiasportswear.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "timberland.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "asics.com/es/es-es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
-    "reebok.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+    "reebok.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante.",
+    "nbastore.eu": "0 productos en todas sus lecturas del 17/11/2026 (11); apartada para no gastar tiempo de navegador."
    },
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15

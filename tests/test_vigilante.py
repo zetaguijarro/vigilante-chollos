@@ -121,7 +121,8 @@ class Base(unittest.TestCase):
         # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
-                                      "navegador_si_vacia": False})  # tienen su propia prueba
+                                      "navegador_si_vacia": False,  # tienen su propia prueba
+                                      "idealo_navegador": False})   # no abrir Chrome de verdad
         for c in cfg["categorias"].values():
             c.pop("historial_propio_dias", None)
         (self.tmp / "tiendas.json").write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -851,6 +852,35 @@ class Rondas(Base):
         self.assertEqual(v.descuento_real({"precio": 50, "precio_antes": 200}, None), (None, None),
                          "solo el 'antes' de la tienda: no hay descuento real")
 
+    def test_idealo_con_navegador_si_la_descarga_esta_en_pausa(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"].update({"idealo_navegador": True, "exigir_precio_mercado": True,
+                                      "min_bajo_mercado": 0.05, "ahorro_min_eur": 0})
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"] += [
+            {"n": "JBL Charge 5", "m": "JBL", "e": "6925281900002", "p": 99.0, "a": 179.0},
+            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 199.0}]
+        vistos = []
+
+        def nav(productos, cfg=None):
+            vistos.extend(x["nombre"] for x in productos)
+            return [149.0 if "Charge" in x["nombre"] else None for x in productos]
+        orig = v.idealo_navegador
+        v.idealo_navegador = nav
+        try:
+            v.pausar_idealo()
+            c = self.ronda()
+        finally:
+            v.idealo_navegador = orig
+            v._IDEALO_BLOQUEADO[0] = False
+        self.assertIn("JBL Charge 5", vistos)
+        self.assertEqual([x["n"] for x in c], ["JBL Charge 5"], "Flip 6 sin precio de mercado: no sale")
+        con = v.bd()
+        self.assertEqual(con.execute("SELECT precio FROM idealo WHERE consulta='6925281900002'").fetchone()[0], 149.0)
+        con.close()
+
     def test_minimo_propio_necesita_14_dias(self):
         # 17/11: B&O Beoplay HX pasó con "-28 % sobre mínimo visto por el vigilante en 1 días".
         p = {"precio": 429.0, "estado": "bajada", "_min_previo": 599.0, "_seguido_dias": 1}
@@ -1020,12 +1050,13 @@ class Rondas(Base):
         for t in siempre:
             self.assertIn(t, leidas, t)
             self.assertNotIn(t, apartadas, t)
-        for t in ("www.aeg.com.es", "runningemotion.com", "nbastore.eu", "amazon.es", "mediamarkt.es"):
+        for t in ("www.aeg.com.es", "runningemotion.com", "amazon.es", "mediamarkt.es"):
             self.assertIn(t, siempre)
         # Primera ronda real (16/11/2026): aeg.com.es sin www no responde; NBA Store da 403 por descarga;
         # y el radar (PrecioReal no es una tienda de Chollometro) se quedaba fuera por "sin demanda".
         self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
-        self.assertIn("nbastore.eu", cats["deporte"]["navegador"])
+        # 17/11/2026: NBA Store dio 0 productos en todas sus lecturas con navegador: apartada.
+        self.assertIn("nbastore.eu", cats["deporte"]["apartadas"])
         self.assertIn("precioreal.com", siempre)
         # Portátil de Zeta (17/11/2026): 16 GB de RAM, i5-8265U de 4 núcleos, dedicado solo al vigilante.
         self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 3))
@@ -1034,12 +1065,16 @@ class Rondas(Base):
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
         # Ventas privadas (16/11/2026, tras el `login` de Zeta): se leen con navegador, con su sesión.
-        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com"):
-            self.assertIn(t, cats["moda"]["navegador"])
+        self.assertIn("privalia.com", cats["moda"]["navegador"])
+        # 17/11/2026: Zalando Privé y Showroomprivé, 0 productos en todas sus lecturas (la portada solo enseña
+        # campañas): apartadas hasta leer las campañas de dentro. Sus sesiones y logins se conservan.
+        for t in ("zalando-prive.es", "showroomprive.es"):
+            self.assertIn(t, cats["moda"]["apartadas"])
         self.assertIn("privatesportshop.es", cats["deporte"]["navegador"])
         for t in ("zalando-prive.es", "showroomprive.es", "privalia.com", "privatesportshop.es"):
             self.assertIn(t, cfg["requiere_login"])
             self.assertIn(t, cfg["logins"])
+        for t in ("privalia.com", "privatesportshop.es"):
             self.assertIn(t, siempre)
         self.assertIn("veepee.es", cats["moda"]["apartadas"], "Veepee sigue apartada: 11 % de éxito")
         # La lista manda sobre el filtro de demanda aunque la copia de Chollometro no las cuente.
@@ -1048,8 +1083,8 @@ class Rondas(Base):
         con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)",
                         [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
         con.commit()
-        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["www.aeg.com.es", "nbastore.eu", "prenatal.es"]),
-                         ["www.aeg.com.es", "nbastore.eu"])
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["www.aeg.com.es", "footlocker.es", "prenatal.es"]),
+                         ["www.aeg.com.es", "footlocker.es"])
         con.close()
 
     def test_demanda_probada(self):
@@ -2631,6 +2666,15 @@ class PausaPorFallos(Base):
         fila = con.execute("SELECT v FROM meta WHERE k='pausa:x.es'").fetchone()[0]
         minutos = (datetime.fromisoformat(fila) - datetime.now()).total_seconds() / 60
         self.assertTrue(230 < minutos <= 240, minutos)  # 30 * 2**3
+        con.close()
+
+    def test_navegador_ocupado_no_es_fallo_de_la_tienda(self):
+        # 17/11: una ventana de `login` tuvo el navegador una hora y Fnac acabó fuera 24 h.
+        con = v.bd()
+        for _ in range(12):
+            v.registrar_fallos(con, [("fnac.es", "", [], "navegador: navegador ocupado por otra categoría")])
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='pausa:fnac.es'").fetchone())
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='fallos:fnac.es'").fetchone())
         con.close()
 
 

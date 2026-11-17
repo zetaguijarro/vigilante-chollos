@@ -1090,6 +1090,67 @@ def idealo_red(p):
     return min(precios) if precios else None
 
 
+IDEALO_NAV_MAX = 15  # consultas por ronda con navegador (~4 s cada una)
+
+
+def _archivo_pausa_idealo_nav():
+    return DATOS / "idealo_nav_pausa.txt"
+
+
+def precio_mismo_modelo(p, resultados):
+    """Precio más bajo del mismo modelo entre los resultados de un comparador. Menos de la mitad del
+    precio de la tienda es casi siempre un accesorio con el mismo nombre (PETKIT Purobot a 7,19 € = bolsas)."""
+    nombre = nombre_con_marca(p)
+    precios = [r["precio"] for r in resultados
+               if mismo_modelo(nombre, r["nombre"]) and r["precio"] >= p["precio"] * 0.5]
+    return min(precios) if precios else None
+
+
+def idealo_navegador(productos, cfg=None):
+    """Idealo con un Chrome VISIBLE y normal (sin perfil, sin cambiar el agente ni ocultar la automatización).
+    17/11/2026: a la descarga y al navegador oculto les da 403; a una ventana normal le responde. Zeta lo
+    autorizó ese día ("a partir de ahora que sea así"). Una pestaña, de una en una, solo si la descarga está
+    en pausa. Si también da 403, se para 3 h como la descarga.
+    -> una lista paralela a `productos`: precio, None (no está el mismo modelo) o False (no se pudo)."""
+    salida = [False] * len(productos)
+    try:
+        if time.time() - _archivo_pausa_idealo_nav().stat().st_mtime < IDEALO_REINTENTO_H * 3600:
+            return salida
+    except OSError:
+        pass
+    canal = ((cfg or {}).get("navegador") or {}).get("canal") or None
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            nav = pw.chromium.launch(headless=False, channel=canal)
+            try:
+                page = nav.new_context(locale="es-ES").new_page()
+                for i, p in enumerate(productos):
+                    if not identificable(p):
+                        salida[i] = None
+                        continue
+                    # Por marca + modelo, no por EAN: un EAN desconocido da 404 con productos al azar.
+                    url = IDEALO_BUSQUEDAS[0].format(q=quote_plus(consulta_comparador(p)))
+                    resp = page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                    estado = resp.status if resp else 0
+                    if estado == 403:
+                        DATOS.mkdir(parents=True, exist_ok=True)
+                        _archivo_pausa_idealo_nav().write_text(datetime.now().isoformat(timespec="minutes"),
+                                                               encoding="utf-8")
+                        log(f"idealo con navegador: 403, se para {IDEALO_REINTENTO_H} h")
+                        break
+                    if estado == 404:
+                        salida[i] = None
+                        continue
+                    page.wait_for_timeout(2500)
+                    salida[i] = precio_mismo_modelo(p, extraer(page.content(), page.url))
+            finally:
+                nav.close()
+    except Exception as e:  # sin navegador o se cerró: siguen PrecioReal y lo que ya se tenga
+        log(f"idealo con navegador: {str(e)[:120]}")
+    return salida
+
+
 PRECIOREAL_BUSQUEDA = "https://precioreal.com/comparador/catalogo?q={q}"
 VARIANTES = {"pro", "plus", "max", "mini", "ultra", "lite", "se", "play", "active", "neo", "fe", "air", "slim",
              "xl", "xs", "edge", "prime", "go", "kids", "nano", "classic", "sport",
@@ -1211,12 +1272,7 @@ def precioreal_red(p):
     except Exception as e:
         log(f"precioreal {p['nombre'][:60]}: {e}")
         return False
-    nombre = nombre_con_marca(p)
-    # Menos de la mitad del precio de la tienda: casi siempre un accesorio con el mismo nombre de
-    # modelo (PETKIT Purobot Max Pro 2 a 7,19 € = bolsas), no el producto.
-    precios = [r["precio"] for r in extraer(html, url)
-               if mismo_modelo(nombre, r["nombre"]) and r["precio"] >= p["precio"] * 0.5]
-    return min(precios) if precios else None
+    return precio_mismo_modelo(p, extraer(html, url))
 
 
 # ------------------------------------------------- Chollometro (copia local)
@@ -3860,6 +3916,7 @@ def en_pausa_fuera(con, lista):
 
 
 RE_NO_SE_LEE = re.compile(r"robots\.txt|antibot|captcha", re.I)
+RE_NAV_OCUPADO = re.compile(r"navegador ocupado", re.I)
 
 
 def registrar_fallos(con, lecturas):
@@ -3869,6 +3926,10 @@ def registrar_fallos(con, lecturas):
         clave = f"fallos:{tienda}"
         if not error:
             con.execute("DELETE FROM meta WHERE k IN (?,?,?)", (clave, f"pausa:{tienda}", f"no_se_lee:{tienda}"))
+            continue
+        if RE_NAV_OCUPADO.search(error):
+            # No es culpa de la tienda: otra ronda (o una ventana de `login`) tenía el navegador. El 17/11
+            # una hora así dejó a Amazon, Carrefour y El Corte Inglés en pausa y a Fnac fuera 24 h.
             continue
         if RE_NO_SE_LEE.search(error):
             # Instrucciones de lectura, paso 4: si una web bloquea (robots.txt, antibot, captcha) se anota
@@ -4183,6 +4244,16 @@ def ronda(categoria, solo=None):
             precios_idealo[i] = precio
         else:
             pendientes.append(i)
+    if pendientes and (_IDEALO_BLOQUEADO[0] or idealo_en_pausa()) and f.get("idealo_navegador", True):
+        # La descarga de Idealo está bloqueada: los mejores, con navegador visible. Lo que no encuentre
+        # (o no le dé tiempo) sigue por PrecioReal.
+        por_nav = pendientes[:f.get("idealo_navegador_max", IDEALO_NAV_MAX)]
+        for i, mejor in zip(por_nav, idealo_navegador([lote[i] for i in por_nav], cfg)):
+            if mejor:
+                con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
+                            (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
+                precios_idealo[i] = mejor
+        pendientes = [i for i in pendientes if i not in precios_idealo]
     with ThreadPoolExecutor(max_workers=3) as ex:
         for i, mejor in zip(pendientes, ex.map(lambda i: idealo_red(lote[i]), pendientes)):
             if mejor is not False:
