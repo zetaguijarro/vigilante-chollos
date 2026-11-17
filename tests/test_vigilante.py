@@ -72,7 +72,7 @@ class Red:
         self.idealo = {}       # texto que aparece en la consulta -> precio
         self.chollometro = []  # posts que salen en /nuevos y en la portada (ver hilo())
         self.caidas = set()
-        self.llamadas = {"tienda": 0, "idealo": 0, "chollometro": 0}
+        self.llamadas = {"tienda": 0, "idealo": 0, "chollometro": 0, "cm_busqueda": 0}
         self.pedidas = []      # URLs de tienda pedidas, en orden
 
     def __call__(self, url, timeout=20):
@@ -85,8 +85,9 @@ class Red:
             return "<html>sin resultados</html>", url
         if "chollometro" in url:
             self.llamadas["chollometro"] += 1
-            if "/search" in url:
-                raise AssertionError("Chollometro prohíbe /search en su robots.txt")
+            if "/search" in url:  # desde el 17/11/2026 se usa (Zeta: robots.txt en ninguna web)
+                self.llamadas["cm_busqueda"] += 1
+                return cm_html(self.chollometro), url
             if "page=" in url and "page=1" not in url:
                 return "<html></html>", url
             if url.rstrip("/").endswith(("/nuevos", "chollometro.com")):
@@ -908,6 +909,35 @@ class Rondas(Base):
         self.assertIsNone(v.chollo_previo({"nombre": tv, "precio": 410.0}), "más caro que el chollo")
         self.assertIsNone(v.chollo_previo({"nombre": tv, "precio": 150.0}), "demasiado barato: otro producto")
         self.assertIsNone(v.chollo_previo({"nombre": "Televisor 55 pulgadas QLED", "precio": 300.0}), "sin código")
+
+    def test_buscadores_de_chollometro_y_pccomtracker(self):
+        # 17/11/2026: robots.txt en ninguna web. Chollometro: el buscador guarda en la copia lo que encuentra.
+        viejo = hilo("Samsung TQ55Q7F5AU QLED 55", "Amazon", 389.0, temp=162, dias=150, caducado=True)
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "chollometro.com/search" in url:
+                return cm_html([viejo]), url
+            if "pccomtracker.com/api/search" in url:
+                return json.dumps({"products": [{"id": "1", "name": "TV Samsung TQ55Q7F5AU 55 QLED 4K"},
+                                                {"id": "2", "name": "TV Samsung TQ65Q7F5AU 65"}]}), url
+            raise OSError("no esperada: " + url)
+        v.descargar = red
+        con = v.bd()
+        p = {"nombre": "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED", "tienda": "amazon.es"}
+        self.assertEqual(v.buscar_en_chollometro(con, p), 1)
+        self.assertIn("search?q=samsung+TQ55Q7F5AU", pedidas[-1])
+        self.assertEqual(con.execute("SELECT precio, temp FROM cm WHERE id=?", (viejo["threadId"],)).fetchone(), (389.0, 162.0))
+        self.assertEqual(v.buscar_en_chollometro(con, p), 1)
+        self.assertEqual(len(pedidas), 1, "caché de 6 h: no se repite la búsqueda")
+        # PCComTracker: su buscador da la ficha del mismo modelo (no la de 65") y queda en el índice.
+        url = v.pcct_de(con, p)
+        self.assertEqual(url, "https://pccomtracker.com/producto/tv-samsung-tq55q7f5au-55-qled-4k-1")
+        n = len(pedidas)
+        self.assertEqual(v.pcct_de(con, p), url)
+        self.assertEqual(len(pedidas), n, "la segunda vez sale del índice")
+        con.close()
 
     def test_historial_de_precios(self):
         # 17/11/2026: solo se guarda una fila cuando cambia el precio; el mínimo sale con su fecha.

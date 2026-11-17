@@ -1599,11 +1599,63 @@ def estado_chollometro(p, copia=None):
     return "no" if copia["fresca"] else "?"
 
 
+def _slug(texto, largo=80):
+    return re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", (texto or "").lower())
+                  .encode("ascii", "ignore").decode()).strip("-")[:largo].rstrip("-")
+
+
 def enlace_hilo(h):
     """Enlace completo de un hilo de la copia local. Chollometro redirige /ofertas/<lo-que-sea>-<id> al hilo."""
-    slug = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", h["titulo"].lower())
-                  .encode("ascii", "ignore").decode()).strip("-")[:80].rstrip("-") or "oferta"
-    return f"https://www.chollometro.com/ofertas/{slug}-{h['id']}"
+    return f"https://www.chollometro.com/ofertas/{_slug(h['titulo']) or 'oferta'}-{h['id']}"
+
+
+CM_BUSQUEDA = "https://www.chollometro.com/search?q={q}"
+CM_BUSCAR_MAX = 5        # búsquedas en Chollometro por ronda (sale desde la conexión de casa de Zeta)
+CM_BUSCAR_CACHE_H = 6
+
+
+def _consulta_busqueda(p):
+    """Marca + código de modelo si lo hay; si no, el principio del nombre."""
+    return consulta_comparador({"nombre": p.get("nombre") or p.get("n", ""), "marca": p.get("marca") or "",
+                                "tienda": p.get("tienda") or p.get("t")})
+
+
+def _cache_busqueda(con, clave, horas):
+    """(True, valor) si se buscó hace menos de `horas`; (False, None) si toca buscar."""
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+    if fila:
+        fecha, _, valor = fila[0].partition("|")
+        try:
+            if datetime.fromisoformat(fecha) > datetime.now() - timedelta(hours=horas):
+                return True, valor
+        except ValueError:
+            pass
+    return False, None
+
+
+def buscar_en_chollometro(con, p):
+    """Busca el producto en el buscador de Chollometro y guarda en la copia local lo que encuentre (con su
+    temperatura y fecha). Robots.txt ya no se mira (Zeta, 17/11/2026); se hace poco: caché de 6 h por consulta,
+    pausa de 2 s y como mucho CM_BUSCAR_MAX por ronda. -> número de hilos encontrados, o None si no se buscó."""
+    q = _consulta_busqueda(p).strip()
+    if len(q) < 3:
+        return None
+    hecho, valor = _cache_busqueda(con, f"cm_q:{q.lower()}", CM_BUSCAR_CACHE_H)
+    if hecho:
+        return int(valor or 0)
+    try:
+        html, _ = descargar(CM_BUSQUEDA.format(q=quote_plus(q)))
+        hilos = hilos_chollometro(html)
+    except Exception as e:
+        log(f"chollometro búsqueda {q[:40]}: {str(e)[:80]}")
+        return None
+    if hilos:
+        guardar_hilos(con, hilos)
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                (f"cm_q:{q.lower()}", f"{datetime.now().isoformat(timespec='minutes')}|{len(hilos)}"))
+    con.commit()
+    time.sleep(2)
+    return len(hilos)
 
 
 def hilos_del_producto(nombre, copia=None):
@@ -1855,15 +1907,54 @@ def guardar_pcct(con, productos):
         con.executemany("INSERT OR IGNORE INTO pcct VALUES (?,?,?)", filas)
 
 
-def pcct_de(con, p):
-    """Ficha de PCComTracker del mismo modelo (mismo código y misma regla estricta) o None."""
+PCCT_BUSQUEDA = "https://pccomtracker.com/api/search?q={q}&limit=8"
+
+
+def slug_pcct(nombre):
+    """La misma fórmula que su web (función de su JavaScript, 17/11/2026): sin tildes, se quita todo lo que no sea
+    letra, número, espacio o guion (no se cambia por guion), espacios -> guion, guiones juntos, 100 caracteres.
+    Con otra fórmula la ficha redirige a una página vacía."""
+    t = unicodedata.normalize("NFD", nombre.lower())
+    t = re.sub(r"[̀-ͯ]", "", t)
+    t = re.sub(r"[^a-z0-9\s-]", "", t)
+    t = re.sub(r"-+", "-", re.sub(r"\s+", "-", t)).strip("-")
+    return t[:100]
+# PCComTracker solo sigue el catálogo de PcComponentes (tecnología y algo de hogar y electrodomésticos).
+PCCT_FUERA = {"moda", "deporte", "supermercado", "salud_belleza", "mascotas", "videojuegos", "viajes", "juguetes_bebe"}
+PCCT_CACHE_H = 24
+
+
+def pcct_de(con, p, buscar=True):
+    """Ficha de PCComTracker del mismo modelo (mismo código y misma regla estricta) o None. Primero el índice
+    local; si no está y `buscar`, su buscador (/api/search: robots.txt ya no se mira, Zeta 17/11/2026), con
+    caché de 24 h por consulta. Lo encontrado se guarda en el índice."""
     cods = sorted(codigos_modelo(p["nombre"]))
     if not cods:
         return None
     for url, nombre in con.execute(f"SELECT url, nombre FROM pcct WHERE codigo IN ({','.join('?' * len(cods))})", cods):
         if mismo_producto_hot(p["nombre"], nombre):
             return url
-    return None
+    if not buscar:
+        return None
+    q = _consulta_busqueda(p)
+    hecho, valor = _cache_busqueda(con, f"pcct_q:{q.lower()}", PCCT_CACHE_H)
+    if hecho:
+        return valor or None
+    url = ""
+    try:
+        txt, _ = descargar(PCCT_BUSQUEDA.format(q=quote_plus(q)))
+        for r in (json.loads(txt).get("products") or []):
+            if r.get("id") and r.get("name") and mismo_producto_hot(p["nombre"], r["name"]):
+                url = f"https://pccomtracker.com/producto/{slug_pcct(r['name'])}-{r['id']}"
+                guardar_pcct(con, [{"nombre": r["name"], "historico_url": url}])
+                break
+    except Exception as e:
+        log(f"pccomtracker búsqueda {q[:40]}: {str(e)[:80]}")
+        return None
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                (f"pcct_q:{q.lower()}", f"{datetime.now().isoformat(timespec='minutes')}|{url}"))
+    time.sleep(1)
+    return url or None
 
 
 def mismo_producto_hot(nombre, titulo):
@@ -3694,6 +3785,8 @@ def dossier_items(ids, ficha_manual=None):
                     item["validada"], item["validacion"] = validar_ficha(item["ficha"], c)
                 item["comprobado"] = ahora_madrid().strftime("%d/%m %H:%M")  # stock y precio caducan en minutos
                 item["buscar_chollometro"] = busquedas_chollometro(c)
+                if cfg.get("filtros_codigo", {}).get("buscar_en_chollometro", True):
+                    buscar_en_chollometro(con, {"nombre": c["n"], "tienda": c["t"]})
                 try:
                     ahora = item["ficha"].get("precio_ahora")
                     c_ch = estado_chollometro({"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]})
@@ -4689,13 +4782,15 @@ def ronda(categoria, solo=None):
     # Sin precio de mercado: histórico de PCComTracker del mismo modelo para productos de otras tiendas (Amazon,
     # MediaMarkt...), si su ficha está en el índice. Como mucho PCCT_MAX_RONDA fichas por ronda.
     n_pcct = 0
+    pcct_aqui = categoria not in PCCT_FUERA
     for i, p in enumerate(lote):
-        if sin_idealo or precios_idealo.get(i) or p.get("historico_url") or n_pcct >= PCCT_MAX_RONDA:
+        if (sin_idealo or not pcct_aqui or precios_idealo.get(i) or p.get("historico_url")
+                or n_pcct >= PCCT_MAX_RONDA or not codigos_modelo(p["nombre"])):
             continue
+        n_pcct += 1  # cuenta cada consulta (índice o buscador), no solo las que encuentran ficha
         url = pcct_de(con, p)
         if url:
             p["historico_url"], p["_pcct_otra"] = url, True
-            n_pcct += 1
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
         d = p["d"]
@@ -4781,6 +4876,10 @@ def ronda(categoria, solo=None):
     # Chollometro: se pone al día la copia local (como mucho cada 4 min) y se vuelve a mirar.
     revisar = candidatos[:hueco + max(3, hueco // 2)]
     if revisar:
+        # Buscador de Chollometro para las mejores (17/11/2026): trae hilos de meses atrás que la copia no tiene.
+        if f.get("buscar_en_chollometro", True):
+            for p in revisar[:CM_BUSCAR_MAX]:
+                buscar_en_chollometro(con, p)
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
         for p in revisar:
