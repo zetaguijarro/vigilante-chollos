@@ -74,7 +74,7 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
-- Sin modo Morralla y sin tope de precio. Formato de ficha: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026.
+- Sin modo Morralla y sin tope de precio. Formato de ficha: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026. Sin foto del producto se entrega igual y se declara en la INFO ("⚠️ Sin foto verificada del producto."): autorizado por Zeta el 17/11/2026.
 
 - AliExpress: se admiten vendedores terceros si la tienda tiene buenas ventas y reseñas.
 
@@ -385,4 +385,4 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Habilidades `redacta-chollo` y `verifica-chollo` reescritas con las reglas de título y descripción. Hace falta el instalador y reiniciar Hermes.
   - Junior, GS, youth y teen se añaden a `RE_INFANTIL`. El filtro infantil vale ya para la ropa y el calzado de cualquier categoría (`familia_de`), no solo en moda y deporte.
   - **Fallo encontrado al probarlo con el #198:** "HDR10" contaba como código de modelo. La Samsung TQ55Q7F5AU se emparejó con un hilo de un TCL 65C6K de 3.516° ("demanda probada", y así pasó) y salían antecedentes de Philips y Xiaomi. `lista_codigos` ya no cuenta HDR, DVB-T2/S2/C ni H.26x.
-  - Pendiente de Zeta: los id de los temas del grupo de Telegram (`entrega.hilos`); si se entrega sin foto (ahora se declara en ⚠️); el mínimo con fecha (PCComTracker no la da); los tráileres y las recopilaciones de Steam.
+  - Pendiente de Zeta: los id de los temas del grupo de Telegram (`entrega.hilos`); el mínimo con fecha (PCComTracker no la da); los tráileres y las recopilaciones de Steam.

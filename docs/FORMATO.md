@@ -7,7 +7,7 @@ Lo que hace el código y lo que hace Hermes está al final.
 ## La ficha, pieza por pieza
 
 1. **Entrega.** Solo Telegram, en el hilo de la categoría. Seis mensajes separados, en este orden: foto, título, enlace, precio, INFO ADICIONAL y descripción. Sin aviso por cada ficha en WhatsApp.
-2. **Foto.** Foto real del producto y variante exactos. No capturas de la tienda ni imágenes inventadas. Si falta, solo se entrega sin ella cuando esté autorizado y se declara.
+2. **Foto.** Foto real del producto y variante exactos. No capturas de la tienda ni imágenes inventadas. Si falta, solo se entrega sin ella cuando esté autorizado y se declara. *Autorizado por Zeta el 17/11/2026: sin foto se entrega y la INFO lo declara con ⚠️.*
 3. **Título.** Máximo 140 caracteres: marca, modelo comercial y características clave. Sin precio, tienda ni código alfanumérico interno. Regalos verificados destacados; viajes con fechas y duración.
 4. **Tallas.** En ropa y calzado, todas las tallas disponibles verificadas y su variante. Rango solo si están todas las intermedias; si hay huecos, enumerar. Sin tallas verificadas, la ficha espera.
 5. **Enlace.** Directo a la oferta y variante, sin afiliación ni referido. El enlace de compra no es el del comparador.
@@ -107,4 +107,4 @@ Zapatillas Marca Modelo Ejemplo de cuero y textil, color blanco, tallas 36, 37�
 
 - **Código (`entregar`, `bloques_de_codigo`):** orden de los 6 mensajes, foto sola, título sin etiqueta y recortado a 140, bloque de precio (oferta, habitual acreditado de PCComTracker, PVP de la tienda, portes), INFO completa (🏷️ etiqueta, 💶, 🚚, 🕒, 📉, 🔎 hasta 3 antecedentes de la copia local con enlace completo, ⚠️ avisos), negrita real de la descripción (`**texto**` → HTML) y tema del grupo por categoría (`entrega.hilos`).
 - **Hermes (`redacta-chollo`, `verifica-chollo`):** título y descripción con estas reglas.
-- **Pendiente:** temas del grupo (faltan los id de cada categoría), mínimo con fecha (PCComTracker no da la fecha), tráiler de YouTube y recopilaciones de Steam, foto sin autorización (ahora se declara en ⚠️ y se entrega).
+- **Pendiente:** temas del grupo (faltan los id de cada categoría), mínimo con fecha (PCComTracker no da la fecha), tráiler de YouTube y recopilaciones de Steam.
