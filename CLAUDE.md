@@ -12,6 +12,17 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
+## Rondas a mano desde el 18/11/2026 (decisión de Zeta)
+
+- **Sin modo automático.** Las seis tareas "Vigilante rapidas/navegador" (y sus 0001 y 0901) están **desactivadas**. Zeta avisa cuando quiere una ronda y Claude la lanza. No reactivarlas sin que Zeta lo pida.
+- **Una ronda completa** = las dos, en este orden (la de navegador abre Chrome y tarda unos minutos):
+  `& $py tareas\vig_rapidas.py` y después `& $py tareas\vig_navegador.py`.
+  Si Zeta pide solo una parte, "rápidas" es descarga y fuentes; "navegador", las tiendas de Chrome (Amazon, Miravia, AliExpress...).
+- Antes de lanzar: que no exista `data\navegador.lock` con un proceso vivo. Después: resumen de `data/recorrido.txt` (líneas `===` de esa ronda) y de los avisos que salieron.
+- Sigue habiendo límites por tiempo (catálogo cada 10-15 min, búsquedas por familia cada 15 min, cupo diario...): dos rondas seguidas muy juntas leen menos en la segunda.
+- Volver al modo automático (solo si Zeta lo pide): `Get-ScheduledTask | Where-Object { $_.TaskName -like "Vigilante*" } | Enable-ScheduledTask`.
+- Hermes y el botón "Verificar" no cambian: siguen funcionando para las fichas que lleguen.
+
 ## En producción desde el 16/11/2026 (noche)
 
 - **Lo que funciona es este proyecto.** Las seis tareas "Vigilante rapidas/navegador" (y sus variantes 0001 y 0901) lanzan `tareas\vig_rapidas.py` y `tareas\vig_navegador.py` de esta carpeta, con los datos en `data\`. Un cambio aquí afecta a lo que está en marcha desde la siguiente ronda: pasa las pruebas antes.
