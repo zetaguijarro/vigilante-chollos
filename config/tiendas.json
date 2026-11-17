@@ -161,7 +161,7 @@
   "descuento_real_min": 0.2
  },
  "navegador": {
-  "visible": false,
+  "visible": true,
   "canal": "chrome",
   "espera_ms": 2500,
   "scroll_max": 8,
