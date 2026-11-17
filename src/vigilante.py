@@ -1288,6 +1288,10 @@ def bd():
     columnas = {c[1] for c in con.execute("PRAGMA table_info(lista)")}
     if "enviado" not in columnas:  # bases de versiones anteriores
         con.execute("ALTER TABLE lista ADD COLUMN enviado INTEGER DEFAULT 1")
+    if "extra" not in {c[1] for c in con.execute("PRAGMA table_info(cm)")}:
+        # 18/11/2026: datos del hilo para analizar categorías y productos (grupo, enlace, cupón...).
+        con.execute("ALTER TABLE cm ADD COLUMN extra TEXT")
+        con.commit()
     if "desde" not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
         # Desde cuándo se sigue el precio de cada producto (histórico propio). Las filas viejas
         # empiezan a contar ahora: no se sabe cuándo se vieron por primera vez.
@@ -1853,17 +1857,37 @@ def hilos_chollometro(html):
             "id": int(o["threadId"]), "titulo": unescape(str(o["title"])), "precio": pr,
             "tienda": (m or {}).get("merchantName") or "", "host": o.get("linkHost") or "",
             "temp": float(o.get("temperature") or 0), "publicado": int(o["publishedAt"]),
-            "caducado": 1 if o.get("isExpired") else 0}
+            "caducado": 1 if o.get("isExpired") else 0, "extra": extra_hilo(o)}
     return list(hilos.values())
+
+
+RE_CLAVE_EXTRA = re.compile(r"group|categor|link|url|voucher|coupon|code|comment|nextBest|shipping|local|type|status", re.I)
+
+
+def extra_hilo(o, maximo=900):
+    """Lo que sirve para analizar después (categoría/grupo, enlace, cupón, comentarios, precio anterior...) sin
+    guardar el hilo entero. Los nombres de los campos de Chollometro no están fijados: se guarda lo que
+    encaje con RE_CLAVE_EXTRA, en JSON compacto y como mucho `maximo` caracteres."""
+    def corto(v):
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            return v if not isinstance(v, str) else v[:160]
+        if isinstance(v, dict):
+            return {k: corto(x) for k, x in list(v.items())[:6] if isinstance(x, (str, int, float, bool))}
+        if isinstance(v, list):
+            return [corto(x) for x in v[:5]]
+        return None
+    datos = {k: corto(v) for k, v in o.items() if RE_CLAVE_EXTRA.search(k) and v not in (None, "", [], {})}
+    texto = json.dumps(datos, ensure_ascii=False, separators=(",", ":"))
+    return texto[:maximo] if datos else None
 
 
 def guardar_hilos(con, hilos):
     ahora = datetime.now().isoformat(timespec="minutes")
-    con.executemany("""INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto)
-                       VALUES (:id, :titulo, :precio, :tienda, :host, :temp, :publicado, :caducado, :visto)
+    con.executemany("""INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto, extra)
+                       VALUES (:id, :titulo, :precio, :tienda, :host, :temp, :publicado, :caducado, :visto, :extra)
                        ON CONFLICT(id) DO UPDATE SET precio=excluded.precio, temp=excluded.temp,
-                       caducado=excluded.caducado, visto=excluded.visto""",
-                    [{**h, "visto": ahora} for h in hilos])
+                       caducado=excluded.caducado, visto=excluded.visto, extra=COALESCE(excluded.extra, cm.extra)""",
+                    [{"extra": None, **h, "visto": ahora} for h in hilos])
     con.executemany("INSERT OR IGNORE INTO cm_codigos VALUES (?,?)",
                     [(c, h["id"]) for h in hilos for c in codigos_modelo(h["titulo"])])
     con.commit()
