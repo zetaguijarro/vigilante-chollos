@@ -3577,5 +3577,79 @@ class AjusteBasura16Nov(unittest.TestCase):
         self.assertFalse(v.repetido_reciente({"tienda": "mediamarkt.es", "precio": 50.0, "nombre": "JBL Charge 5"}, jbl))
 
 
+class MiraviaAliExpress(Base):
+    """17/11/2026: Miravia y AliExpress con un Chrome visible normal (autorizado por Zeta). Lectores propios
+    de sus tarjetas y pausa fija de 30 min si sale reto."""
+
+    MIRAVIA = ('<a href="//www.miravia.es/p/i1374705818185578-s6188116389412714.html?clickTrackInfo=item_pool_ids'
+               '%3A1%3Bitem_discount_price%3A3793%3Bitem_id%3A1374705818185578%3Bitem_price%3A9893%3Bmt%3Ax" '
+               'class="w"><div><img src="//img/a.avif" alt="ARIEL Pods Original 132 Lavados"></div><div><span>37'
+               '</span><span>,93</span><span>€</span></div></a>'
+               '<a href="//www.miravia.es/p/i2-s3.html?" class="w"><img alt="Gillette Fusion5 12 recambios">'
+               '<span>23</span><span>,99</span><span>€</span></a>')
+    ALI = ('{"discount":10,"title":"Báscula de café TIMEMORE \\"Basic 2\\"","stocks":3,"trace":"{\\"utLogMap\\":'
+           '\\"%7B%22salePriceAmount%22%3A%225799%22%2C%22originPriceAmount%22%3A%225883%22%2C%22currency%22%3A'
+           '%22EUR%22%7D\\"}","reviews":713,"id":1005004983617928,"brandName":"TIMEMORE","reviewStar":"4.8",'
+           '"value":"Elegible con cupones","detailUrl":"//es.aliexpress.com/item/1005004983617928.html?pvid=x"}')
+
+    def test_tarjetas_de_miravia(self):
+        ps = v.extraer(self.MIRAVIA, "https://www.miravia.es/ch/pg/ofertas")
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"]) for p in ps],
+                         [("ARIEL Pods Original 132 Lavados", 37.93, 98.93), ("Gillette Fusion5 12 recambios", 23.99, None)])
+        self.assertEqual(ps[0]["url"], "https://www.miravia.es/p/i1374705818185578-s6188116389412714.html")
+
+    def test_productos_de_aliexpress(self):
+        ps = v.extraer(self.ALI, "https://es.aliexpress.com/ssr/300002660/Deals-HomePage")
+        self.assertEqual(len(ps), 1)
+        p = ps[0]
+        self.assertEqual((p["nombre"], p["precio"], p["precio_antes"], p["marca"], p["resenas"], p["valoracion"]),
+                         ('Báscula de café TIMEMORE "Basic 2"', 57.99, 58.83, "TIMEMORE", 713, 96))
+        self.assertEqual(p["url"], "https://es.aliexpress.com/item/1005004983617928.html")
+        self.assertTrue(p["cupon_elegible"])
+
+    def test_reto_pausa_fija_30_min_sin_doblar(self):
+        con = v.bd()
+        for _ in range(5):
+            v.registrar_fallos(con, [("aliexpress.com", "", [], "reto antibot (no se resuelve)")],
+                               {"aliexpress.com": 30})
+            hasta = datetime.fromisoformat(con.execute("SELECT v FROM meta WHERE k='pausa:aliexpress.com'").fetchone()[0])
+            self.assertTrue(28 < (hasta - datetime.now()).total_seconds() / 60 <= 30)
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='no_se_lee:aliexpress.com'").fetchone(),
+                          "no se aparta 24 h como las demás")
+        v.registrar_fallos(con, [("miravia.es", "", [], "HTTP 500 en navegador")], {"miravia.es": 30})
+        self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='pausa:miravia.es'").fetchone(),
+                          "un fallo normal suelto no la para")
+        con.close()
+
+    def test_van_al_chrome_normal_y_no_al_perfil(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["navegador_normal"] = {"tiendas": ["miravia.es"], "paginas": 1, "pausa_min": 30}
+        perfil, normal = [], []
+        orig = v.leer_con_pestanas, v.leer_navegador_normal
+        v.leer_con_pestanas = lambda c, trabajos: perfil.extend(trabajos) or [(t, u, [], None) for t, u, _ in trabajos]
+        v.leer_navegador_normal = lambda c, trabajos: normal.extend(trabajos) or [(t, u, [], None) for t, u, _ in trabajos]
+        try:
+            res = v.leer_todas([], ["miravia.es", "coolmod.com"], {}, "generalistas", cfg)
+        finally:
+            v.leer_con_pestanas, v.leer_navegador_normal = orig
+        self.assertEqual([t for t, _, _ in perfil], ["coolmod.com"])
+        self.assertEqual([(t, p) for t, _, p in normal], [("miravia.es", 1)])
+        self.assertEqual(sorted(r[0] for r in res), ["coolmod.com", "miravia.es"])
+
+    def test_redireccion_a_reto_falla(self):
+        class Falso(v.Navegador):
+            def leer(self, url, completo=False):
+                return "<html></html>", "https://es.aliexpress.com/punish?x5secdata=abc", []
+        n = v.NavegadorNormal.__new__(v.NavegadorNormal)
+        orig = v.Navegador.leer
+        v.Navegador.leer = Falso.leer
+        try:
+            with self.assertRaises(OSError) as e:
+                n.leer("https://es.aliexpress.com/ssr/x")
+        finally:
+            v.Navegador.leer = orig
+        self.assertIn("reto", str(e.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

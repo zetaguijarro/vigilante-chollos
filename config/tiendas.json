@@ -153,6 +153,12 @@
   "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
   "descuento_real_min": 0.2
  },
+ "navegador_normal": {
+  "tiendas": ["miravia.es", "aliexpress.com"],
+  "paginas": 1,
+  "pausa_min": 30,
+  "_nota": "Autorizado por Zeta el 17/11/2026, como Idealo: Chrome visible normal, sin perfil, sin cambiar el agente ni ocultar la automatización. Si sale reto o captcha no se resuelve: pausa fija de pausa_min, sin doblar."
+ },
  "navegador": {
   "visible": true,
   "canal": "chrome",
@@ -325,13 +331,13 @@
    "cada_min": 10,
    "tiendas": [
     "tiendasmgi.es",
-    "miravia.es",
     "casadellibro.com",
     "emp.es"
    ],
    "navegador": [
     "amazon.es",
     "aliexpress.com",
+    "miravia.es",
     "carrefour.es",
     "elcorteingles.es",
     "ebay.es"

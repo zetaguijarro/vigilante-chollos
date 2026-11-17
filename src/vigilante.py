@@ -640,8 +640,76 @@ def precio_tachado_jsonld(o):
     return None
 
 
+RE_MIRAVIA_TARJETA = re.compile(
+    r'<a\b[^>]*\bhref="(?:https?:)?(?://www\.miravia\.es)?/p/i(\d+)-s(\d+)\.html([^"]*)"[^>]*>(.*?)</a>', re.S | re.I)
+RE_ALT = re.compile(r'\balt="([^"]+)"', re.I)
+
+
+def tarjetas_miravia(html):
+    """Ofertas de Miravia (17/11/2026). El lector general sacaba 11 de 87 y con nombres en inglés. En cada
+    tarjeta el nombre va en el alt de la foto, el precio a la vista y el original en el propio enlace
+    (item_price, en céntimos; item_discount_price es el de oferta)."""
+    salida, vistos = [], set()
+    for item, sku, resto, cuerpo in RE_MIRAVIA_TARJETA.findall(html):
+        alt = RE_ALT.search(cuerpo)
+        if item in vistos or not alt:
+            continue
+        q = unquote(unescape(resto))
+        oferta, original = re.search(r"item_discount_price:(\d+)", q), re.search(r"item_price:(\d+)", q)
+        precio = int(oferta.group(1)) / 100 if oferta else a_numero(re.sub(r"\s+", "", _texto(cuerpo)))
+        if not precio:
+            continue
+        antes = int(original.group(1)) / 100 if original else None
+        vistos.add(item)
+        salida.append({"nombre": " ".join(unescape(alt.group(1)).split()), "precio": round(precio, 2),
+                       "precio_antes": antes if antes and antes > precio else None, "marca": None, "ean": None,
+                       "url": f"https://www.miravia.es/p/i{item}-s{sku}.html", "imagen_url": None,
+                       "valoracion": None, "resenas": None})
+    return salida
+
+
+RE_ALI_ITEM_JSON = re.compile(r'"title":"((?:[^"\\]|\\.)*)"(.{0,8000}?)"detailUrl":"(?:https?:)?//[^"]*?/item/(\d+)\.html',
+                              re.S)
+
+
+def productos_aliexpress(html):
+    """AliExpress (SuperDeals, 17/11/2026): los productos vienen en los datos de la página. Por producto:
+    título, precio de venta y original (salePriceAmount / originPriceAmount, en céntimos de euro), reseñas,
+    estrellas (reviewStar, sobre 5), marca y si admite cupones ("Elegible con cupones")."""
+    salida, vistos = [], set()
+    for titulo, medio, item in RE_ALI_ITEM_JSON.findall(html):
+        m = unquote(unquote(medio))
+        venta = re.search(r'"salePriceAmount":"(\d+)"', m)
+        if item in vistos or not venta or not re.search(r'"currency":"EUR"', m):
+            continue
+        original = re.search(r'"originPriceAmount":"(\d+)"', m)
+        precio, antes = int(venta.group(1)) / 100, int(original.group(1)) / 100 if original else None
+        res, estrellas = re.search(r'"reviews":(\d+)', m), re.search(r'"reviewStar":"([\d.]+)"', m)
+        marca = re.search(r'"brandName":"([^"]+)"', m)
+        try:
+            nombre = json.loads(f'"{titulo}"')
+        except ValueError:
+            nombre = titulo
+        vistos.add(item)
+        p = {"nombre": " ".join(nombre.split()), "precio": round(precio, 2),
+             "precio_antes": antes if antes and antes > precio else None,
+             "marca": marca.group(1) if marca and marca.group(1).lower() not in ("none", "null", "") else None,
+             "ean": None, "url": f"https://es.aliexpress.com/item/{item}.html", "imagen_url": None,
+             "valoracion": round(float(estrellas.group(1)) * 20) if estrellas else None,
+             "resenas": int(res.group(1)) if res else None}
+        if "Elegible con cupones" in m:
+            p["cupon_elegible"] = True
+        salida.append(p)
+    return salida
+
+
 def extraer(html, base_url, extra_json=()):
     """Productos de una página. extra_json: respuestas JSON capturadas por el navegador."""
+    host = urlparse(base_url).netloc.lower()
+    especifico = (tarjetas_miravia(html) if host.endswith("miravia.es")
+                  else productos_aliexpress(html) if "aliexpress." in host else [])
+    if especifico:
+        return especifico
     objetos = objetos_producto(html)
     cont = [0]
     for bloque in extra_json:
@@ -2370,6 +2438,62 @@ class Navegador:
             page.close()
 
 
+RE_RETO_URL = re.compile(r"/punish|_____tmd_____|x5secdata|captcha|/login\.htm|baxia", re.I)
+
+
+class NavegadorNormal(Navegador):
+    """Chrome VISIBLE y normal para Miravia y AliExpress (autorizado por Zeta el 17/11/2026, con las condiciones
+    de Idealo): sin perfil, sin cambiar el agente, sin ocultar la automatización y sin bloquear nada. Lo que
+    se probó a mano ese día: Miravia 87 productos y AliExpress SuperDeals 49, sin reto. Si sale reto o
+    captcha NO se resuelve: la lectura falla con "reto" y la tienda se para 30 min fijos (`registrar_fallos`)."""
+
+    def __init__(self, cfg=None):
+        super().__init__(cfg)
+        self.visible, self.bloquear = True, False
+        self._nav = None
+
+    def __enter__(self):
+        from playwright.sync_api import sync_playwright
+        self._pw = sync_playwright().start()
+        try:
+            self._nav = self._pw.chromium.launch(headless=False, channel=self.canal)
+            self._ctx = self._nav.new_context(locale="es-ES")
+        except Exception:
+            self._pw.stop()
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self._nav:
+                self._nav.close()
+        finally:
+            if self._pw:
+                self._pw.stop()
+
+    def leer(self, url, completo=False):
+        html, final, datos = super().leer(url, completo)
+        if RE_RETO_URL.search(urlparse(final).path + "?" + urlparse(final).query) \
+                or "login" in urlparse(final).netloc:
+            raise OSError("reto antibot (no se resuelve)")
+        return html, final, datos
+
+
+def leer_navegador_normal(cfg, trabajos):
+    """trabajos: [(tienda, url, max_paginas)] -> [(tienda, url, productos, error)], de una en una."""
+    try:
+        with NavegadorNormal(cfg) as nav:
+            return [leer_tienda(t, {}, None, nav, pags, u) for t, u, pags in trabajos]
+    except ImportError:
+        return [(t, u, [], "falta playwright (fase 2)") for t, u, _ in trabajos]
+    except Exception as e:
+        return [(t, u, [], f"navegador normal: {str(e)[:80]}") for t, u, _ in trabajos]
+
+
+def tiendas_navegador_normal(cfg):
+    return set(((cfg or {}).get("navegador_normal") or {}).get("tiendas", []))
+
+
 RE_REL_NEXT = re.compile(r"<(?:link|a)\b[^>]*\brel=[\"']?next[\"']?[^>]*>", re.I)
 RE_HREF = re.compile(r"\bhref=[\"']([^\"']+)[\"']", re.I)
 RE_TEXTO_SIGUIENTE = re.compile(r"^(?:siguiente|página siguiente|next|›|»|>|→)$", re.I)
@@ -2816,6 +2940,14 @@ def leer_todas(tiendas, navegador, urls, categoria, cfg, apis=(), catalogo=()):
         nav = []
         trabajos = ([(t, url_de(t, urls, categoria), paginas_navegador(cfg, t)) for t in navegador]
                     + [(t, u, int(pc.get("navegador", 3))) for t, u in cat_nav])
+        normal = tiendas_navegador_normal(cfg)
+        de_normal = None
+        if normal:  # Miravia y AliExpress: su propio Chrome normal, a la vez que las pestañas del perfil
+            pags = max(1, int(cfg["navegador_normal"].get("paginas", 1)))
+            sueltos = [(t, u, min(p, pags)) for t, u, p in trabajos if t in normal]
+            trabajos = [x for x in trabajos if x[0] not in normal]
+            if sueltos:
+                de_normal = ex.submit(leer_navegador_normal, cfg, sueltos)
         if trabajos:
             try:
                 nav = leer_con_pestanas(cfg, trabajos)
@@ -2823,6 +2955,8 @@ def leer_todas(tiendas, navegador, urls, categoria, cfg, apis=(), catalogo=()):
                 nav = [(t, u, [], "falta playwright (fase 2)") for t, u, _ in trabajos]
             except Exception as e:
                 nav = [(t, u, [], f"navegador: {str(e)[:80]}") for t, u, _ in trabajos]
+        if de_normal is not None:
+            nav = nav + de_normal.result()
         return list(normales) + list(de_api) + nav + list(de_cat)
 
 
@@ -4579,9 +4713,13 @@ RE_NO_SE_LEE = re.compile(r"robots\.txt|antibot|captcha", re.I)
 RE_NAV_OCUPADO = re.compile(r"navegador ocupado", re.I)
 
 
-def registrar_fallos(con, lecturas):
+def registrar_fallos(con, lecturas, fijas=None):
     """3 fallos seguidos -> pausa de 30 min; cada fallo más la duplica, hasta 24 h.
-    Un acierto lo reinicia. Así no se pierde tiempo ni se insiste con tiendas que bloquean."""
+    Un acierto lo reinicia. Así no se pierde tiempo ni se insiste con tiendas que bloquean.
+    fijas: {tienda: minutos} (Miravia y AliExpress con Chrome normal): un reto o captcha la para esos minutos
+    en el acto, siempre los mismos aunque se repita; otro fallo, a los 3 seguidos, igual (decisión de Zeta,
+    17/11/2026: sin pausas que se doblen)."""
+    fijas = fijas or {}
     for tienda, _, productos, error in lecturas:
         clave = f"fallos:{tienda}"
         if not error:
@@ -4590,6 +4728,15 @@ def registrar_fallos(con, lecturas):
         if RE_NAV_OCUPADO.search(error):
             # No es culpa de la tienda: otra ronda (o una ventana de `login`) tenía el navegador. El 17/11
             # una hora así dejó a Amazon, Carrefour y El Corte Inglés en pausa y a Fnac fuera 24 h.
+            continue
+        if tienda in fijas:
+            fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+            n = int(fila[0]) + 1 if fila else 1
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, str(n)))
+            if re.search(r"reto|antibot|captcha", error, re.I) or n >= 3:
+                hasta = (datetime.now() + timedelta(minutes=fijas[tienda])).isoformat(timespec="minutes")
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pausa:{tienda}", hasta))
+                log(f"{tienda}: {error[:60]}, en pausa {fijas[tienda]} min")
             continue
         if RE_NO_SE_LEE.search(error):
             # Instrucciones de lectura, paso 4: si una web bloquea (robots.txt, antibot, captcha) se anota
@@ -4799,7 +4946,8 @@ def ronda(categoria, solo=None):
             recorrido(f"    sin demanda en Chollometro, no se leen: {', '.join(sorted(sin_demanda))}")
     de_catalogo = set(turno)
     lecturas = [x for x in todas if (x[0], x[1]) not in de_catalogo]
-    registrar_fallos(con, lecturas)
+    registrar_fallos(con, lecturas, {t: int(cfg["navegador_normal"].get("pausa_min", 30))
+                                     for t in tiendas_navegador_normal(cfg)})
     anotar_vacias(con, cfg, lecturas, set(tiendas))
     for tienda, url_cat, productos, error in todas:
         if (tienda, url_cat) in de_catalogo:
