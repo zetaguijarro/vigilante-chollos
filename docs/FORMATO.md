@@ -107,4 +107,5 @@ Zapatillas Marca Modelo Ejemplo de cuero y textil, color blanco, tallas 36, 37�
 
 - **Código (`entregar`, `bloques_de_codigo`):** orden de los 6 mensajes, foto sola, título sin etiqueta y recortado a 140, bloque de precio (oferta, habitual acreditado de PCComTracker, PVP de la tienda, portes), INFO completa (🏷️ etiqueta, 💶, 🚚, 🕒, 📉, 🔎 hasta 3 antecedentes de la copia local con enlace completo, ⚠️ avisos), negrita real de la descripción (`**texto**` → HTML) y tema del grupo por categoría (`entrega.hilos`).
 - **Hermes (`redacta-chollo`, `verifica-chollo`):** título y descripción con estas reglas.
-- **Pendiente:** temas del grupo (faltan los id de cada categoría), mínimo con fecha (PCComTracker no da la fecha), tráiler de YouTube y recopilaciones de Steam.
+- **No se usa por decisión de Zeta (17/11/2026):** temas del grupo por categoría; todo va al chat de siempre.
+- **Pendiente:** mínimo con fecha (PCComTracker no da la fecha), tráiler de YouTube y recopilaciones de Steam.
