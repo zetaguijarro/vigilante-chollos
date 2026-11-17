@@ -12,6 +12,7 @@ Uso (desde la raíz del proyecto: python src/vigilante.py ...):
   python vigilante.py dossier <n> [<n>...]      datos de la ficha para "verifica N" (lo usa Hermes)
   python vigilante.py login <tienda>             abre la tienda para que inicies sesión (se guarda)
   python vigilante.py informe [días]             qué aporta cada tienda (para quitar las que no)
+  python vigilante.py historial <texto|EAN|url>  cambios de precio de un producto y su mínimo con fecha
   python vigilante.py entregar <n>                manda la oferta verificada en 6 mensajes (formato móvil)
   python vigilante.py recordar <n> <buena|dudosa|caducada> <motivo>   guarda el veredicto del modelo
                                                 (caducada: la oferta se acabó; avisa si vuelve a ese precio)
@@ -926,6 +927,15 @@ def bd():
         CREATE TABLE IF NOT EXISTS stats (fecha TEXT, tienda TEXT, rondas INTEGER DEFAULT 0,
             leidos INTEGER DEFAULT 0, errores INTEGER DEFAULT 0, candidatos INTEGER DEFAULT 0,
             enviados INTEGER DEFAULT 0, PRIMARY KEY (fecha, tienda));
+        -- Historial de precios (17/11/2026). productos: una fila por producto leído. precios: una fila SOLO
+        -- cuando cambia el precio. WITHOUT ROWID con clave (producto, fecha): el historial de un producto está
+        -- junto en disco y sale con una lectura; el índice por fecha da "qué ha cambiado hoy".
+        CREATE TABLE IF NOT EXISTS productos (clave TEXT PRIMARY KEY, tienda TEXT, nombre TEXT, ean TEXT,
+                                              url TEXT) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS productos_ean ON productos(ean) WHERE ean IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS precios (clave TEXT, fecha TEXT, precio REAL,
+                                            PRIMARY KEY (clave, fecha)) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS precios_fecha ON precios(fecha);
     """)
     columnas = {c[1] for c in con.execute("PRAGMA table_info(lista)")}
     if "enviado" not in columnas:  # bases de versiones anteriores
@@ -942,10 +952,54 @@ def bd():
 ERROR_PRECIO = 0.40
 
 
+def clave_vista(tienda, p):
+    """Clave de un producto en vistos, productos y precios: tienda + enlace (o el nombre si no hay enlace)."""
+    return f"{tienda}|{p.get('url') or p['nombre'].lower()}"
+
+
+def minimo_con_fecha(con, clave):
+    """(precio mínimo, fecha de la primera vez a ese precio, fecha desde la que hay historial) o None."""
+    fila = con.execute("SELECT precio, fecha FROM precios WHERE clave=? ORDER BY precio, fecha LIMIT 1",
+                       (clave,)).fetchone()
+    if not fila:
+        return None
+    desde = con.execute("SELECT MIN(fecha) FROM precios WHERE clave=?", (clave,)).fetchone()[0]
+    return fila[0], fila[1], desde
+
+
+def historial(texto, maximo=10):
+    """`historial <texto|EAN|enlace>`: los productos que encajan y sus cambios de precio, del más antiguo al último."""
+    con = bd()
+    t = texto.strip()
+    if re.fullmatch(r"\d{8,14}", t):
+        filas = con.execute("SELECT clave, tienda, nombre FROM productos WHERE ean=? LIMIT ?", (t, maximo)).fetchall()
+    elif t.startswith("http"):
+        filas = con.execute("SELECT clave, tienda, nombre FROM productos WHERE url=? LIMIT ?", (t, maximo)).fetchall()
+    else:  # todas las palabras, en cualquier orden (unos 57.000 productos: milisegundos sin índice de texto)
+        palabras = [w for w in t.lower().split() if w]
+        filas = con.execute("SELECT clave, tienda, nombre FROM productos WHERE "
+                            + " AND ".join(["lower(nombre) LIKE ?"] * len(palabras)) + " LIMIT ?",
+                            [f"%{w}%" for w in palabras] + [maximo]).fetchall()
+    if not filas:
+        print(f"Sin productos para «{texto}» (el historial empieza el 17/11/2026).")
+    for clave, tienda, nombre in filas:
+        cambios = con.execute("SELECT fecha, precio FROM precios WHERE clave=? ORDER BY fecha", (clave,)).fetchall()
+        m = minimo_con_fecha(con, clave)
+        print(f"{tienda} | {nombre}")
+        print("   " + " -> ".join(f"{eur(pr)} ({f[8:10]}/{f[5:7]})" for f, pr in cambios[-12:]))
+        if m:
+            print(f"   mínimo {eur(m[0])} el {m[1][8:10]}/{m[1][5:7]}/{m[1][:4]}; historial desde el {m[2][8:10]}/{m[2][5:7]}")
+    con.close()
+
+
 def novedad(con, tienda, p):
     """'nuevo' | 'bajada' (por debajo de su mínimo visto) | None. Guarda el precio."""
-    clave = f"{tienda}|{p['url'] or p['nombre'].lower()}"
+    clave = clave_vista(tienda, p)
     ahora = datetime.now().isoformat(timespec="minutes")
+    # Historial: el producto una vez; su precio la primera vez que entra en el historial.
+    if con.execute("INSERT OR IGNORE INTO productos (clave, tienda, nombre, ean, url) VALUES (?,?,?,?,?)",
+                   (clave, tienda, p["nombre"][:200], p.get("ean") or None, p.get("url") or None)).rowcount == 1:
+        con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
     # INSERT OR IGNORE: seguro aunque otra categoría lea la misma tienda a la vez.
     cur = con.execute("INSERT OR IGNORE INTO vistos (clave, precio, minimo, visto, desde) VALUES (?,?,?,?,?)",
                       (clave, p["precio"], p["precio"], ahora, ahora))
@@ -955,6 +1009,8 @@ def novedad(con, tienda, p):
     previo, minimo, desde = con.execute("SELECT precio, minimo, desde FROM vistos WHERE clave=?",
                                         (clave,)).fetchone()
     p["_precio_previo"] = previo
+    if previo is None or abs(previo - p["precio"]) >= 0.005:
+        con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
     con.execute("UPDATE vistos SET precio=?, minimo=?, visto=? WHERE clave=?",
                 (p["precio"], min(minimo, p["precio"]), ahora, clave))
     try:
@@ -997,6 +1053,14 @@ def limpiar(con):
     hace_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
     con.execute("DELETE FROM lista WHERE fecha < ?", (hace_60,))
     con.execute("DELETE FROM stats WHERE fecha < ?", (hace_90,))
+    # Historial de precios: 400 días (por el índice de fecha, barato). Productos sin precios ni vistos: una vez al día.
+    hace_400 = (datetime.now() - timedelta(days=400)).isoformat(timespec="minutes")
+    con.execute("DELETE FROM precios WHERE fecha < ?", (hace_400,))
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    if (con.execute("SELECT v FROM meta WHERE k='limpieza_productos'").fetchone() or [None])[0] != hoy:
+        con.execute("DELETE FROM productos WHERE clave NOT IN (SELECT clave FROM vistos) "
+                    "AND clave NOT IN (SELECT clave FROM precios)")
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('limpieza_productos', ?)", (hoy,))
 
 # ------------------------------------------------- comprobaciones externas
 
@@ -3465,6 +3529,8 @@ def dossier_items(ids, ficha_manual=None):
                     c_ch = estado_chollometro({"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]})
                     item["ch_ahora"] = c_ch
                     item["antecedentes"] = antecedentes_chollometro(c["n"])
+                    item["minimo_propio"] = minimo_con_fecha(con, clave_vista(c["t"], {"url": c.get("u"),
+                                                                                       "nombre": c["n"]}))
                     if c_ch == "misma":
                         item["aviso_ch"] = "ya está publicado en Chollometro en esta tienda: descártalo"
                     if ahora and abs(ahora - c["p"]) > 0.01:
@@ -3688,6 +3754,11 @@ def bloques_de_codigo(item, d):
         info.append(f"📉 Ya fue chollo caliente en Chollometro: {item['hot']}.")
     else:
         info.append("📉 Habitual no acreditado.")
+    mp = item.get("minimo_propio")
+    if mp and mp[2][:10] != datetime.now().strftime("%Y-%m-%d"):
+        f, desde = mp[1], mp[2]
+        info.append(f"📉 Mínimo visto por el vigilante en esta tienda: {eur(mp[0])} ({f[8:10]}/{f[5:7]}/{f[:4]}); "
+                    f"seguido desde el {desde[8:10]}/{desde[5:7]}.")
     info.append("")
     antes = item.get("antecedentes") or []
     for a in antes[:3]:
@@ -4862,6 +4933,8 @@ if __name__ == "__main__":
         dossier([a for x in args[1:] for a in re.findall(r"\d+", x)])
     elif len(args) >= 2 and args[0] == "login":
         login(*args[1:])
+    elif len(args) >= 2 and args[0] == "historial":
+        historial(" ".join(args[1:]))
     elif args[:1] == ["informe"]:
         informe(int(args[1]) if len(args) > 1 else 7)
     elif len(args) == 2 and args[0] == "entregar":

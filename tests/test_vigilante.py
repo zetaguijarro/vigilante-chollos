@@ -855,6 +855,34 @@ class Rondas(Base):
         self.assertEqual(v.categorias_de_portada(menu, "https://www.carrefour.es/"),
                          ["https://www.carrefour.es/informatica"])
 
+    def test_historial_de_precios(self):
+        # 17/11/2026: solo se guarda una fila cuando cambia el precio; el mínimo sale con su fecha.
+        con = v.bd()
+        p = {"nombre": "JBL Flip 6 Negro", "url": "https://t.es/jbl", "precio": 99.0, "ean": "6925281993145"}
+        clave = v.clave_vista("t.es", p)
+        v.novedad(con, "t.es", dict(p))
+        con.execute("UPDATE precios SET fecha='2026-11-09T10:00' WHERE clave=?", (clave,))
+        v.novedad(con, "t.es", dict(p))                    # mismo precio: no apunta nada
+        v.novedad(con, "t.es", dict(p, precio=79.0))
+        con.execute("UPDATE precios SET fecha='2026-11-10T09:00' WHERE clave=? AND precio=79", (clave,))
+        v.novedad(con, "t.es", dict(p, precio=89.0))
+        self.assertEqual([r[0] for r in con.execute("SELECT precio FROM precios WHERE clave=? ORDER BY fecha", (clave,))],
+                         [99.0, 79.0, 89.0])
+        self.assertEqual(v.minimo_con_fecha(con, clave)[:2], (79.0, "2026-11-10T09:00"))
+        self.assertEqual(con.execute("SELECT nombre, ean FROM productos WHERE clave=?", (clave,)).fetchone(),
+                         ("JBL Flip 6 Negro", "6925281993145"))
+        con.commit()
+        con.close()
+        for consulta in ("flip jbl", "6925281993145", "https://t.es/jbl"):
+            with redirect_stdout(io.StringIO()) as salida:
+                v.historial(consulta)
+            self.assertIn("mínimo 79 € el 10/11/2026", salida.getvalue(), consulta)
+        # En la INFO de la ficha, con su fecha.
+        item = {"num": 1, "n": "JBL Flip 6", "u": "https://t.es/jbl", "p": 89.0,
+                "minimo_propio": (79.0, "2026-11-10T09:00", "2026-11-09T10:00")}
+        info = v.bloques_de_codigo(item, {"precio": 89.0, "etiqueta": "SUBIENDO", "prueba": "x"})["info"]
+        self.assertIn("📉 Mínimo visto por el vigilante en esta tienda: 79 € (10/11/2026); seguido desde el 09/11.", info)
+
     def test_portada_refresca_temperaturas(self):
         # 17/11: el 92 % de los hilos guardaba la temperatura de recién publicado (la de /nuevos).
         h = hilo("Samsung Galaxy S26 256GB", "Amazon", 599.0, temp=40, dias=3)
