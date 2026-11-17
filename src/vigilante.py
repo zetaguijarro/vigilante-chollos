@@ -372,7 +372,9 @@ STOP = {"de", "con", "para", "y", "el", "la", "los", "las", "en", "del", "al", "
 
 def tokens(s):
     # Los números sueltos cuentan: "Galaxy A5" y "Galaxy A6" o "Pro 2" y "Pro 3" son distintos.
-    return {t for t in re.findall(r"[a-z0-9]+", s.lower()) if t not in STOP and (len(t) > 1 or t.isdigit())}
+    # Sin tildes (17/11/2026): "Bebé" se partía en "beb" y "Niños" en "ni" + "os".
+    s = unicodedata.normalize("NFKD", s.lower()).encode("ascii", "ignore").decode()
+    return {t for t in re.findall(r"[a-z0-9]+", s) if t not in STOP and (len(t) > 1 or t.isdigit())}
 
 
 def parecido(a, b):
@@ -1386,7 +1388,7 @@ def lista_codigos(nombre):
     # Al menos 2 cifras: 'BOOK6' o 'PIXEL9' son la familia, no el modelo exacto.
     return [c for c in RE_CODIGO_MODELO.findall(nombre.upper()) if len(c) >= 5 and len(re.findall(r"\d", c)) >= 2
             and not RE_PROCESADOR.fullmatch(c)
-            and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P)?", c)
+            and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P|ATM|BAR)?", c)
             and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE|HDR|DVB-?[TSC]|H)\d*\w?", c)
             and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)]  # medidas: 135X190, 75X45CM
 
@@ -1537,19 +1539,31 @@ def cargar_chollometro(con):
     return {"hilos": [dict(zip(claves, f)) for f in filas], "fresca": chollometro_fresca(con)}
 
 
+# Palabras que comparten productos distintos: no cuentan para decir que un hilo es el mismo producto
+# (17/11/2026: un Garmin Instinct 3 casaba con un Garmin Fenix 8 por "garmin mm pulgadas amoled").
+GENERICAS_POST = {"mm", "cm", "pulgadas", "pulgada", "gb", "tb", "hz", "amoled", "oled", "led", "gps", "nfc", "wifi",
+                  "bluetooth", "smart", "tv", "4k", "uhd", "hd", "usb", "edition", "edicion", "smartwatch", "reloj",
+                  "anos", "ninos", "nino", "nina", "adultos", "unisex", "hombre", "mujer", "talla", "tallas"}
+
+
 def mismo_post(nombre, titulo):
     """¿El post de Chollometro es este producto? Los títulos de Chollometro son cortos ('Nike air force 1
-    07 camel') y los de las tiendas largos: se compara sobre el más corto, con el número de modelo igual."""
-    ta, tb = tokens(nombre) - COLORES, tokens(titulo) - COLORES
-    comunes = ta & tb
+    07 camel') y los de las tiendas largos: se compara sobre el más corto, con el número de modelo igual.
+    Sin palabras genéricas ni números sueltos al contar coincidencias."""
     if codigos_modelo(nombre) & codigos_modelo(titulo):
         return True
+    ta, tb = tokens(nombre) - COLORES - GENERICAS_POST, tokens(titulo) - COLORES - GENERICAS_POST
+    pa, pb = {t for t in ta if not t.isdigit()}, {t for t in tb if not t.isdigit()}
+    comunes = pa & pb
     if len(comunes) < 2:
         return False
     na, nb = primer_numero(nombre), primer_numero(titulo)
     if na and nb and na != nb and nb not in ta:
-        return False
-    corto = min(len(ta), len(tb))
+        # Dos números de modelo (Buds 4 / Buds 6, Instinct 3 / Fenix 8): otro producto. Pero un número corto
+        # frente a uno de 4+ cifras son cosas distintas ("7+ años" frente al set LEGO 21268): no se comparan.
+        if (len(na) >= 4) == (len(nb) >= 4):
+            return False
+    corto = min(len(pa), len(pb))
     return len(comunes) >= min(3, corto) and len(comunes) / corto >= 0.75
 
 

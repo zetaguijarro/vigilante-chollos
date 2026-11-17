@@ -939,6 +939,19 @@ class Rondas(Base):
         self.assertEqual(len(pedidas), n, "la segunda vez sale del índice")
         con.close()
 
+    def test_duplicados_reales_del_17_11(self):
+        # #206: el mismo LEGO en Amazon al mismo precio no se detectaba ("7+ años" frente al set 21268, y "Bebé").
+        self.assertTrue(v.mismo_post("Lego Minecraft La Casa-Cerdo Bebé, Granja con Figuras de Videojuego para Niños de 7+ Años",
+                                     "LEGO Minecraft La Casa-Cerdo Bebé 21268"))
+        # #205: un Garmin Instinct 3 no es un Fenix 8, aunque compartan "garmin mm pulgadas amoled".
+        self.assertFalse(v.mismo_post("Garmin Instinct 3 Tactical Edition 50 mm Negro 1,3 pulgadas AMOLED 24 días 10ATM Smartwatch",
+                                      "Garmin Fenix 8 47 mm Acero Negro 1,4 pulgadas AMOLED GPS NFC 3 años garantía"))
+        self.assertFalse(v.mismo_post("Xiaomi Redmi Buds 6 Pro Negro", "Xiaomi Redmi Buds 4 Pro"), "otro modelo")
+        self.assertTrue(v.mismo_post("Super Dragon Ball Heroes Switch Nintendo Switch (Code in a Box)",
+                                     "Super Dragon Ball Heroes Switch - Nintendo Switch (CIAB)"))
+        self.assertEqual(v.codigos_modelo("Garmin Instinct 3 10ATM 5BAR"), set(), "resistencia al agua, no modelo")
+        self.assertIn("bebe", v.tokens("Casa-Cerdo Bebé"))
+
     def test_historial_de_precios(self):
         # 17/11/2026: solo se guarda una fila cuando cambia el precio; el mínimo sale con su fecha.
         con = v.bd()
