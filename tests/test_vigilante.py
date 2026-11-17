@@ -228,6 +228,32 @@ class ComparaPropio(unittest.TestCase):
                           "El Corte Inglés e Hipercor cuentan como una tienda")
         self.assertEqual(v.mercado_propio(self.con, {"ean": "1234567890123", "precio": 45.0}, "amazon.es")["precio"], 50.0)
 
+    def test_etiquetas_del_tachado_de_amazon(self):
+        # /deals (17/11/2026): cada producto empieza por {"asin","title"}; las variantes de color no llevan title.
+        bloque = lambda asin, nombre, precio, etiqueta, antes: (
+            f'{{"asin":"{asin}","title":"{nombre}","link":"/x/dp/{asin}","variations":[{{"asin":"B0VARIANTE1",'
+            f'"link":"/dp/B0VARIANTE1"}}],"price":{{"priceToPay":{{"label":"Precio de la oferta:","price":"{precio}",'
+            f'"strikethrough":false}},"basisPrice":{{"label":"{etiqueta}","price":"{antes}","strikethrough":true}}}}}}')
+        html = "[" + ",".join([bloque("B07M98CL6Y", "Dodot Pañales Talla 4", "60.99", "Mediano:", "91.99"),
+                               bloque("B0HHMXSFFC", "Xiaomi 18 Pro", "1499.0", "Más bajo:", "1799.9"),
+                               bloque("B09B8X9RGM", "Echo Dot", "39.99", "Recomendado:", "89.99")]) + "]"
+        self.assertEqual(v.etiquetas_amazon(html), {"B07M98CL6Y": ("mediano", 91.99), "B0HHMXSFFC": ("mas_bajo", 1799.9),
+                                                    "B09B8X9RGM": ("recomendado", 89.99)})
+        p = lambda rt, precio, antes: {"ref_tienda": rt, "precio": precio, "precio_antes": antes}
+        dodot = p("mediano", 60.99, 91.99)
+        self.assertTrue(v.contraste_ref_tienda(dodot))
+        self.assertEqual(dodot["_hist"]["habitual"], 91.99)
+        self.assertIn("90 días", dodot["_hist"]["fuente_corta"])
+        self.assertFalse(v.contraste_ref_tienda(p("mas_bajo", 1499.0, 1799.9)), "solo un 17 % por debajo")
+        self.assertIsNone(v.contraste_ref_tienda(p("recomendado", 39.99, 89.99)), "el PVPR no es contraste")
+        self.assertIsNone(v.contraste_ref_tienda(p("mediano", 60.99, 91.99), {"ref_amazon": False}))
+        # En la ficha, el tachado va como su histórico, no como "PVP de la tienda".
+        item = {"num": 1, "n": "Dodot Pañales Talla 4", "p": 60.99, "a": 91.99, "rt": "mediano",
+                "historico": {"habitual": 91.99, "minimo": None, "fuente": v.REF_TIENDA_HISTORICO["mediano"]}}
+        b = v.bloques_de_codigo(item, {"precio": 60.99, "etiqueta": "DESTACADOS"})
+        self.assertNotIn("PVP", b["precios"])
+        self.assertIn("91,99", b["precios"])
+
     def test_decidir_con_el_habitual_propio(self):
         # Al verificar, si no hay PCComTracker, el dossier trae el habitual propio y el código decide con él.
         d = v.decidir_item({"num": 1, "n": "Sony WF-C710N", "t": "mediamarkt.es", "u": "u", "p": 64.0, "validada": True,

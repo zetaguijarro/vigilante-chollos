@@ -738,8 +738,58 @@ def productos_aliexpress_busqueda(html):
     return salida
 
 
+RE_AMZ_ASIN_LINK = re.compile(r'\{"asin":"([A-Z0-9]{10})","title":"')  # las variantes de color no llevan "title"
+RE_AMZ_BASE = re.compile(r'"basisPrice":\{"label":"([^"]{1,40})","price":"([\d.]+)"')
+ETIQUETAS_AMAZON = {"mediano": "mediano", "más bajo": "mas_bajo", "mas bajo": "mas_bajo", "recomendado": "recomendado"}
+
+
+REF_TIENDA_HISTORICO = {"mediano": "Amazon: mediana de lo pagado en 90 días",
+                        "mas_bajo": "Amazon: más bajo de los últimos 30 días"}
+
+
+def contraste_ref_tienda(p, f=None):
+    """Amazon dice qué es su precio tachado (Omnibus). "Mediano" (90 días) y "Más bajo" (30 días) son su propio
+    histórico; "Recomendado" no cuenta. Autorizado por Zeta el 17/11/2026. Misma bajada que el habitual propio
+    (`bajada_min_habitual`, un 20 %). -> True/False, o None si no aplica (sin etiqueta útil o apagado con
+    `filtros_codigo.ref_amazon` false). Deja la referencia en p["_hist"]."""
+    f = f or {}
+    if p.get("ref_tienda") not in REF_TIENDA_HISTORICO or not p.get("precio_antes") or not f.get("ref_amazon", True):
+        return None
+    ref = p["precio_antes"]
+    p["_hist"] = {"habitual": ref, "minimo": ref if p["ref_tienda"] == "mas_bajo" else None,
+                  "fuente_corta": REF_TIENDA_HISTORICO[p["ref_tienda"]]}
+    return p["precio"] <= ref * (1 - f.get("bajada_min_habitual", 0.20))
+
+
+def etiquetas_amazon(html):
+    """{ASIN: (etiqueta, precio)} del precio tachado de las ofertas de Amazon (17/11/2026). Por la norma europea
+    de precios (Omnibus) Amazon dice qué es: "Recomendado" (PVPR del fabricante, no sirve de contraste),
+    "Mediano" (mediana de lo pagado en Amazon en 90 días) o "Más bajo" (el más bajo de los últimos 30 días).
+    En los datos de la página cada producto empieza por {"asin", "title"...} y lleva después su precio."""
+    salida, asins = {}, [(m.start(), m.group(1)) for m in RE_AMZ_ASIN_LINK.finditer(html)]
+    for m in RE_AMZ_BASE.finditer(html):
+        previos = [a for pos, a in asins if pos < m.start()]
+        etiqueta = ETIQUETAS_AMAZON.get(m.group(1).strip().rstrip(":").lower())
+        if previos and etiqueta and previos[-1] not in salida:
+            salida[previos[-1]] = (etiqueta, float(m.group(2)))
+    return salida
+
+
 def extraer(html, base_url, extra_json=()):
     """Productos de una página. extra_json: respuestas JSON capturadas por el navegador."""
+    host = urlparse(base_url).netloc.lower()
+    if "amazon." in host:
+        productos = _extraer(html, base_url, extra_json)
+        etiquetas = etiquetas_amazon(html) if '"basisPrice"' in html else {}
+        for p in productos:
+            e = etiquetas.get(asin_de(p.get("url")) or "")
+            if e and p.get("precio_antes") and abs(p["precio_antes"] - e[1]) < 0.015:
+                p["ref_tienda"] = e[0]
+        return productos
+    return _extraer(html, base_url, extra_json)
+
+
+def _extraer(html, base_url, extra_json=()):
     host = urlparse(base_url).netloc.lower()
     especifico = (tarjetas_miravia(html) if host.endswith("miravia.es")
                   else productos_aliexpress(html) if "aliexpress." in host else [])
@@ -3628,9 +3678,9 @@ def mensaje_candidato(n, p):
     if p.get("_hist"):
         h = p["_hist"]
         origen = (h.get("fuente_corta") or ("PcComponentes, según PCComTracker" if p.get("_pcct_otra") else "comparador"))
-        hist = (f"Histórico ({origen}): "
-                f"mínimo {h['minimo']:g} €"
-                + (f" · habitual {h['habitual']:g} €" if h.get("habitual") else ""))
+        partes = ([f"mínimo {h['minimo']:g} €"] if h.get("minimo") else []) \
+            + ([f"habitual {h['habitual']:g} €"] if h.get("habitual") and h.get("habitual") != h.get("minimo") else [])
+        hist = f"Histórico ({origen}): " + (" · ".join(partes) or "sin datos")
     elif p.get("_min_previo") and p.get("_seguido_dias"):
         hist = f"Histórico propio: mínimo {p['_min_previo']:g} € en {p['_seguido_dias']} días"
     else:
@@ -4195,6 +4245,11 @@ def dossier_items(ids, ficha_manual=None):
                         if hp:  # sin comparador: el precio habitual que ha visto el propio vigilante
                             h = {"minimo": hp["minimo"], "habitual": hp["habitual"], "fuente": hp["fuente"],
                                  "es_minimo": (ahora or c["p"]) <= hp["minimo"] * 1.03}
+                        elif c.get("rt") in REF_TIENDA_HISTORICO and c.get("a"):
+                            # Amazon: "Mediano" (90 días) o "Más bajo" (30 días) de su precio tachado.
+                            minimo = c["a"] if c["rt"] == "mas_bajo" else None
+                            h = {"minimo": minimo, "habitual": c["a"], "fuente": REF_TIENDA_HISTORICO[c["rt"]],
+                                 "es_minimo": bool(minimo and (ahora or c["p"]) <= minimo * 1.03)}
                     if h:
                         item["historico"] = h
                 except Exception as e:
@@ -4386,6 +4441,8 @@ def bloques_de_codigo(item, d):
     nombres_tallas = [v.split(":")[0] for v in tallas[:15]]
     envio = limpiar_envio(ficha.get("envio"))
     pvp = item["a"] if item.get("a") and item["a"] > precio else None
+    if item.get("rt") in REF_TIENDA_HISTORICO and h.get("habitual") == item.get("a"):
+        pvp = None  # el tachado de Amazon ya va como su histórico ("Mediano" o "Más bajo"), no como PVP
     # 4 · Precio: oferta, referencia acreditada y portes, por separado. El total solo si está comprobado.
     precios = [eur(precio)]
     promo, uds = item.get("promo"), item.get("uds") or 2
@@ -4393,7 +4450,9 @@ def bloques_de_codigo(item, d):
     if suelto:
         precios = [f"{eur(precio)} por unidad comprando {uds} ({promo})",
                    f"Unidad suelta: {eur(suelto)}. Total por {uds}: {eur(round(precio * uds, 2))}."]
-    if h.get("habitual"):
+    if h.get("habitual") and item.get("rt") == "mas_bajo" and h["habitual"] == item.get("a"):
+        precios.append(f"Precio más bajo de los últimos 30 días: {eur(h['habitual'])} (según Amazon)")
+    elif h.get("habitual"):
         precios.append(f"Precio habitual: {eur(h['habitual'])} (en {fuente})")
     if pvp:
         precios.append(f"PVP de la tienda: {eur(pvp)}")
@@ -4959,6 +5018,7 @@ def compacto(p):
                  if p.get("_cm_hot") and p["_cm_hot"].get("precio") else None),
          "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None),
          "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades"),
+         "rt": p.get("ref_tienda"),
          "mp": p.get("_mercado_propio"),
          "hab": (f"{p['_hist']['habitual']:g} € ({p['_hist']['fuente_corta']})"
                  if (p.get("_hist") or {}).get("fuente_corta") else None)}
@@ -5244,6 +5304,8 @@ def ronda(categoria, solo=None):
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
             ok = p["precio"] <= ref["minimo"] * 1.03 or bool(ref.get("habitual") and p["precio"] <= ref["habitual"] * 0.9)
+        elif (ok_ref := contraste_ref_tienda(p, f)) is not None:
+            ok = ok_ref
         elif p.get("_hp") and p["_hp"]["habitual"] and not sin_idealo:
             # Historial del propio vigilante: el precio habitual de este producto en esta tienda (mediana de lo
             # que costó al menos 7 días antes de la bajada). Es lo que mira el soporte de Chollometro.
