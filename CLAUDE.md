@@ -32,6 +32,19 @@ Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no salt
 - Hay 8 conflictos con "Decisiones de Zeta" (apartado 4 del SPEC). Mientras Zeta no decida, manda `docs/ESTADO.md`. No los resuelvas por tu cuenta.
 - Los cambios del apartado 5 están propuestos, no autorizados.
 
+## Encargos de Zeta (17/11/2026, noche)
+
+Pedidos desde Claude en el móvil. Por orden:
+
+1. **Fusionar la rama `comparar-mejor`** si no está en `main` (`git pull origin comparar-mejor`; 186 pruebas). Trae: precio habitual propio (`habitual_propio`, con la tabla `precios`; da resultados hacia el 24/11), mercado propio por EAN (`mercado_propio`) y enlaces fijos en Amazon y AliExpress (`url_canonica`: `/dp/ASIN` e `/item/<id>.html`). Mirar con los datos reales que no salgan avisos raros (un EAN mal leído que case dos productos distintos).
+2. **Miravia y AliExpress con Chrome visible. Autorizado por Zeta**, con las condiciones de Idealo (`docs/ESTADO.md`, "Decisiones de Zeta"): Chrome visible normal, sin perfil disfrazado ni ocultar la automatización, pocas páginas por ronda. **Si sale reto o captcha no se resuelve:** pausa de 30 min; si se repite al volver, se dobla (1 h, 2 h...) hasta 6 h; una lectura buena la devuelve a 30 min. Primero probar a mano con una página de ofertas de cada una: cuántos productos da y si sale reto. Si funciona, añadirlo a las rondas y medirlo en `data/recorrido.txt`. Hoy: Miravia da 17 productos por descarga (el resto carga con JavaScript) y 0 con el Chrome oculto; AliExpress está en pausa por antibot.
+3. **Cupones de Miravia y AliExpress.** Zeta: "dan muy buenos resultados con los cupones". Cuando el punto 2 funcione, mirar cómo pinta cada web los cupones en las tarjetas de producto ("cupón de 3 €", "-10 % con cupón") y si se pueden leer del listado. Diseño propuesto, pendiente de que Zeta diga de dónde saca él los códigos (generales de la tienda, los de cada tarjeta o los dos):
+    - Lista de cupones activos por tienda en `tiendas.json` (código, descuento en € o %, compra mínima, fecha de fin), rellenada a mano o desde los hilos calientes de cupones de esa tienda en la copia de Chollometro.
+    - En la ronda, a cada producto se le aplica el mejor cupón que le sirva y se compara con el precio final. El historial (`precios`) guarda el precio **sin** cupón, para no ensuciar el habitual.
+    - Un cupón nuevo hace revisar los productos de esa tienda aunque su precio no haya cambiado (es cuando salen los chollos).
+    - Aviso y ficha: "con el código X" y el precio sin código. Chollometro no admite códigos de un solo uso ni personales.
+4. **Amazon no da resultados.** Ver la última entrada de `docs/ESTADO.md` sobre Amazon. Mirar con `grep amazon data/recorrido.txt | tail -n 20` qué lee. Probar `/gp/movers-and-shakers/<categoría>` y `/deals` en vez de (o además de) los más vendidos. Comprobar si `https://es.camelcamelcamel.com/product/<ASIN>` se puede leer (`asin_de` saca el ASIN) y qué datos de precio da: sería el histórico de Amazon, como PCComTracker para PcComponentes.
+
 ## Dónde lo dejamos (17/11/2026, 09:15)
 
 Contexto: Zeta pasa a trabajar con Claude Code en VS Code para que Claude ejecute él mismo los comandos. Lo de ayer y hoy está en `docs/ESTADO.md` (cada cambio con su fecha) y en `docs/SPEC.md`. Lo que sigue, por orden:

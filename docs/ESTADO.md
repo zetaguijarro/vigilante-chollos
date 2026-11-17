@@ -98,6 +98,8 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 
 - **Idealo con navegador visible (17/11/2026, "a partir de ahora que sea así").** A la descarga y al Chrome oculto les da 403; a una ventana visible normal le responde. Zeta autoriza consultarlo así: Chrome visible, sin perfil, sin cambiar el agente ni ocultar la automatización. Pocas consultas (`idealo_navegador_max`, 15 por ronda) y, si también da 403, se para 3 h. Excepción expresa a "no saltarse antibot": no se resuelven retos ni captchas.
 
+- **Miravia y AliExpress con navegador visible (17/11/2026, 21:19).** Misma excepción que Idealo: Chrome visible, sin perfil disfrazado ni ocultar la automatización, pocas páginas por ronda. Si sale reto o captcha no se resuelve: pausa de **30 min** (decisión de Zeta), que se dobla si se repite al volver (1 h, 2 h...) hasta 6 h; una lectura buena la devuelve a 30 min. Motivo: son las de mejor tasa en Chollometro (Miravia 51 %, AliExpress 47 %, casi siempre con cupón) y el Chrome oculto del vigilante da 0 o reto, mientras Instinct, con un navegador normal, las lee.
+
 
 
 ## Estado (7/11/2026, tras la sesión de puesta en marcha de tecnología)
