@@ -3231,6 +3231,11 @@ def specs_comparador(p):
 
 def dossier(ids):
     """Lo que necesita la IA para 'verifica N', preparado por código (menos tokens, menos errores)."""
+    print(json.dumps(dossier_items(ids), ensure_ascii=False, separators=(",", ":")))
+
+
+def dossier_items(ids):
+    """Los datos de cada candidato, con su ficha leída en vivo: lo usan `dossier` (para la IA) y `decidir`."""
     cfg = cargar_config()
     con_nav = {t for c in cfg["categorias"].values() for t in c.get("navegador", [])}
     con = bd()
@@ -3291,25 +3296,254 @@ def dossier(ids):
     else:
         con_lector(None)
     con.close()
-    print(json.dumps(salida, ensure_ascii=False, separators=(",", ":")))
+    return salida
+
+
+# ---------------------------------------------- decisión por código (Modo Clásico)
+# Zeta (17/11/2026): el "verifica" no tiene que pasar entero por una IA. Los filtros son una tabla de
+# porcentajes: los aplica el código, sin interpretaciones (el #189, un 25 % bajo su habitual, lo descartó
+# la IA leyendo mal una frase). La IA solo redacta el título y la descripción de lo que pasa.
+CLASICO = {
+    "tec": {"subiendo": 0.20, "destacados": 0.25, "mercado": 0.20},
+    "consumible": {"subiendo": 0.20, "destacados": 0.30, "mercado": 0.20},
+    "moda": {"subiendo": 0.30, "destacados": 0.50, "mercado": 0.15, "mercado_destacados": 0.25},
+    "digital": {"subiendo": 0.80, "destacados": 0.80, "mercado": 0.80},
+}
+SOBRE_MINIMO_SUBIENDO, SOBRE_MINIMO_DESTACADOS = 0.15, 0.08
+RE_TIENDA_DIGITAL = re.compile(r"steampowered|epicgames|gog\.com|humblebundle|instant-gaming|eneba|gamesplanet|"
+                               r"store\.playstation|nintendo\.com|ubisoft|xbox\.com", re.I)
+
+
+def clase_clasico(cfg, tienda, nombre):
+    """A qué fila de la tabla del Modo Clásico pertenece un candidato: tec, consumible, moda o digital."""
+    if RE_TIENDA_DIGITAL.search(tienda or ""):
+        return "digital"
+    cat = next((c for c, d in (cfg or {}).get("categorias", {}).items()
+                if tienda in d.get("tiendas", []) + d.get("navegador", []) + d.get("apis", [])), None)
+    fam = familia_de(nombre)
+    if fam in ("calzado", "ropa", "bolsos") or cat == "moda":
+        return "moda"
+    if fam in ("higiene", "alimentacion", "bebidas", "perfumes") or cat in ("supermercado", "salud_belleza"):
+        return "consumible"
+    return "tec"
+
+
+def _pct(x):
+    return f"{round(x * 100)} %"
+
+
+def decidir_item(item, cfg=None):
+    """Aplica los filtros del Modo Clásico a un candidato del dossier. Sin IA y sin red: solo cuentas.
+    -> {"num", "veredicto": "pasa" | "descartado" | "sin_validar", "motivo", y si pasa "etiqueta", "prueba",
+    "precio"}. "memoria" dice qué veredicto guardar para el modelo: dudosa (bloquea 30 días) o caducada."""
+    def fin(veredicto, motivo, **mas):
+        return {"num": item.get("num"), "veredicto": veredicto, "motivo": motivo, **mas}
+    if item.get("error"):
+        return fin("descartado", str(item["error"]))
+    ficha = item.get("ficha") or {}
+    p0, ahora = item.get("p"), ficha.get("precio_ahora")
+    if str(item.get("memoria", "")).startswith("dudosa"):
+        return fin("descartado", f"ya descartado antes: {item['memoria']}")
+    if not item.get("validada"):
+        motivo = item.get("validacion") or "no se pudo leer la ficha"
+        if ahora and ficha.get("titulo"):  # la ficha se leyó y no es el producto del aviso
+            return fin("descartado", motivo, memoria="dudosa")
+        return fin("sin_validar", motivo)
+    precio = ahora or p0
+    subio = bool(ahora and p0 and ahora > p0 * 1.02)
+    mem = "caducada" if subio else "dudosa"
+    cambio = f" (el aviso decía {p0:g} € y ahora está a {precio:g} €)" if subio else ""
+    if ficha.get("stock") == "no":
+        return fin("descartado", "la ficha lo da por agotado", memoria="caducada")
+    ch = item.get("ch_ahora") or item.get("ch")
+    if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, precio):
+        return fin("descartado", f"ya está en Chollometro ({ch}) y ahora cuesta {precio:g} €: misma tienda solo si "
+                                 f"baja más de un 5 % y más de 1 €; otra tienda, si ahora es más barato", memoria="dudosa")
+    clase = clase_clasico(cfg, item.get("t"), item.get("n", ""))
+    u = {**CLASICO[clase], **(cfg or {}).get("filtros_codigo", {}).get("clasico", {}).get(clase, {})}
+    fam = familia_de(item.get("n", ""))
+    tallas = [v for v in ficha.get("variantes") or [] if not v.endswith("agotada")]
+    if fam in ("calzado", "ropa") and ficha.get("variantes"):
+        minimo_tallas = 3 if fam == "calzado" else 2
+        if len(tallas) < minimo_tallas:
+            return fin("descartado", f"quedan {len(tallas)} tallas con stock y Chollometro exige {minimo_tallas} "
+                                     f"en {'calzado' if fam == 'calzado' else 'ropa'}", memoria="caducada")
+    if item.get("gratis"):
+        return fin("pasa", "gratis", etiqueta="SUBIENDO", prueba="gratis", precio=precio, clase=clase)
+    h = item.get("historico") or {}
+    mercado, etiqueta, prueba, fallo = item.get("id"), None, None, None
+    if h.get("habitual"):
+        baja = (h["habitual"] - precio) / h["habitual"]
+        fuente = h.get("fuente", "histórico")
+        if baja < u["subiendo"] - 0.005:
+            return fin("descartado", f"baja un {_pct(baja)} sobre su precio habitual ({h['habitual']:g} € en {fuente}) "
+                                     f"y se exige un {_pct(u['subiendo'])}{cambio}", memoria=mem)
+        sobre = (precio - h["minimo"]) / h["minimo"] if h.get("minimo") else None
+        if sobre is not None and sobre > SOBRE_MINIMO_SUBIENDO:
+            return fin("descartado", f"está un {_pct(sobre)} por encima de su mínimo ({h['minimo']:g} € en {fuente}) "
+                                     f"y se admite hasta un {_pct(SOBRE_MINIMO_SUBIENDO)}{cambio}", memoria=mem)
+        if sobre is not None and sobre <= 0.03 and mercado and precio < mercado:
+            etiqueta = "EXCEPCIONAL"
+        elif baja >= u["destacados"] - 0.005 and (sobre is None or sobre <= SOBRE_MINIMO_DESTACADOS):
+            etiqueta = "DESTACADOS"
+        else:
+            etiqueta = "SUBIENDO"
+        prueba = (f"histórico de {fuente}: habitual {h['habitual']:g} €"
+                  + (f", mínimo {h['minimo']:g} €" if h.get("minimo") else "")
+                  + f", ahora {precio:g} € ({_pct(baja)} menos)")
+    elif mercado:
+        ventaja = (mercado - precio) / mercado
+        if ventaja >= u["mercado"] - 0.005:
+            impreso = (item["a"] - precio) / item["a"] if item.get("a") and item["a"] > precio else 0
+            if h.get("minimo") and precio <= h["minimo"] * 1.03:
+                etiqueta = "EXCEPCIONAL"
+            elif clase == "moda" and impreso >= u["destacados"] and ventaja >= u.get("mercado_destacados", 1):
+                etiqueta = "DESTACADOS"
+            else:
+                etiqueta = "SUBIENDO"
+            prueba = (f"otras tiendas: el siguiente precio es {mercado:g} € y aquí está a {precio:g} € "
+                      f"({_pct(ventaja)} menos)"
+                      + (f"; mínimo histórico {h['minimo']:g} € en {h.get('fuente', 'histórico')}" if h.get("minimo") else ""))
+        else:
+            fallo = (f"solo un {_pct(ventaja)} por debajo del mercado ({mercado:g} €) "
+                     f"y se exige un {_pct(u['mercado'])}{cambio}")
+    if not etiqueta and item.get("hot") and not subio:
+        etiqueta, prueba = "SUBIENDO", f"ya fue chollo caliente en Chollometro: {item['hot']}"
+    if not etiqueta and clase == "moda" and not mercado and item.get("a") and (item["a"] - precio) / item["a"] >= 0.70:
+        etiqueta = "SUBIENDO"
+        prueba = (f"moda sin comparador: {_pct((item['a'] - precio) / item['a'])} sobre el precio de tienda "
+                  f"({item['a']:g} €), que no es una referencia independiente")
+    if not etiqueta and not fallo and item.get("dr") and not subio:
+        m = re.match(r"-(\d+) % sobre (.+)", str(item["dr"]))
+        if m and int(m.group(1)) / 100 >= u["subiendo"] - 0.005:
+            etiqueta, prueba = "SUBIENDO", f"{m.group(1)} % menos sobre {m.group(2)}, calculado en la ronda"
+    if not etiqueta:
+        return fin("descartado", fallo or f"sin prueba de ventaja: no hay histórico, ni otra tienda más cara, "
+                                          f"ni antecedente en Chollometro{cambio}", memoria=mem)
+    return fin("pasa", prueba, etiqueta=etiqueta, prueba=prueba, precio=precio, clase=clase)
+
+
+def bloques_de_codigo(item, d):
+    """Los tres bloques de la entrega que no necesitan redacción (precios, información y enlace) y los
+    datos para que la IA, o la plantilla, escriban el título y la descripción."""
+    ficha, h = item.get("ficha") or {}, item.get("historico") or {}
+    precio = d["precio"]
+    precios = [f"Precio inicial publicado: {item['p']:g} €", f"Precio actual: {precio:g} €"]
+    if h.get("habitual"):
+        precios.append(f"Referencia: {h['habitual']:g} € (precio habitual en {h.get('fuente', 'histórico')})")
+    elif item.get("id"):
+        precios.append(f"Referencia: {item['id']:g} € (siguiente precio en otras tiendas)")
+    if item.get("a"):
+        precios.append(f"PVP de tienda: {item['a']:g} € (referencia de la tienda, no verificada)")
+    precios.append(f"Envío: {ficha.get('envio') or 'no indicado en la ficha'}")
+    tallas = [v for v in ficha.get("variantes") or [] if not v.endswith("agotada")]
+    info = ["INFO ADICIONAL", f"Comprobado: {item.get('comprobado', '')}", f"Etiqueta: {d['etiqueta']}",
+            f"Prueba: {d['prueba']}"]
+    if ficha.get("stock"):
+        info.append(f"Stock: {ficha['stock']}")
+    if tallas:
+        info.append("Tallas o variantes con stock: " + ", ".join(v.split(":")[0] for v in tallas[:15]))
+    if ficha.get("vendedor"):
+        info.append(f"Vendedor: {ficha['vendedor']}")
+    if h.get("minimo"):
+        info.append(f"Mínimo histórico: {h['minimo']:g} € ({h.get('fuente', '')})")
+    if ficha.get("cupones"):
+        info.append("Cupones vistos en la ficha (sin probar): " + ", ".join(ficha["cupones"]))
+    info.append(f"Vigencia: {ficha.get('vigencia') or 'no publicada'}")
+    info.append(f"Chollometro: {item.get('ch_ahora') or item.get('ch') or 'no'}")
+    for nombre, enlace in (item.get("buscar_chollometro") or {}).items():
+        info.append(f"PENDIENTE antes de publicar, buscar por {nombre}: {enlace}")
+    if item.get("aviso"):
+        info.append(f"Aviso: {item['aviso']}")
+    return {"precios": "\n".join(precios), "info": "\n".join(info), "enlace": item.get("u", ""),
+            "foto": ficha.get("foto") or item.get("img"), "etiqueta": d["etiqueta"],
+            "redaccion": {"num": item["num"], "etiqueta": d["etiqueta"], "nombre": item.get("n"),
+                          "tallas": [v.split(":")[0] for v in tallas[:15]], "specs": (ficha.get("specs") or [])[:15],
+                          "resumen": ficha.get("resumen"), "titulo_ficha": ficha.get("titulo")}}
+
+
+def plantilla_redaccion(r):
+    """Título y descripción sin IA (0 tokens): correctos y sosos. Para `redaccion: plantilla` o sin Hermes."""
+    titulo = (r.get("nombre") or "")[:120]
+    if r.get("tallas"):
+        titulo = f"{titulo} (tallas {', '.join(r['tallas'][:8])})"[:140]
+    cuerpo = (r.get("resumen") or r.get("titulo_ficha") or r.get("nombre") or "").strip()
+    specs = "\n".join(f"• {x}" for x in (r.get("specs") or [])[:10])
+    return {"titulo": titulo, "descripcion": cuerpo + ("\n\n" + specs if specs else "")}
+
+
+def decidir(n, avisar=True):
+    """`decidir N`: lee la ficha en vivo, aplica los filtros por código y actúa. Imprime una línea JSON.
+    - descartado: guarda el veredicto del modelo y manda "#N descartado: motivo" a Telegram.
+    - pasa: deja data/decision_N.json con los bloques hechos; con `redaccion: plantilla` entrega ya.
+    - sin_validar: no hace nada más (el botón se lo pasa a la IA, que puede abrir la ficha con su navegador)."""
+    cfg = cargar_config()
+    item = dossier_items([n])[0]
+    d = decidir_item(item, cfg)
+    archivo = DATOS / f"decision_{int(n)}.json"
+    if d["veredicto"] == "pasa":
+        b = bloques_de_codigo(item, d)
+        archivo.write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+        if cfg.get("entrega", {}).get("redaccion", "hermes") == "plantilla":
+            (DATOS / f"entrega_{int(n)}.json").write_text(json.dumps(plantilla_redaccion(b["redaccion"]),
+                                                                    ensure_ascii=False), encoding="utf-8")
+            d["entregado"] = bool(entregar(n, callado=True))
+    else:
+        archivo.unlink(missing_ok=True)
+        if d["veredicto"] == "descartado" and d.get("memoria"):
+            recordar(n, d["memoria"], d["motivo"], callado=True)
+        if avisar and not item.get("error"):
+            token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
+            if token and chat:
+                texto = (f"#{n} descartado: {d['motivo']}" if d["veredicto"] == "descartado"
+                         else f"#{n} sin validar por código: {d['motivo']}. Se lo paso a Hermes.")
+                enviar_telegram(token, chat, texto)
+    log(f"decidir #{n}: {d['veredicto']} {d.get('etiqueta', '')} {d['motivo'][:140]}")
+    print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
+    return d
+
+
+def redaccion(n):
+    """`redaccion N`: los datos ya verificados que necesita la IA para escribir título y descripción."""
+    try:
+        b = json.loads((DATOS / f"decision_{int(n)}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(json.dumps({"num": int(n), "error": "no hay decisión guardada: pulsa Verificar o usa verifica N"},
+                         ensure_ascii=False))
+        return
+    print(json.dumps(b["redaccion"], ensure_ascii=False, separators=(",", ":")))
 
 
 BLOQUES = ("titulo", "precios", "info", "enlace", "descripcion")
 
 
-def entregar(n):
+def entregar(n, callado=False):
     """Formato móvil: la IA deja vigilante_data/entrega_N.json con los 5 bloques y el script
     los manda como 5 mensajes (el primero con la foto). Así la IA no repite texto y el formato
-    sale siempre igual."""
+    sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
+    "descripcion": precios, información, enlace, foto y etiqueta salen de la decisión por código."""
+    decir = (lambda *a: None) if callado else print
     archivo = DATOS / f"entrega_{int(n)}.json"
+    decision = DATOS / f"decision_{int(n)}.json"
     try:
         b = json.loads(archivo.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
-        print(f"#{n}: no puedo leer {archivo.name}: {e}")
+        decir(f"#{n}: no puedo leer {archivo.name}: {e}")
         return False
+    hecha = None
+    try:
+        hecha = json.loads(decision.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    if hecha:
+        for k in ("precios", "info", "enlace"):  # lo calculado por código manda sobre lo que escriba la IA
+            b[k] = hecha[k]
+        b.setdefault("foto", hecha.get("foto"))
+        titulo = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(b.get("titulo", "")))
+        b["titulo"] = f"[{hecha['etiqueta']}] {titulo}".strip()
     faltan = [k for k in BLOQUES if not str(b.get(k, "")).strip()]
     if faltan:
-        print(f"#{n}: faltan bloques: {', '.join(faltan)}")
+        decir(f"#{n}: faltan bloques: {', '.join(faltan)}")
         return False
     con = bd()
     fila = con.execute("SELECT datos FROM lista WHERE id=?", (int(n),)).fetchone()
@@ -3318,14 +3552,17 @@ def entregar(n):
     foto = b.get("foto") or d.get("img")
     token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
     if not (token and chat):
-        print("falta token o chat_id")
+        decir("falta token o chat_id")
         return False
     ok = enviar_telegram(token, chat, str(b["titulo"]).strip(), foto)
     for k in BLOQUES[1:]:
         ok = enviar_telegram(token, chat, str(b[k]).strip()) and ok
-    print(f"#{n} entregado en 5 mensajes" if ok else f"#{n}: algún mensaje no se pudo enviar")
+    decir(f"#{n} entregado en 5 mensajes" if ok else f"#{n}: algún mensaje no se pudo enviar")
     if ok:
         archivo.unlink(missing_ok=True)
+        if hecha:
+            decision.unlink(missing_ok=True)
+            recordar(n, "buena", hecha["info"].split("Prueba: ", 1)[-1].split("\n")[0], callado=True)
     return ok
 
 
@@ -3378,18 +3615,20 @@ def refrescar_extras(con, cfg, categoria, grupo, tiendas):
         return False
 
 
-def recordar(n, veredicto, motivo):
+def recordar(n, veredicto, motivo, callado=False):
     """Guarda el veredicto de un modelo para no investigarlo otra vez (30 días)."""
     con = bd()
     fila = con.execute("SELECT base FROM lista WHERE id=?", (int(n),)).fetchone()
     if not fila:
-        print(f"#{n} no existe")
+        if not callado:
+            print(f"#{n} no existe")
         return
     con.execute("INSERT OR REPLACE INTO modelos VALUES (?,?,?,?)",
                 (fila[0], veredicto.lower(), motivo[:300], datetime.now().isoformat(timespec="minutes")))
     con.commit()
     con.close()
-    print(f"ok: #{n} -> {veredicto}")
+    if not callado:
+        print(f"ok: #{n} -> {veredicto}")
 
 
 def reglas_de(cfg, categoria, tienda):
@@ -4253,6 +4492,10 @@ if __name__ == "__main__":
         informe(int(args[1]) if len(args) > 1 else 7)
     elif len(args) == 2 and args[0] == "entregar":
         entregar(args[1])
+    elif len(args) >= 2 and args[0] == "decidir":
+        decidir(args[1], avisar="--callado" not in args)
+    elif len(args) == 2 and args[0] == "redaccion":
+        redaccion(args[1])
     elif len(args) >= 3 and args[0] == "recordar":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:

@@ -5,7 +5,7 @@ Busca ofertas para publicar en Chollometro (perfil PorLa_Jeta). Todo el filtrado
 ## Cómo funciona
 
 1. **Ronda (código, 0 €).** Lee las tiendas, detecta lo nuevo o lo que baja de precio y aplica los filtros: marca, descuento, precio de mercado (PrecioReal), histórico (PCComTracker o histórico propio) y duplicados en Chollometro. Lo que pasa llega a Telegram con un botón «Verificar #N».
-2. **Verificación (Hermes).** El botón manda «verifica N» a Hermes. La habilidad `verifica-chollo` ejecuta `dossier N` (ficha, stock, histórico…), la IA da el veredicto y redacta, y `entregar N` envía la ficha en 5 mensajes.
+2. **Verificación (código, y Hermes solo para redactar).** El botón lanza `decidir N`: se lee la ficha en vivo y los filtros del Modo Clásico se aplican por código, sin IA. Si no pasa, llega «#N descartado» con el motivo en números. Si pasa, Hermes recibe «redacta N» (habilidad `redacta-chollo`), escribe el título y la descripción, y `entregar N` envía la ficha en 5 mensajes. Si la ficha no se puede leer por código, se usa el camino completo de antes («verifica N», habilidad `verifica-chollo`).
 3. **Programación.** El Programador de tareas de Windows lanza `tareas/vig_rapidas.py` cada 5 min y `tareas/vig_navegador.py` cada 15 min, con `pythonw.exe` (sin ventana).
 
 ## Estructura
@@ -17,7 +17,7 @@ vigilante-chollos/
 │   ├── tiendas.json          tiendas por categoría, filtros, apartadas, horario, entrega
 │   └── marcas.txt            marcas admitidas (tecnología, generalistas, móviles)
 ├── data/                     base de datos, cachés y perfil de Chrome (fuera de git)
-├── tests/test_vigilante.py   160 pruebas, sin red real
+├── tests/test_vigilante.py   165 pruebas, sin red real
 ├── tareas/                   lo que lanza el Programador de tareas (lo genera `wrappers`)
 ├── hermes/
 │   ├── skills/verifica-chollo/SKILL.md   habilidad «verifica N»

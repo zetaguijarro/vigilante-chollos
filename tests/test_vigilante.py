@@ -1684,6 +1684,172 @@ class ModoTelegram(Base):
         self.ronda()
         self.assertFalse((v.DATOS / "recorrido.txt").exists())
 
+    # ---- decisión por código (Modo Clásico), 17/11/2026
+
+    def _item(self, **k):
+        base = {"num": 7, "n": "Xiaomi Redmi Buds 6 Pro Negro", "t": "mediamarkt.es", "u": "https://www.mediamarkt.es/p/1",
+                "p": 30.0, "validada": True, "validacion": "ficha real con título y precio", "comprobado": "17/11 08:50",
+                "ficha": {"precio_ahora": 30.0, "titulo": "Xiaomi Redmi Buds 6 Pro Negro", "stock": "sí"}}
+        ficha = {**base["ficha"], **k.pop("ficha", {})}
+        return {**base, **k, "ficha": ficha}
+
+    def test_decidir_con_historico(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        # #189 real: 30,00 € con habitual 39,99 € en PCComTracker es un 25 % menos. La IA lo descartó.
+        d = v.decidir_item(self._item(historico={"minimo": 29.0, "habitual": 39.99, "fuente": "pccomtracker.com"}), cfg)
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "DESTACADOS"))
+        self.assertIn("25 % menos", d["prueba"])
+        # #188 real: el aviso decía 15,98 € y la ficha marca 21,99 €, que es su precio habitual.
+        d = v.decidir_item(self._item(p=15.98, ficha={"precio_ahora": 21.99},
+                                      historico={"minimo": 15.98, "habitual": 21.99, "fuente": "pccomtracker.com"}), cfg)
+        self.assertEqual((d["veredicto"], d["memoria"]), ("descartado", "caducada"))
+        self.assertIn("baja un 0 %", d["motivo"])
+        self.assertIn("se exige un 20 %", d["motivo"])
+        self.assertIn("el aviso decía 15.98 €", d["motivo"])
+        # Entre el 20 % y el 25 %: SUBIENDO. Mínimo histórico y más barato que el mercado: EXCEPCIONAL.
+        d = v.decidir_item(self._item(p=31.5, ficha={"precio_ahora": 31.5}, historico={"minimo": 30.0, "habitual": 39.99}), cfg)
+        self.assertEqual(d["etiqueta"], "SUBIENDO")
+        d = v.decidir_item(self._item(id=38.0, historico={"minimo": 30.0, "habitual": 39.99}), cfg)
+        self.assertEqual(d["etiqueta"], "EXCEPCIONAL")
+        # Baja lo suficiente, pero queda muy por encima de su mínimo.
+        d = v.decidir_item(self._item(historico={"minimo": 22.0, "habitual": 39.99}), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("por encima de su mínimo", d["motivo"])
+
+    def test_decidir_sin_historico(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        d = v.decidir_item(self._item(id=41.5), cfg)
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "SUBIENDO"))
+        self.assertIn("otras tiendas", d["prueba"])
+        d = v.decidir_item(self._item(id=33.0), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("solo un 9 % por debajo del mercado", d["motivo"])
+        d = v.decidir_item(self._item(hot="812° a 34 € hace 40 días"), cfg)
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "SUBIENDO"))
+        d = v.decidir_item(self._item(), cfg)
+        self.assertEqual((d["veredicto"], d["memoria"]), ("descartado", "dudosa"))
+        self.assertIn("sin prueba de ventaja", d["motivo"])
+        d = v.decidir_item(self._item(gratis=1), cfg)
+        self.assertEqual(d["veredicto"], "pasa")
+
+    def test_decidir_descartes_y_sin_validar(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        buena = {"id": 41.5}
+        # #163 real: DualSense en Amazon a 54,90 € con hilo de Amazon a 56,99 €.
+        d = v.decidir_item(self._item(p=54.9, ficha={"precio_ahora": 54.9}, id=80.0, ch_ahora="misma:56.99"), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("Chollometro", d["motivo"])
+        self.assertEqual(v.decidir_item(self._item(ficha={"stock": "no"}, **buena), cfg)["memoria"], "caducada")
+        # #184 real: la ficha se lee y es de otro producto. Con muro antibot no se sabe: lo mira la IA.
+        d = v.decidir_item(self._item(validada=False, validacion="el título de la ficha no es el producto esperado", **buena), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        d = v.decidir_item(self._item(validada=False, validacion="muro antibot o página de comprobación",
+                                      ficha={"precio_ahora": None, "titulo": None}, **buena), cfg)
+        self.assertEqual(d["veredicto"], "sin_validar")
+        d = v.decidir_item(self._item(memoria="dudosa (2026-11-16): precio habitual", **buena), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertEqual(v.decidir_item({"num": 9, "error": "no existe"}, cfg)["veredicto"], "descartado")
+        # Moda: tallas de Chollometro (3 en calzado) y filtro del 15 % frente a otras tiendas.
+        zap = dict(n="Zapatillas adidas Gazelle", t="adidas.es", p=60.0, id=75.0)
+        d = v.decidir_item(self._item(**zap, ficha={"precio_ahora": 60.0, "titulo": "Zapatillas adidas Gazelle",
+                                                    "variantes": ["41: hay stock", "42: hay stock", "43: agotada"]}), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("quedan 2 tallas", d["motivo"])
+        d = v.decidir_item(self._item(**zap, ficha={"precio_ahora": 60.0, "titulo": "Zapatillas adidas Gazelle",
+                                                    "variantes": ["41: hay stock", "42: hay stock", "44: hay stock"]}), cfg)
+        self.assertEqual((d["veredicto"], d["clase"]), ("pasa", "moda"))
+        self.assertEqual(v.clase_clasico(cfg, "store.steampowered.com", "Hades II"), "digital")
+        self.assertEqual(v.clase_clasico(cfg, "mediamarkt.es", "Detergente Ariel 60 lavados"), "consumible")
+
+    def test_decidir_entrega_y_redaccion(self):
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 34.99
+        self.ronda()  # deja un candidato en la lista, con su número
+        con = sqlite3.connect(v.DB)
+        n = con.execute("SELECT max(id) FROM lista").fetchone()[0]
+        con.close()
+        self.enviados.clear()
+        orig = v.dossier_items
+        item = self._item(num=n, id=41.5, a=59.99, img="https://img/x.jpg",
+                          ficha={"specs": ["Autonomía: 36 h", "Bluetooth: 5.3"], "resumen": "Auriculares con cancelación de ruido."},
+                          buscar_chollometro={"nombre": "https://www.chollometro.com/search?q=x"})
+        try:
+            v.dossier_items = lambda ids: [item]
+            with redirect_stdout(io.StringIO()) as salida:
+                d = v.decidir(n)
+            self.assertEqual(json.loads(salida.getvalue().strip().splitlines()[-1])["veredicto"], "pasa")
+            self.assertEqual(self.enviados, [], "si pasa, el código no manda nada todavía")
+            with redirect_stdout(io.StringIO()) as salida:
+                v.redaccion(n)
+            r = json.loads(salida.getvalue())
+            self.assertEqual((r["etiqueta"], r["specs"][0]), ("SUBIENDO", "Autonomía: 36 h"))
+            # La IA solo escribe título y descripción (y aunque ponga otra etiqueta o precios, manda el código).
+            (v.DATOS / f"entrega_{n}.json").write_text(json.dumps(
+                {"titulo": "[EXCEPCIONAL] Xiaomi Redmi Buds 6 Pro", "descripcion": "Texto.", "precios": "inventado"}), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertTrue(v.entregar(n))
+            textos = [t for _, t, _ in self.enviados]
+            self.assertEqual(len(textos), 5)
+            self.assertEqual(textos[0], "[SUBIENDO] Xiaomi Redmi Buds 6 Pro")
+            self.assertIn("Precio actual: 30 €", textos[1])
+            self.assertIn("Referencia: 41.5 € (siguiente precio en otras tiendas)", textos[1])
+            self.assertIn("Prueba: otras tiendas", textos[2])
+            self.assertIn("PENDIENTE antes de publicar", textos[2])
+            self.assertFalse((v.DATOS / f"decision_{n}.json").exists())
+            # Descarte: lo dice el código por Telegram, con números, y guarda el veredicto del modelo.
+            self.enviados.clear()
+            v.dossier_items = lambda ids: [self._item(num=n, id=33.0)]
+            with redirect_stdout(io.StringIO()):
+                v.decidir(n)
+            self.assertEqual(len(self.enviados), 1)
+            self.assertTrue(self.enviados[0][1].startswith(f"#{n} descartado: solo un 9 % por debajo del mercado"))
+            con = sqlite3.connect(v.DB)
+            self.assertEqual(con.execute("SELECT veredicto FROM modelos").fetchall()[-1][0], "dudosa")
+            con.close()
+            # Sin Hermes: redacción por plantilla, 0 tokens.
+            self.enviados.clear()
+            cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+            cfg["entrega"]["redaccion"] = "plantilla"
+            v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+            item.pop("memoria", None)
+            v.dossier_items = lambda ids: [item]
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n)
+            self.assertTrue(d["entregado"])
+            self.assertEqual(len(self.enviados), 5)
+            self.assertIn("• Autonomía: 36 h", self.enviados[4][1])
+        finally:
+            v.dossier_items = orig
+
+    def test_plugin_del_boton_decide_por_codigo(self):
+        import importlib.util
+        ruta = CONF.parent / "hermes" / "plugins" / "vigilante-botones" / "__init__.py"
+        spec = importlib.util.spec_from_file_location("vigilante_botones", ruta)
+        b = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(b)
+        self.assertEqual(b.texto_de("vg:verifica:47"), "verifica 47")
+        self.assertIsNone(b.texto_de("otra:cosa"))
+        # Descartado: no se despierta a la IA. Pasa: tarea corta. Sin validar o fallo: el camino completo.
+        self.assertEqual(b.accion_de('{"num":47,"veredicto":"descartado","motivo":"x"}', "47"), (None, "Descartado #47"))
+        self.assertEqual(b.accion_de('ruido\n{"num":47,"veredicto":"pasa","etiqueta":"DESTACADOS"}', "47"),
+                         ("redacta 47", "Redactando #47 (DESTACADOS)"))
+        self.assertEqual(b.accion_de('{"num":47,"veredicto":"pasa","etiqueta":"SUBIENDO","entregado":true}', "47"),
+                         (None, "Enviado #47"))
+        self.assertEqual(b.accion_de('{"num":47,"veredicto":"sin_validar","motivo":"antibot"}', "47")[0], "verifica 47")
+        for roto in (None, "", "Traceback (most recent call last)", "{}"):
+            self.assertEqual(b.accion_de(roto, "47")[0], "verifica 47", repr(roto))
+        # El plugin usa el mismo python y el mismo script que declara la habilidad instalada.
+        for nombre in ("verifica-chollo", "redacta-chollo"):
+            skill = (CONF.parent / "hermes" / "skills" / nombre / "SKILL.md").read_text(encoding="utf-8")
+            py, script = b.rutas_de_skill(skill)
+            self.assertTrue(py.endswith("python.exe"), nombre)
+            self.assertTrue(script.endswith("vigilante-chollos\\src\\vigilante.py"), nombre)
+        self.assertIsNone(b.rutas_de_skill("sin rutas"))
+        redacta = (CONF.parent / "hermes" / "skills" / "redacta-chollo" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("V redaccion N", redacta)
+        self.assertIn("V entregar N", redacta)
+        self.assertEqual(json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["entrega"]["redaccion"], "hermes")
+
     def test_boton_para_verificar(self):
         # Un botón "Verificar #N" debajo de CADA aviso (Zeta: "si no, es un lío"). Lo atiende el plugin
         # de Hermes vigilante-botones, que entrega "verifica N" como si lo hubiera escrito Zeta.

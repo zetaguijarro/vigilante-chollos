@@ -182,7 +182,9 @@
  "entrega": {
   "modo": "telegram",
   "chat_id": "456808276",
-  "perfil_chollometro": "PorLa_Jeta"
+  "perfil_chollometro": "PorLa_Jeta",
+  "redaccion": "hermes",
+  "_nota_redaccion": "Quién escribe el título y la descripción de lo que pasa la decisión por código: \"hermes\" (una tarea corta, habilidad redacta-chollo) o \"plantilla\" (por código, 0 tokens, texto soso; no necesita Hermes)."
  },
  "reglas_tienda": {
   "aliexpress.com": {
