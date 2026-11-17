@@ -1002,6 +1002,16 @@ class Rondas(Base):
                  '<a href="/p/otro-2">Ventilador Cecotec</a><span>39,00 €</span>')
         ps = v.extraer("<html>" + split + "</html>", "https://tienda.es/ofertas")
         self.assertFalse([p for p in ps if p.get("promo")], "el Split 2x1 no es un 2x1")
+        # Zeta: "muchas veces no viene en el título sino en una etiqueta". La etiqueta de la tarjeta sí cuenta.
+        etiquetas = ('<a href="/p/cola-1">Coca-Cola Zero 2 L</a><span>2,00 €</span><span class="badge">2x1</span>'
+                     '<a href="/p/fanta-2">Fanta Naranja 2 L</a><span>1,80 €</span><span class="tag">3x2</span>'
+                     '<a href="/p/split-3">Aire acondicionado Split 2x1 Daikin</a><span>999,00 €</span>'
+                     '<a href="/p/x-4">Ventilador Cecotec</a><span>39,00 €</span>')
+        promos = {p["nombre"][:9]: (p.get("promo"), p.get("precio_unidad"))
+                  for p in v.extraer("<html>" + etiquetas + "</html>", "https://t.es/ofertas")}
+        self.assertEqual(promos["Coca-Cola"], ("2x1", 1.0))
+        self.assertEqual(promos["Fanta Nar"], ("3x2", 1.2))
+        self.assertEqual(promos["Aire acon"], (None, None))
         tarjetas = ('<a href="/p/gel-ducha-123456">Gel de ducha Sanex 600 ml</a><span>4,00 €</span>'
                     '<span class="badge">2ª unidad al 70%</span>'
                     '<a href="/p/champu-654321">Champú H&S 300 ml</a><span>5,00 €</span>') * 1
