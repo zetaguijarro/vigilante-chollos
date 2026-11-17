@@ -945,6 +945,9 @@ class Rondas(Base):
         self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
         self.assertIn("nbastore.eu", cats["deporte"]["navegador"])
         self.assertIn("precioreal.com", siempre)
+        # Portátil de Zeta (17/11/2026): 16 GB de RAM pero un i5-8265U de bajo consumo, 4 núcleos.
+        # 3 pestañas y 2 páginas con navegador; más pestañas las frena el procesador, no la memoria.
+        self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (3, 2))
         # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 2)
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)

@@ -165,8 +165,8 @@
   "canal": "chrome",
   "espera_ms": 2500,
   "scroll_max": 8,
-  "pestanas": 2,
-  "paginas": 1,
+  "pestanas": 3,
+  "paginas": 2,
   "bloquear_recursos": true,
   "espera_red_ms": 8000
  },
