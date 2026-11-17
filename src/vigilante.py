@@ -1263,7 +1263,11 @@ def idealo_navegador(productos, cfg=None):
                         continue
                     # Por marca + modelo, no por EAN: un EAN desconocido da 404 con productos al azar.
                     url = IDEALO_BUSQUEDAS[0].format(q=quote_plus(consulta_comparador(p)))
-                    resp = page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                    try:
+                        resp = page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                    except Exception as e:  # una consulta lenta no tumba las demás
+                        log(f"idealo con navegador {consulta_comparador(p)[:40]}: {str(e)[:80]}")
+                        continue
                     estado = resp.status if resp else 0
                     if estado == 403:
                         DATOS.mkdir(parents=True, exist_ok=True)
@@ -1275,7 +1279,18 @@ def idealo_navegador(productos, cfg=None):
                         salida[i] = None
                         continue
                     page.wait_for_timeout(2500)
-                    salida[i] = precio_mismo_modelo(p, extraer(page.content(), page.url))
+                    # Idealo a veces redirige (resultado exacto -> ficha) justo después de cargar: "page is
+                    # navigating" al leer (17/11/2026). Se espera a que termine y se reintenta; si no, la siguiente.
+                    html = None
+                    for _ in range(3):
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                            html = page.content()
+                            break
+                        except Exception:
+                            page.wait_for_timeout(1500)
+                    if html is not None:
+                        salida[i] = precio_mismo_modelo(p, extraer(html, page.url))
             finally:
                 nav.close()
     except Exception as e:  # sin navegador o se cerró: siguen PrecioReal y lo que ya se tenga

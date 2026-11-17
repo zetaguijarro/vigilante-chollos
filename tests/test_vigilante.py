@@ -454,6 +454,8 @@ class Piezas(unittest.TestCase):
         orig, v.descargar = v.descargar, red
         sleep, v.time.sleep = v.time.sleep, lambda s: None
         v._IDEALO_BLOQUEADO[0] = False
+        # Carpeta propia: sin ella, el finally borraba data\idealo_pausa.txt de producción (17/11/2026).
+        datos_orig, v.DATOS = v.DATOS, Path(tempfile.mkdtemp())
         try:
             p = {"nombre": "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4", "precio": 34.99, "ean": None}
             self.assertEqual(v.idealo_red(p), 32.95, "ni la versión Play ni el accesorio")
@@ -489,6 +491,7 @@ class Piezas(unittest.TestCase):
             v.descargar, v.time.sleep = orig, sleep
             v._IDEALO_BLOQUEADO[0] = False
             v._archivo_pausa_idealo().unlink(missing_ok=True)
+            v.DATOS = datos_orig
         self.assertFalse(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 512GB"))
         self.assertTrue(v.mismo_modelo("Samsung Galaxy S26 256GB Negro", "Samsung Galaxy S26 256GB"))
         # Mismo código exacto aunque el comparador añada palabras; código distinto, fuera.
