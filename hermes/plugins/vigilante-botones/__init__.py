@@ -10,6 +10,8 @@ plugin registra un manejador acotado a "vg:" (API pública: ctx.register_platfor
        - pasa: entrega a Hermes "redacta N", una tarea corta (solo título y descripción).
        - sin validar (la ficha no se pudo leer: PcComponentes da 403 al script): entrega "comprueba N".
          Hermes solo abre la ficha con su navegador, apunta precio y stock, y el código decide con eso.
+       - a mano (la tienda tiene un muro antibot reciente, `muro N`): el script ya le ha mandado el enlace a
+         Zeta. No se despierta a la IA.
        - cualquier fallo del script: entrega "verifica N", el camino completo de siempre.
 
 Desde el 17/11/2026 (Zeta: "¿siempre tenemos que hacerlo a través de una IA el último paso?").
@@ -62,6 +64,8 @@ def accion_de(salida, n):
         if d.get("entregado"):
             return None, f"Enviado #{n}"
         return f"redacta {n}", f"Redactando #{n} ({d.get('etiqueta', '')})"
+    if veredicto == "a_mano":  # muro antibot reciente en la tienda: el script ya le ha mandado el enlace a Zeta
+        return None, f"Lo miras tú #{n}"
     if veredicto == "sin_validar":
         return f"comprueba {n}", f"Leyendo la ficha #{n}..."
     return f"verifica {n}", f"Verificando #{n}..."

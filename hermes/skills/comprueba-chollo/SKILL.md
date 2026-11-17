@@ -10,10 +10,15 @@ El vigilante no ha podido abrir la ficha del candidato #N: la tienda bloquea al 
 PY = C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe
 V = C:\Users\Zeus\proyectos\vigilante-chollos\src\vigilante.py
 
+## 0. Si el mensaje ya trae precio y stock
+"comprueba N precio 38,99 stock si" quiere decir que Zeta ya ha mirado la ficha en su navegador. No la abras: ve directo al paso 2 con esos datos (vendedor: el que diga Zeta o, si no lo dice, la tienda).
+
 ## 1. Abre la ficha
 El enlace está en el aviso de Telegram al que responde este mensaje. Si no lo ves, ejecuta `PY V dossier N` y usa el campo `u` (solo ese).
 
 Ábrela con tu navegador y comprueba que el producto es el del aviso. Si es otro producto, o la página no carga: responde "#N sin validar: motivo" y para.
+
+**Muro antibot o captcha** (Cloudflare, "verificando que eres humano", casilla que no se resuelve): no reintentes ni busques otra vía. Ejecuta `PY V muro N`, que le pasa el enlace a Zeta y hace que las siguientes candidatas de esa tienda le lleguen a él directamente durante 6 horas. Responde solo "#N con muro: se lo paso a Zeta".
 
 ## 2. Pasa los datos al código
 Apunta, tal como los ves en la ficha:

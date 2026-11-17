@@ -323,6 +323,40 @@ class Piezas(unittest.TestCase):
         self.assertEqual(ps["PlayStation 5 Muy bueno 825 GB"], 684.23)
         self.assertEqual(ps["Portátil HP OmniBook 3 14"], 549.0)
 
+    def test_tarjetas_euro_delante(self):
+        # Alternate ('€ 265,00') y Expert ('€58 <small>,90</small>') ponen el euro delante: antes se cogía
+        # el número anterior al símbolo ('32:9' -> 9 €, 'KP2431' -> 2.431 €). 17/11/2026.
+        alternate = lambda id_, nombre, specs, precio, antes="": (
+            f'<div class="card"><a class="track_this_link" href="https://www.alternate.es/X/Y/html/product/{id_}">'
+            f'<img alt="{nombre}" src="/p/{id_}.jpg"><div class="product-name"><strong>{nombre}</strong></div>'
+            f'<ul><li>{specs}</li></ul><div class="price">'
+            + (f'<span class="line-through">€ {antes}</span>' if antes else "")
+            + f'<span>€ {precio}</span></div></a></div>')
+        html = (alternate("100203689", "Corsair XENEON EDGE, Pantalla negro", "Formato: 32:9", "265,00", "299,00")
+                + alternate("100011432", "Bosch Taladro percutor UniversalImpact 750", "Potencia: 750 W, 1", "59,90")
+                + alternate("1702855", "Sharkoon ELITE SHARK CA700 Torre Negro", "Ventiladores: 7", "1.149,00"))
+        ps = {p["nombre"]: (p["precio"], p["precio_antes"])
+              for p in v.extraer(html, "https://www.alternate.es/")}
+        self.assertEqual(ps["Corsair XENEON EDGE, Pantalla negro"], (265.0, 299.0))
+        self.assertEqual(ps["Bosch Taladro percutor UniversalImpact 750"], (59.9, None))
+        self.assertEqual(ps["Sharkoon ELITE SHARK CA700 Torre Negro"], (1149.0, None))
+        expert = lambda slug, nombre, euros, cent: (
+            f'<div class="uk-card"><a href="https://www.expert.es/producto/{slug}" class="uk-position-cover"></a>'
+            f'<h3><a href="https://www.expert.es/producto/{slug}">{nombre}</a></h3>'
+            f'<span class="gtag-precio"><strong>€{euros} <small>,{cent}</small></strong></span>'
+            f'<a href="#" title="Añadir al carrito">Añadir al carrito</a></div>')
+        html = (expert("cafetera-krups-kp2431as", "Cafetera de cápsulas Krups Genio S blanca KP2431", "58", "90")
+                + expert("cafetera-exp-delongh-ecam290-22-b", "Cafetera DeLonghi Magnífica EVO ECAM290.22", "431", "00")
+                + expert("cepillo-rowenta-ub5920-seca-y-alisa", "Cepillo Secador Rowenta UB5920F0", "51", "90"))
+        ps = {p["nombre"]: p["precio"] for p in v.extraer(html, "https://www.expert.es/")}
+        self.assertEqual(ps, {"Cafetera de cápsulas Krups Genio S blanca KP2431": 58.9,
+                              "Cafetera DeLonghi Magnífica EVO ECAM290.22": 431.0,
+                              "Cepillo Secador Rowenta UB5920F0": 51.9})
+
+    def test_euro_delante_no_cambia_tiendas_de_siempre(self):
+        self.assertFalse(v.euro_delante('<span>899,00 €</span><span>1.199,00 €</span><p>Envío gratis desde 50 €</p>'))
+        self.assertTrue(v.euro_delante('<span>€ 265,00</span><span>€58 <small>,90</small></span>'))
+
     def test_tarjetas_no_pisan_datos_estructurados(self):
         # Con 3 o más productos en JSON-LD no se usan las tarjetas (las tiendas que ya funcionan no cambian).
         html = tienda_html([{"n": f"JBL Charge {i}", "p": 99.0} for i in range(3)]) + (
@@ -1844,6 +1878,25 @@ class ModoTelegram(Base):
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n, avisar=False)
             self.assertEqual(d["veredicto"], "sin_validar", "sin datos de Hermes: no se puede decidir")
+            # Hermes choca con el muro (#193, 17/11/2026): `muro N` y las siguientes van a Zeta, sin IA.
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(v.muro(n, avisar=False)["veredicto"], "a_mano")
+            self.enviados.clear()
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n)
+            self.assertEqual(d["veredicto"], "a_mano")
+            self.assertEqual(len(self.enviados), 1)
+            self.assertIn("Mírala tú:", self.enviados[0][1])
+            self.assertIn(f"comprueba {n} precio", self.enviados[0][1])
+            con = sqlite3.connect(v.DB)
+            k = con.execute("SELECT k FROM meta WHERE k LIKE 'muro:%'").fetchone()[0]
+            con.execute("UPDATE meta SET v=? WHERE k=?",
+                        ((datetime.now() - timedelta(hours=v.MURO_HORAS + 1)).isoformat(timespec="minutes"), k))
+            con.commit()
+            con.close()
+            with redirect_stdout(io.StringIO()):
+                d = v.decidir(n, avisar=False)
+            self.assertEqual(d["veredicto"], "sin_validar", "pasadas las horas del muro, Hermes vuelve a probar")
             leidas.clear()
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n, avisar=False, ficha_manual=v.ficha_de_args(["--precio", "30", "--stock", "si"]))
@@ -1875,6 +1928,7 @@ class ModoTelegram(Base):
                          (None, "Enviado #47"))
         # Sin validar (PcComponentes da 403 al script): Hermes solo lee la ficha y el código decide.
         self.assertEqual(b.accion_de('{"num":47,"veredicto":"sin_validar","motivo":"HTTP Error 403"}', "47")[0], "comprueba 47")
+        self.assertEqual(b.accion_de('{"num":47,"veredicto":"a_mano","motivo":"muro"}', "47"), (None, "Lo miras tú #47"))
         for roto in (None, "", "Traceback (most recent call last)", "{}"):
             self.assertEqual(b.accion_de(roto, "47")[0], "verifica 47", repr(roto))
         # El plugin usa el mismo python y el mismo script que declara la habilidad instalada.
@@ -1889,6 +1943,7 @@ class ModoTelegram(Base):
         self.assertIn("V entregar N", redacta)
         comprueba = (CONF.parent / "hermes" / "skills" / "comprueba-chollo" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("V decidir N --precio", comprueba)
+        self.assertIn("V muro N", comprueba)
         self.assertIn("comprueba-chollo", (CONF.parent / "scripts" / "instalar_en_hermes.sh").read_text(encoding="utf-8"))
         self.assertEqual(json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["entrega"]["redaccion"], "hermes")
 

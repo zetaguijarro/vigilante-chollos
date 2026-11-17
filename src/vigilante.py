@@ -723,20 +723,22 @@ def tarjetas_html(html, base_url, tope=6000):
                  for x in re.findall(r"<h[2-4]\b[^>]*>(.*?)</h[2-4]>", m.group(2), re.S | re.I)]
         f[1] += [unescape(t) for t in RE_ATR_TITULO.findall(m.group(0))]
     orden = sorted(fichas.items(), key=lambda kv: kv[1][0])
+    rx_euros = RE_EUROS_DELANTE if euro_delante(plano) else RE_EUROS
     salida = []
     for n, (url, (ini, nombres)) in enumerate(orden):
         fin = min(ini + tope, orden[n + 1][1][0] if n + 1 < len(orden) else len(plano))
         visible = unescape(re.sub(r"<[^>]+>", " ", RE_TACHADO.sub(" ", plano[ini:fin])))
         visible = RE_PRECIO_PARTIDO.sub(r"\1\2\3", visible)  # Back Market: '684 ,23 €' -> '684,23 €'
+        visible = RE_PARTIDO_DELANTE.sub(r"\1\2\3", visible)  # Expert: '€58 ,90' -> '€58,90'
         precio = None
-        for e in RE_EUROS.finditer(visible):
+        for e in rx_euros.finditer(visible):
             antes_txt, despues_txt = visible[max(0, e.start() - 20):e.start()], visible[e.end():e.end() + 16]
             if RE_NO_PRECIO.search(antes_txt) or RE_NO_PRECIO_DESPUES.match(despues_txt):
                 continue
             precio = a_numero(e.group(1).replace(" ", ""))
             break
         buenos = [t for t in nombres if 8 <= len(t) <= 250 and re.search(r"[a-zA-Z]{3}", t)
-                  and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t)]
+                  and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t) and not RE_EUROS_DELANTE.search(t)]
         if precio and 0.5 <= precio <= 20000 and buenos:
             salida.append({"name": max(buenos, key=len), "price": precio, "url": url})
     return salida
@@ -759,6 +761,21 @@ RE_TACHADO = re.compile(
     r"anterior|original|pvpr?\b|line-through|regular)[^\"]*\"[^>]*>(.*?)</\3>",
     re.I | re.S)
 RE_EUROS = re.compile(r"(\d{1,3}(?:[.\s]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:€|&euro;|EUR)", re.I)
+# Euro delante del importe (Alternate: '€ 265,00'; Expert: '€58 ,90'). Con RE_EUROS se cogía
+# el número de antes del símbolo: el '9' de 'Formato: 32:9' o el '2431' de 'Krups KP2431' (17/11/2026).
+RE_EUROS_DELANTE = re.compile(r"(?:€|&euro;|EUR)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?![\d.,])",
+                              re.I)
+RE_PARTIDO_DELANTE = re.compile(r"((?:€|EUR)\s*\d[\d.]*)\s+([.,])\s*(\d{2})(?!\d)")
+RE_CENTIMOS_DELANTE = re.compile(r"(?:€|EUR)\s*\d[\d.]*,\d{2}(?!\d)")
+RE_CENTIMOS_DETRAS = re.compile(r"\d,\d{2}\s*(?:€|EUR)")
+
+
+def euro_delante(plano):
+    """True si la página escribe los precios con el euro delante: más importes con céntimos
+    del tipo '€ 58,90' que del tipo '58,90 €'. Se decide por página para no tocar las tiendas de siempre."""
+    texto = unescape(re.sub(r"<[^>]+>", " ", plano))
+    texto = RE_PARTIDO_DELANTE.sub(r"\1\2\3", RE_PRECIO_PARTIDO.sub(r"\1\2\3", texto))
+    return len(RE_CENTIMOS_DELANTE.findall(texto)) > len(RE_CENTIMOS_DETRAS.findall(texto))
 
 
 # "-75%" suelto (no "-10% extra", "hasta -50%" ni "-5% en app", que son promociones, no el descuento del producto).
@@ -789,7 +806,8 @@ def precio_antes_html(html, productos, ventana=12000, todos=None):
                     break
             for m in RE_TACHADO.finditer(trozo):
                 contenido = m.group(2) or m.group(4) or ""
-                for e in RE_EUROS.findall(unescape(re.sub(r"<[^>]+>", " ", contenido))):
+                txt = unescape(re.sub(r"<[^>]+>", " ", contenido))
+                for e in RE_EUROS.findall(txt) or RE_EUROS_DELANTE.findall(txt):
                     v = a_numero(e.replace(" ", ""))
                     if v and p["precio"] * 1.01 < v < p["precio"] * 4:
                         p["precio_antes"] = round(v, 2)
@@ -3498,14 +3516,61 @@ def ficha_de_args(args):
             "vendedor": valores.get("vendedor") or None}
 
 
+MURO_HORAS = 6  # tras un muro antibot en la ficha, sus candidatas las mira Zeta durante estas horas
+
+
+def muro_activo(con, tienda, horas=MURO_HORAS):
+    """True si Hermes encontró hace menos de `horas` un muro antibot en las fichas de esa tienda."""
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (f"muro:{dominio_tienda(tienda or '')}",)).fetchone()
+    try:
+        return bool(fila) and datetime.now() - datetime.fromisoformat(fila[0]) < timedelta(hours=horas)
+    except ValueError:
+        return False
+
+
+def texto_a_mano(n, item):
+    return (f"#{n} {item.get('t', '')}: la ficha tiene muro antibot y no se puede leer automáticamente. "
+            f"Mírala tú: {item.get('u', '')}\n"
+            f"Si está bien, escribe a Hermes: comprueba {n} precio 00,00 stock si")
+
+
+def muro(n, avisar=True):
+    """`muro N`: Hermes ha encontrado un muro antibot (Cloudflare...) en la ficha de #N. No se insiste ni se
+    busca otra vía: se apunta la tienda y, durante MURO_HORAS, sus candidatas pasan a Zeta para que las mire
+    en su navegador ("a_mano") en vez de gastar verificaciones de Hermes. Caso: #189 y #193 de PcComponentes, 17/11/2026."""
+    con = bd()
+    fila = con.execute("SELECT datos FROM lista WHERE id=?", (int(n),)).fetchone()
+    item = {**json.loads(fila[0]), "num": int(n)} if fila else {"num": int(n)}
+    if item.get("t"):
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                    (f"muro:{dominio_tienda(item['t'])}", datetime.now().isoformat(timespec="minutes")))
+        con.commit()
+    con.close()
+    d = {"num": int(n), "veredicto": "a_mano", "motivo": f"muro antibot en {item.get('t', '?')}: lo mira Zeta"}
+    if avisar and item.get("t"):
+        cfg = cargar_config()
+        token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
+        if token and chat:
+            enviar_telegram(token, chat, texto_a_mano(n, item))
+    log(f"muro #{n}: {d['motivo']}")
+    print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
+    return d
+
+
 def decidir(n, avisar=True, ficha_manual=None):
     """`decidir N`: lee la ficha en vivo, aplica los filtros por código y actúa. Imprime una línea JSON.
     - descartado: guarda el veredicto del modelo y manda "#N descartado: motivo" a Telegram.
     - pasa: deja data/decision_N.json con los bloques hechos; con `redaccion: plantilla` entrega ya.
-    - sin_validar: no hace nada más (el botón se lo pasa a la IA, que puede abrir la ficha con su navegador)."""
+    - sin_validar: no hace nada más (el botón se lo pasa a la IA, que puede abrir la ficha con su navegador).
+    - a_mano: sin validar en una tienda con muro reciente (`muro N`): se le manda a Zeta el enlace, sin IA."""
     cfg = cargar_config()
     item = dossier_items([n], ficha_manual=ficha_manual)[0]
     d = decidir_item(item, cfg)
+    if d["veredicto"] == "sin_validar" and not ficha_manual and not item.get("error"):
+        con = bd()
+        if muro_activo(con, item.get("t")):
+            d = {**d, "veredicto": "a_mano", "motivo": f"muro antibot en {item.get('t')}: lo mira Zeta"}
+        con.close()
     archivo = DATOS / f"decision_{int(n)}.json"
     if d["veredicto"] == "pasa":
         b = bloques_de_codigo(item, d)
@@ -3519,10 +3584,11 @@ def decidir(n, avisar=True, ficha_manual=None):
         if d["veredicto"] == "descartado" and d.get("memoria"):
             recordar(n, d["memoria"], d["motivo"], callado=True)
         # "Sin validar" no se avisa: el botón se lo pasa a Hermes para que lea la ficha ("comprueba N").
-        if avisar and not item.get("error") and d["veredicto"] == "descartado":
+        if avisar and not item.get("error") and d["veredicto"] in ("descartado", "a_mano"):
             token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
             if token and chat:
-                enviar_telegram(token, chat, f"#{n} descartado: {d['motivo']}")
+                enviar_telegram(token, chat, f"#{n} descartado: {d['motivo']}" if d["veredicto"] == "descartado"
+                                else texto_a_mano(n, item))
     log(f"decidir #{n}: {d['veredicto']} {d.get('etiqueta', '')} {d['motivo'][:140]}")
     print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
     return d
@@ -4519,6 +4585,8 @@ if __name__ == "__main__":
         entregar(args[1])
     elif len(args) >= 2 and args[0] == "decidir":
         decidir(args[1], avisar="--callado" not in args, ficha_manual=ficha_de_args(args[2:]))
+    elif len(args) >= 2 and args[0] == "muro":
+        muro(args[1], avisar="--callado" not in args)
     elif len(args) == 2 and args[0] == "redaccion":
         redaccion(args[1])
     elif len(args) >= 3 and args[0] == "recordar":
