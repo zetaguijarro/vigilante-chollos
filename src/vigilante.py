@@ -747,6 +747,100 @@ REF_TIENDA_HISTORICO = {"mediano": "Amazon: mediana de lo pagado en 90 días",
                         "mas_bajo": "Amazon: más bajo de los últimos 30 días"}
 
 
+CAMEL_URL = "https://es.camelcamelcamel.com/product/{asin}"
+CAMEL_MAX_RONDA = 8      # consultas nuevas por ronda (lo que está en caché no cuenta)
+CAMEL_CACHE_H = 24
+CAMEL_PAUSA_MIN = 30     # si sale reto: pausa fija, como Miravia y AliExpress
+RE_RETO_PAGINA = re.compile(r"cf-chl|challenge-platform|just a moment\.\.\.|captcha|verify you are (?:a )?human", re.I)
+RE_CAMEL_FILA = re.compile(r'<tr class="pt (amazon|new)\b[^"]*"[^>]*>(.*?)</tr>', re.S | re.I)
+RE_CAMEL_CELDA = re.compile(r"<td\b[^>]*>(.*?)</td>", re.S | re.I)
+MESES_EN = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov",
+                                         "dec"), 1)}
+
+
+def _fecha_camel(txt):
+    """'(Jul 09, 2020)' -> '2020-07-09'."""
+    m = re.search(r"([A-Za-z]{3})\w*\s+(\d{1,2}),\s*(\d{4})", txt or "")
+    if not m or m.group(1).lower() not in MESES_EN:
+        return None
+    return f"{m.group(3)}-{MESES_EN[m.group(1).lower()]:02d}-{int(m.group(2)):02d}"
+
+
+def camel_de_html(html):
+    """Tabla de CamelCamelCamel -> {minimo, minimo_fecha, maximo, media, fila} o None. Fila de Amazon (lo que vende
+    Amazon); si no tiene precios, la de otros vendedores nuevos ("new")."""
+    filas = {m.group(1).lower(): [c for c in RE_CAMEL_CELDA.findall(m.group(2))] for m in RE_CAMEL_FILA.finditer(html)}
+    for fila in ("amazon", "new"):
+        celdas = filas.get(fila) or []
+        if len(celdas) < 5:
+            continue
+        minimo, maximo, media = (a_numero(re.sub(r"<small>.*?</small>", "", c, flags=re.S)) for c in
+                                 (celdas[1], celdas[2], celdas[4]))
+        if minimo and media:
+            return {"minimo": minimo, "minimo_fecha": _fecha_camel(celdas[1]), "maximo": maximo, "media": media,
+                    "fila": fila}
+    return None
+
+
+def _camel_cache(con, asin):
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (f"camel:{asin}",)).fetchone()
+    if fila:
+        try:
+            g = json.loads(fila[0])
+            if datetime.fromisoformat(g["t"]) > datetime.now() - timedelta(hours=CAMEL_CACHE_H):
+                return True, g["h"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    return False, None
+
+
+def camel_lote(con, cfg, productos):
+    """Histórico de CamelCamelCamel para productos de Amazon (por ASIN), en una lista paralela (dict o None).
+    Chrome visible normal (`NavegadorNormal`), autorizado por Zeta el 17/11/2026: la descarga da 403. Caché de 24 h
+    por ASIN, también de lo que no tiene datos. Si sale reto o captcha no se resuelve: pausa fija de 30 min."""
+    salida, faltan = [None] * len(productos), []
+    for i, p in enumerate(productos):
+        hay, h = _camel_cache(con, asin_de(p.get("url")))
+        if hay:
+            salida[i] = h
+        else:
+            faltan.append(i)
+    pausa = con.execute("SELECT v FROM meta WHERE k='pausa:camelcamelcamel.com'").fetchone()
+    if not faltan or (pausa and pausa[0] > datetime.now().isoformat(timespec="minutes")):
+        return salida
+    try:
+        with NavegadorNormal(cfg) as nav:
+            for i in faltan:
+                asin = asin_de(productos[i].get("url"))
+                try:
+                    html, _, _ = nav.leer(CAMEL_URL.format(asin=asin))
+                except OSError as e:
+                    if "reto" in str(e) or RE_NO_SE_LEE.search(str(e)):
+                        hasta = (datetime.now() + timedelta(minutes=CAMEL_PAUSA_MIN)).isoformat(timespec="minutes")
+                        con.execute("INSERT OR REPLACE INTO meta VALUES ('pausa:camelcamelcamel.com', ?)", (hasta,))
+                        log(f"camelcamelcamel: {str(e)[:60]}, en pausa {CAMEL_PAUSA_MIN} min")
+                        break
+                    continue
+                if RE_RETO_PAGINA.search(html[:60000]) and "camelegend" not in html:
+                    hasta = (datetime.now() + timedelta(minutes=CAMEL_PAUSA_MIN)).isoformat(timespec="minutes")
+                    con.execute("INSERT OR REPLACE INTO meta VALUES ('pausa:camelcamelcamel.com', ?)", (hasta,))
+                    log(f"camelcamelcamel: reto, en pausa {CAMEL_PAUSA_MIN} min")
+                    break
+                salida[i] = camel_de_html(html)
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (
+                    f"camel:{asin}", json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "h": salida[i]})))
+    except Exception as e:  # sin navegador: sigue el resto del contraste
+        log(f"camelcamelcamel: {str(e)[:100]}")
+    con.commit()
+    return salida
+
+
+def camel_guardado(con, url):
+    """Lo que ya se sabe de CamelCamelCamel de un enlace de Amazon (caché), sin abrir nada."""
+    asin = asin_de(url)
+    return _camel_cache(con, asin)[1] if asin else None
+
+
 def contraste_ref_tienda(p, f=None):
     """Amazon dice qué es su precio tachado (Omnibus). "Mediano" (90 días) y "Más bajo" (30 días) son su propio
     histórico; "Recomendado" no cuenta. Autorizado por Zeta el 17/11/2026. Misma bajada que el habitual propio
@@ -4245,6 +4339,10 @@ def dossier_items(ids, ficha_manual=None):
                         if hp:  # sin comparador: el precio habitual que ha visto el propio vigilante
                             h = {"minimo": hp["minimo"], "habitual": hp["habitual"], "fuente": hp["fuente"],
                                  "es_minimo": (ahora or c["p"]) <= hp["minimo"] * 1.03}
+                        elif c.get("t") == "amazon.es" and (cc := camel_guardado(con, c.get("u"))):
+                            h = {"minimo": cc["minimo"], "habitual": cc.get("media"), "fuente": "CamelCamelCamel",
+                                 "minimo_fecha": cc.get("minimo_fecha"),
+                                 "es_minimo": (ahora or c["p"]) <= cc["minimo"] * 1.03}
                         elif c.get("rt") in REF_TIENDA_HISTORICO and c.get("a"):
                             # Amazon: "Mediano" (90 días) o "Más bajo" (30 días) de su precio tachado.
                             minimo = c["a"] if c["rt"] == "mas_bajo" else None
@@ -5275,6 +5373,14 @@ def ronda(categoria, solo=None):
         url = pcct_de(con, p)
         if url:
             p["historico_url"], p["_pcct_otra"] = url, True
+    # Amazon sin comparador: su histórico en CamelCamelCamel (17/11/2026), las de más descuento primero.
+    if f.get("camelcamelcamel", True) and not sin_idealo:
+        de_amazon = [p for i, p in enumerate(lote) if p["tienda"] == "amazon.es" and not precios_idealo.get(i)
+                     and not p.get("historico_url") and asin_de(p.get("url"))]
+        de_amazon.sort(key=lambda p: -(p.get("d") or 0))
+        for p, h in zip(de_amazon, camel_lote(con, cfg, de_amazon[:CAMEL_MAX_RONDA])):
+            if h:
+                p["_camel"] = h
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
         mp = p.get("_mp")
@@ -5304,6 +5410,11 @@ def ronda(categoria, solo=None):
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
             ok = p["precio"] <= ref["minimo"] * 1.03 or bool(ref.get("habitual") and p["precio"] <= ref["habitual"] * 0.9)
+        elif (cc := p.get("_camel")):
+            # Amazon por CamelCamelCamel: como PCComTracker, cerca de su mínimo o claramente bajo su media.
+            p["_hist"] = {"habitual": cc.get("media"), "minimo": cc["minimo"], "minimo_fecha": cc.get("minimo_fecha"),
+                          "fuente_corta": "CamelCamelCamel"}
+            ok = p["precio"] <= cc["minimo"] * 1.03 or bool(cc.get("media") and p["precio"] <= cc["media"] * 0.9)
         elif (ok_ref := contraste_ref_tienda(p, f)) is not None:
             ok = ok_ref
         elif p.get("_hp") and p["_hp"]["habitual"] and not sin_idealo:

@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 194 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 195 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -43,7 +43,7 @@ Pedidos desde Claude en el móvil. Por orden:
     - En la ronda, a cada producto se le aplica el mejor cupón que le sirva y se compara con el precio final. El historial (`precios`) guarda el precio **sin** cupón, para no ensuciar el habitual.
     - Un cupón nuevo hace revisar los productos de esa tienda aunque su precio no haya cambiado (es cuando salen los chollos).
     - Aviso y ficha: "con el código X" y el precio sin código. Chollometro no admite códigos de un solo uso ni personales.
-4. **Amazon (17/11, noche: etiquetas del tachado HECHO; movers-and-shakers no existe en .es; CamelCamelCamel probado, falta decidir; ver `docs/ESTADO.md`).** **Amazon no da resultados.** Ver la última entrada de `docs/ESTADO.md` sobre Amazon. Mirar con `grep amazon data/recorrido.txt | tail -n 20` qué lee. Probar `/gp/movers-and-shakers/<categoría>` y `/deals` en vez de (o además de) los más vendidos. Comprobar si `https://es.camelcamelcamel.com/product/<ASIN>` se puede leer (`asin_de` saca el ASIN) y qué datos de precio da: sería el histórico de Amazon, como PCComTracker para PcComponentes.
+4. **Amazon (17/11, noche: etiquetas del tachado HECHO; movers-and-shakers no existe en .es; CamelCamelCamel en las rondas; ver `docs/ESTADO.md`).** **Amazon no da resultados.** Ver la última entrada de `docs/ESTADO.md` sobre Amazon. Mirar con `grep amazon data/recorrido.txt | tail -n 20` qué lee. Probar `/gp/movers-and-shakers/<categoría>` y `/deals` en vez de (o además de) los más vendidos. Comprobar si `https://es.camelcamelcamel.com/product/<ASIN>` se puede leer (`asin_de` saca el ASIN) y qué datos de precio da: sería el histórico de Amazon, como PCComTracker para PcComponentes.
 
 ## Dónde lo dejamos (17/11/2026, 09:15)
 

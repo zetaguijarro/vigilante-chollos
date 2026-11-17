@@ -123,7 +123,8 @@ class Base(unittest.TestCase):
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
                                       "navegador_si_vacia": False,  # tienen su propia prueba
-                                      "idealo_navegador": False})   # no abrir Chrome de verdad
+                                      "idealo_navegador": False,    # no abrir Chrome de verdad
+                                      "camelcamelcamel": False})
         for c in cfg["categorias"].values():
             c.pop("historial_propio_dias", None)
         (self.tmp / "tiendas.json").write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -253,6 +254,56 @@ class ComparaPropio(unittest.TestCase):
         b = v.bloques_de_codigo(item, {"precio": 60.99, "etiqueta": "DESTACADOS"})
         self.assertNotIn("PVP", b["precios"])
         self.assertIn("91,99", b["precios"])
+
+    CAMEL = ('<div class="table-scroll camelegend"><table><tbody>'
+             '<tr class="pt amazon on" data-field="amazon"><td class="fixed nowrap amazon"> Amazon </td>'
+             '<td> 45,49€ <small>(Jul 09, 2020)</small> </td><td> 99,80€ <small>(Feb 01, 2023)</small> </td>'
+             '<td> 91,99€ <small>(Sep 04, 2026)</small> </td><td> 81,06€ </td></tr>'
+             '<tr class="pt new " data-field="new"><td> 3rd Party New </td><td> 47,49€ <small>(Nov 28, 2019)</small></td>'
+             '<td> 85,79€ </td><td> - </td><td> 66,83€ </td></tr></tbody></table></div>')
+
+    def test_camelcamelcamel(self):
+        self.assertEqual(v.camel_de_html(self.CAMEL), {"minimo": 45.49, "minimo_fecha": "2020-07-09", "maximo": 99.8,
+                                                       "media": 81.06, "fila": "amazon"})
+        solo_terceros = re.sub(r'<tr class="pt amazon.*?</tr>', "", self.CAMEL, flags=re.S)
+        self.assertEqual(v.camel_de_html(solo_terceros)["media"], 66.83)
+        self.assertIsNone(v.camel_de_html("<html>nada</html>"))
+        pedidas = []
+
+        class Falso:
+            def __init__(self, cfg=None): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def leer(s, url, completo=False):
+                pedidas.append(url)
+                if "B0RETO0000" in url:
+                    return "<html>Just a moment...<div class='cf-chl'></div></html>", url, []
+                return TestCaso.CAMEL, url, []
+        TestCaso = type(self)
+        orig = v.NavegadorNormal
+        v.NavegadorNormal = Falso
+        try:
+            ps = [{"url": "https://www.amazon.es/dp/B07M98CL6Y"}, {"url": "https://www.amazon.es/x/dp/B09B8X9RGM/ref=a"}]
+            r = v.camel_lote(self.con, {}, ps)
+            self.assertEqual([x["minimo"] for x in r], [45.49, 45.49])
+            self.assertEqual(pedidas, ["https://es.camelcamelcamel.com/product/B07M98CL6Y",
+                                       "https://es.camelcamelcamel.com/product/B09B8X9RGM"])
+            v.camel_lote(self.con, {}, ps)
+            self.assertEqual(len(pedidas), 2, "caché de 24 h por ASIN")
+            self.assertEqual(v.camel_guardado(self.con, "https://www.amazon.es/dp/B07M98CL6Y")["media"], 81.06)
+            # Reto: no se resuelve, pausa fija de 30 min y no se piden más.
+            r = v.camel_lote(self.con, {}, [{"url": "https://www.amazon.es/dp/B0RETO0000"},
+                                            {"url": "https://www.amazon.es/dp/B0OTRO0000"}])
+            self.assertEqual(r, [None, None])
+            self.assertNotIn("https://es.camelcamelcamel.com/product/B0OTRO0000", pedidas)
+            hasta = datetime.fromisoformat(self.con.execute(
+                "SELECT v FROM meta WHERE k='pausa:camelcamelcamel.com'").fetchone()[0])
+            self.assertTrue(28 < (hasta - datetime.now()).total_seconds() / 60 <= 30)
+            antes = len(pedidas)
+            v.camel_lote(self.con, {}, [{"url": "https://www.amazon.es/dp/B0OTRO0000"}])
+            self.assertEqual(len(pedidas), antes, "en pausa no se pide nada")
+        finally:
+            v.NavegadorNormal = orig
 
     def test_decidir_con_el_habitual_propio(self):
         # Al verificar, si no hay PCComTracker, el dossier trae el habitual propio y el código decide con él.
