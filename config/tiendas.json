@@ -544,7 +544,9 @@
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
    "ahorro_min_eur": 15,
-   "min_bajo_mercado": 0.15
+   "min_bajo_mercado": 0.15,
+   "sin_precioreal": true,
+   "_nota_sin_precioreal": "17/11/2026: PrecioReal empareja por modelo, sin color, lavado ni talla (Levi's 726 a 44,95 € contra 63 € de una ficha que ya no existía). No cuenta como contraste en esta categoría; sí Idealo, el histórico propio y la demanda probada."
   },
   "deporte": {
    "cada_min": 30,
@@ -593,7 +595,9 @@
     "nbastore.eu": "0 productos en todas sus lecturas del 17/11/2026 (11); apartada para no gastar tiempo de navegador."
    },
    "ahorro_min_eur": 15,
-   "min_bajo_mercado": 0.15
+   "min_bajo_mercado": 0.15,
+   "sin_precioreal": true,
+   "_nota_sin_precioreal": "17/11/2026: PrecioReal empareja por modelo, sin color, lavado ni talla (Levi's 726 a 44,95 € contra 63 € de una ficha que ya no existía). No cuenta como contraste en esta categoría; sí Idealo, el histórico propio y la demanda probada."
   },
   "juguetes_bebe": {
    "cada_min": 60,

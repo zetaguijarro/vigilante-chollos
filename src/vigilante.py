@@ -1059,14 +1059,16 @@ def enlace_idealo(p):
     return IDEALO_BUSQUEDAS[0].format(q=quote_plus(p.get("ean") or consulta_comparador(p)))
 
 
-def idealo_red(p):
+def idealo_red(p, precioreal=True):
     """Consulta Idealo por red (sin tocar la base de datos: se puede lanzar en paralelo).
-    Devuelve el precio, None si no lo encuentra, o False si la consulta falló."""
+    Devuelve el precio, None si no lo encuentra, o False si la consulta falló.
+    precioreal=False: sin PrecioReal de reserva (moda y deporte: empareja por modelo, sin color ni lavado)."""
     consulta = clave_idealo(p)
     if not identificable(p):
         return None  # genérico: cualquier coincidencia sería otro producto
+    reserva = precioreal_red if precioreal else (lambda p: None)
     if _IDEALO_BLOQUEADO[0] or idealo_en_pausa():
-        return precioreal_red(p)  # dio 403 hace poco: no insistir producto por producto ni ronda por ronda
+        return reserva(p)  # dio 403 hace poco: no insistir producto por producto ni ronda por ronda
     q = quote_plus(p["ean"] or p["nombre"])
     rutas = sorted(IDEALO_BUSQUEDAS, key=lambda r: r != _IDEALO_BUENA[0])  # primero la que ya funcionó
     resultados, fallo = [], None
@@ -1088,7 +1090,7 @@ def idealo_red(p):
     if not resultados and fallo is not None:
         if not _IDEALO_BLOQUEADO[0]:
             log(f"idealo {consulta}: {fallo}")
-        return precioreal_red(p)  # Idealo bloquea los programas (Akamai, 403): PrecioReal sí lo permite
+        return reserva(p)  # Idealo bloquea los programas (Akamai, 403): PrecioReal sí lo permite
     candidatos = resultados[:3] if p["ean"] else [r for r in resultados
                                                   if parecido(p["nombre"], r["nombre"]) >= 0.6]
     precios = [r["precio"] for r in candidatos]
@@ -4276,7 +4278,10 @@ def ronda(categoria, solo=None):
                 precios_idealo[i] = mejor
         pendientes = [i for i in pendientes if i not in precios_idealo]
     with ThreadPoolExecutor(max_workers=3) as ex:
-        for i, mejor in zip(pendientes, ex.map(lambda i: idealo_red(lote[i]), pendientes)):
+        # Moda y deporte: PrecioReal da el precio del modelo, no el del color o lavado (17/11: unas Levi's 726
+        # "clean getaway" a 44,95 € contra 63 € de una ficha que ya no existía). No es contraste real.
+        usar_pr = not cat_cfg.get("sin_precioreal", False)
+        for i, mejor in zip(pendientes, ex.map(lambda i: idealo_red(lote[i], usar_pr), pendientes)):
             if mejor is not False:
                 con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))

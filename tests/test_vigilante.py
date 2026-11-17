@@ -457,6 +457,11 @@ class Piezas(unittest.TestCase):
         try:
             p = {"nombre": "Xiaomi Redmi Buds 6 Blanco TWS ANC Bluetooth 5.4", "precio": 34.99, "ean": None}
             self.assertEqual(v.idealo_red(p), 32.95, "ni la versión Play ni el accesorio")
+            # Moda y deporte: sin PrecioReal de reserva (17/11: Levi's 726 contra una ficha del modelo sin lavado).
+            self.assertIsNone(v.idealo_red(p, precioreal=False))
+            real = json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["categorias"]
+            self.assertTrue(real["moda"]["sin_precioreal"] and real["deporte"]["sin_precioreal"])
+            self.assertFalse(real["tecnologia"].get("sin_precioreal", False))
             self.assertIn("precioreal.com/comparador/catalogo?q=Xiaomi+Redmi+Buds+6+TWS", pedidas[-1])
             antes = len([u for u in pedidas if "idealo" in u])
             self.assertEqual(v.idealo_red(p), 32.95)
