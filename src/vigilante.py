@@ -3166,7 +3166,10 @@ RE_RUTA_NO_CATEGORIA = re.compile(
     r"login|cuenta|account|cart|carrito|cesta|checkout|ayuda|help|blog|contact|nuestras-tiendas|store-?locator|faq|"
     r"pol[ií]tica|legal|cookie|newsletter|registro|regist|wishlist|favorit|track|pedido|order|devoluc|search|"
     r"buscar|busqueda|\?q=|/p/|/dp/|/product/|/producto/|\.(?:jpg|png|pdf)$|\d{5,}|ofertas?|rebajas|outlet|"
-    r"sale\b|promo|descuento|black-?friday|cyber|servicios?/", re.I)
+    r"sale\b|promo|descuento|black-?friday|cyber|servicios?/|service/|recomendador|"
+    # Accesorios y recambios (MediaMarkt, 17/11/2026: 12 de sus 40 categorías): lo que sale de ahí lo descarta
+    # el filtro de accesorios, así que leerlas solo gasta turnos del catálogo.
+    r"accesorios?-|recambios?|repuestos?|tendederos?", re.I)
 
 
 def categorias_de_portada(html, base_url, maximo=12):
@@ -5711,7 +5714,10 @@ def descubrir(categoria, solo_extras=False, grupo=None, solo_tiendas=None):
 
 
 RE_CLAVE_PRECIO = re.compile(r"pric|preci|pvp|amount|discount|descuent", re.I)
-RE_ANTIBOT = re.compile(r"captcha|cf-chl|cloudflare|datadome|akamai|access denied|perimeterx|incapsula", re.I)
+# Solo para `volcar` (pistas para mirar a mano). Antes se llamaba RE_ANTIBOT y, al definirse después, pisaba al
+# estricto en todo el programa: "captcha" o "cloudflare" en cualquier script de la página contaban como muro
+# (MediaMarkt, 17/11/2026: 13 productos y "reto" por la palabra Captcha de su código).
+RE_ANTIBOT_PISTAS = re.compile(r"captcha|cf-chl|cloudflare|datadome|akamai|access denied|perimeterx|incapsula", re.I)
 
 
 def claves_precio(obj, salida, cont):
@@ -5760,7 +5766,7 @@ def volcar(seleccion):
         print(f"  tamaño: {len(html) // 1024} KB | bloques JSON: {len(bloques)} "
               f"(de ellos {len(datos)} respuestas de la web) | productos leídos: {len(extraer(html, final, datos))}")
         print(f"  precios con € en el HTML visible: {euros} | itemprop=price: {html.count('itemprop=' + chr(34) + 'price')}")
-        antibot = RE_ANTIBOT.search(html)
+        antibot = RE_ANTIBOT_PISTAS.search(html)
         if antibot:
             print(f"  posible antibot: '{antibot.group(0)}'")
         if claves:
@@ -5800,7 +5806,8 @@ def modos(seleccion, nav_cls=None):
                 continue
             seg = round(time.monotonic() - inicio)
             productos = len(extraer(html, final, datos))
-            reto = RE_ANTIBOT.search(html)
+            # Reto de verdad: página sin productos (o casi) y con un muro conocido; no la palabra "captcha" suelta.
+            reto = RE_ANTIBOT.search(html[:30000]) if productos < 3 else None
             nota = f"reto: '{reto.group(0)}'" if reto else ""
             print(f"  {nombre:<17} {productos:>4} productos  {seg:>3} s  {len(html) // 1024:>5} KB  {nota}")
             filas.append((tienda, nombre, productos, seg, nota))

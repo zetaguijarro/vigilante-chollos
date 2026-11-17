@@ -1495,7 +1495,7 @@ class Rondas(Base):
         # Portátil de Zeta (17/11/2026): 16 GB de RAM, i5-8265U de 4 núcleos, dedicado solo al vigilante.
         self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 3))
         # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
-        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 2)
+        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 4)
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
         # Ventas privadas (16/11/2026, tras el `login` de Zeta): se leen con navegador, con su sesión.
@@ -3176,6 +3176,14 @@ class NoSeLee(Base):
         v.registrar_fallos(con, [("x.es", "", [{"nombre": "a"}], None)])  # vuelve a leerse: se borra
         self.assertIsNone(con.execute("SELECT v FROM meta WHERE k='no_se_lee:x.es'").fetchone())
         con.close()
+
+    def test_la_palabra_captcha_en_un_script_no_es_un_muro(self):
+        # 17/11/2026: el RE_ANTIBOT amplio de `volcar` pisaba al estricto y MediaMarkt salía como reto por la
+        # palabra "Captcha" de su código (con 13 productos en la página).
+        html = '<html><script>window.captchaConfig={enabled:false};var Captcha=1;</script><p>Cloudflare CDN</p></html>'
+        self.assertIsNone(v.RE_ANTIBOT.search(html))
+        self.assertIsNotNone(v.RE_ANTIBOT_PISTAS.search(html), "volcar sí lo enseña como pista")
+        self.assertIsNotNone(v.RE_ANTIBOT.search('<div class="cf-chl-widget">Just a moment...</div>'))
 
     def test_muro_antibot_en_el_listado(self):
         v.descargar = lambda url, timeout=20: ('<html><title>Just a moment...</title>'
