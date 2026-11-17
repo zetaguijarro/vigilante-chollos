@@ -74,8 +74,9 @@ Histórico: si el dossier trae "historico", úsalo y NO busques (solo comprueba 
 - Indica en "info" qué verificador usaste.
 
 Qué hacer con el histórico (tres salidas, sin zona gris):
-- **Hay histórico y es favorable:** el precio cumple el filtro de su categoría (apartado "Filtros"). Sigue.
-- **Hay histórico y marca precio habitual:** descarta siempre, aunque el descuento impreso sea enorme. Es lo que mira el soporte de Chollometro: 13 de 15 rechazos fueron por esto.
+- **El precio de ahora está por debajo del habitual en el porcentaje del filtro:** histórico favorable. Sigue. Ejemplo: ahora 30,00 € y habitual 39,99 € es un 25 % menos; en tecnología cumple SUBIENDO (20 %) y DESTACADOS (25 %). Que el histórico "tenga un precio habitual" no descarta nada: lo que cuenta es cuánto baja el precio de ahora respecto a él.
+- **El precio de ahora es el habitual o casi** (baja menos que el porcentaje del filtro): descarta siempre, aunque el descuento impreso por la tienda sea enorme. Ejemplo: ahora 21,99 € y habitual 21,99 € es un 0 %. Es lo que mira el soporte de Chollometro: 13 de 15 rechazos fueron por esto.
+- Cuenta siempre así: (habitual − ahora) / habitual. Escribe ese porcentaje en el motivo, pase o no pase.
 - **No hay histórico:** no descarta por sí solo, pero entonces hace falta una de estas dos pruebas: (a) el mismo modelo exacto, nuevo y comprable ahora en otra tienda española, confirmado leyendo esa tienda, más caro en el porcentaje del filtro; o (b) `hot`: ya fue chollo caliente en Chollometro a este precio o más. Sin ninguna de las dos: "descartado: sin prueba de ventaja".
 - Precio habitual = el que se mantuvo al menos 7 días antes de la bajada. La bajada tiene que tener 14 días o menos; un precio que lleva más tiempo igual ya es el habitual. Si el histórico no enseña fechas, vale su veredicto (mínimo o buen precio) junto a un precio anterior visible.
 - Un resultado de búsqueda o un precio antiguo no es una alternativa comprable confirmada.
