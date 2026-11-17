@@ -1922,7 +1922,10 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
 # Fuente: los hilos "Nuevos cupones AliExpress/Miravia" y las recopilaciones de Chollometro. Muchos van en
 # imagen: lo que no se pueda leer del texto se pone a mano con `cupon` (Zeta).
 TIENDAS_CUPONES = {"aliexpress": "aliexpress.com", "miravia": "miravia.es"}
-RE_HILO_CUPONES = re.compile(r"cup[oó]n", re.I)
+# Hilos que SON de cupones ("Cupones Miravia...", "Nuevos cupones...", "Recopilación cupones 11.11"), no ofertas de
+# un producto que mencionan un cupón ("Volante Logitech G29 ...; cupón 12D1109").
+RE_HILO_CUPONES = re.compile(r"^\W*(?:\[[^\]]*\]\s*)?(?:nuevos?\s+|todos los\s+|lista de\s+)?cup[oó]n(?:es)?\b"
+                             r"|recopila\w*[^.]{0,30}cup[oó]n|c[oó]digos? (?:de )?descuento", re.I)
 _E = r"(\d+(?:[.,]\d+)?)\s*(?:€|eur(?:os)?\b)"
 RE_CUPON_PAR = [  # (descuento, mínimo) en el orden en que aparecen
     re.compile(r"\$\s*(\d+(?:[.,]\d+)?)\s*/\s*\$\s*(\d+(?:[.,]\d+)?)"),                    # $7 / $50
@@ -2047,6 +2050,110 @@ def listar_cupones(con=None):
         print("Hilos de cupones en Chollometro (si van en imagen, ponlos con 'cupon'):")
         for i, t, ti in hilos[:8]:
             print(f"  {t}: {ti[:70]}  https://www.chollometro.com/ofertas/{i}")
+
+
+CUPONES_CM = {"miravia.es": "https://www.chollometro.com/cupones/miravia.es",
+              "aliexpress.com": "https://www.chollometro.com/cupones/es.aliexpress.com"}
+CUPONES_CADA_H = 6
+RE_VOUCHER = re.compile(r'"voucher":\{"idPool"')
+RE_CUPON_MINIMO = re.compile(r"(?:al menos|m[ií]nim[oa]s?(?: de compra)?(?: de)?|superiores? a|a partir de|desde)\s*"
+                             r"(\d+(?:[.,]\d+)?)\s*(?:€|eur)", re.I)
+RE_CUPON_NUEVOS = re.compile(r"nuevos? (?:clientes|usuarios|compradores)|primer pedido|primera compra|bienvenida", re.I)
+RE_CUPON_SELLO = re.compile(r"(?:etiqueta|sello|marcados? con|identificados? con)[^«\"]{0,20}[«\"]([^»\"]{2,40})[»\"]"
+                            r"|art[ií]culos del [«\"]([^»\"]{2,40})[»\"]", re.I)
+
+
+def cupones_de_pagina(html):
+    """Cupones de la página de cupones de una tienda en Chollometro (/cupones/<tienda>, 18/11/2026). Vienen en
+    los datos de la página, con su código aunque la web lo esconda tras "Ver cupón". Por cupón: código, descuento
+    (caption1: "9€" o "10%"), fecha de fin (endTime) y condiciones (termsAndConditions), de donde salen el mínimo
+    y el sello («MegaPROMO», «Festival de descuentos 11.11»). Fuera: sin código (son ofertas "hasta un 70 %"),
+    sin mínimo conocido, y los de clientes nuevos o primer pedido (Chollometro no admite cupones personales)."""
+    t = html.replace('\\"', '"')
+    marcas = [m.start() for m in RE_VOUCHER.finditer(t)]
+    salida, vistos = [], set()
+    for i, a in enumerate(marcas):
+        trozo = t[a:marcas[i + 1] if i + 1 < len(marcas) else a + 8000]
+        codigo = re.search(r'"encryptedAffiliateUrl":(?:"[^"]*"|null),"code":"([^"]{2,30})"', trozo)
+        cap = re.search(r'"caption1":"(\d+(?:[.,]\d+)?)\s*(€|%)"', trozo)
+        terms = re.search(r'"termsAndConditions":"((?:[^"\\]|\\.)*)"', trozo)
+        fin = re.search(r'"endTime":"(\d{4}-\d{2}-\d{2})', trozo)
+        titulo = re.search(r'"title":"((?:[^"\\]|\\.)*)"', trozo)
+        if not codigo or not cap:
+            continue
+        condiciones = unescape(terms.group(1)) if terms else ""
+        if RE_CUPON_NUEVOS.search(condiciones + " " + (titulo.group(1) if titulo else "")):
+            continue
+        minimo = RE_CUPON_MINIMO.search(condiciones)
+        if not minimo:
+            continue  # sin mínimo conocido no se sabe a qué precio aplica
+        sello = RE_CUPON_SELLO.search(condiciones)
+        c = {"codigo": codigo.group(1), "descuento": _num(cap.group(1)), "tipo": cap.group(2),
+             "minimo": _num(minimo.group(1)), "hasta": fin.group(1) if fin else None,
+             "sello": (sello.group(1) or sello.group(2)).strip() if sello else ""}
+        if c["codigo"] not in vistos and 0 < c["descuento"] and (c["tipo"] == "%" or c["descuento"] < c["minimo"]):
+            vistos.add(c["codigo"])
+            salida.append(c)
+    return salida
+
+
+def actualizar_cupones(con, forzar=False):
+    """Pone al día los cupones de Miravia y AliExpress desde sus páginas de Chollometro, como mucho cada 6 h.
+    Los de la página se guardan con hilo = 0 y se sustituyen enteros (uno retirado deja de valer); los puestos
+    a mano con `cupon` no se tocan. -> {tienda: número de cupones} de lo leído."""
+    fila = con.execute("SELECT v FROM meta WHERE k='cupones_ultimo'").fetchone()
+    if not forzar and fila and datetime.fromisoformat(fila[0]) > datetime.now() - timedelta(hours=CUPONES_CADA_H):
+        return {}
+    leidos = {}
+    for tienda, url in CUPONES_CM.items():
+        try:
+            html, _ = descargar(url)
+        except Exception as e:
+            log(f"cupones {tienda}: {str(e)[:80]}")
+            continue
+        lista = cupones_de_pagina(html)
+        con.execute("DELETE FROM cupones WHERE tienda=? AND hilo=0", (tienda,))
+        ahora = datetime.now().isoformat(timespec="minutes")
+        con.executemany("""INSERT OR REPLACE INTO cupones (tienda, codigo, descuento, tipo, minimo, hasta, sello, hilo, alta)
+                           VALUES (?,?,?,?,?,?,?,0,?)""",
+                        [(tienda, c["codigo"], c["descuento"], c["tipo"], c["minimo"], c["hasta"], c["sello"], ahora)
+                         for c in lista])
+        leidos[tienda] = len(lista)
+        time.sleep(1)
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('cupones_ultimo', ?)", (datetime.now().isoformat(timespec="minutes"),))
+    con.commit()
+    return leidos
+
+
+def aplicar_cupon(con, tienda, p, cupones=None):
+    """Mejor cupón de la tienda para este producto (18/11/2026). Si uno vale, el precio pasa a ser el final con
+    cupón (p["precio_sin_cupon"] guarda el de la tienda y p["cupon"] el texto). Los de sello (Miravia: «Festival
+    11.11», «MegaPROMO») solo si la tarjeta dice que el producto los admite (`cupon_elegible`); si no, se apunta
+    el mejor como p["cupon_posible"], que solo se enseña en el aviso. -> True si cambió el precio."""
+    cupones = cupones_activos(con, tienda) if cupones is None else cupones
+    precio, elegible = p["precio"], bool(p.get("cupon_elegible"))
+    mejor, posible = (precio, None), (precio, None)
+    for c in cupones:
+        if precio < (c["minimo"] or 0):
+            continue
+        final = round(precio - c["descuento"] if c["tipo"] == "€" else precio * (1 - c["descuento"] / 100), 2)
+        if c["sello"] and not elegible:
+            if final < posible[0]:
+                posible = (final, c)
+        elif final < mejor[0]:
+            mejor = (final, c)
+    if mejor[1]:
+        p["precio_sin_cupon"], p["precio"], p["cupon"] = precio, mejor[0], texto_cupon(mejor[1])
+        return True
+    if posible[1]:
+        p["cupon_posible"] = f"{texto_cupon(posible[1])}: {eur(posible[0])} si el producto entra"
+    return False
+
+
+def firma_cupones(con, tienda):
+    """Cambia cuando cambia el juego de cupones activos de la tienda (uno nuevo, otro retirado)."""
+    return "|".join(sorted(f"{c['codigo']}:{c['descuento']:g}{c['tipo']}/{c['minimo']:g}"
+                           for c in cupones_activos(con, tienda)))
 
 
 def chollometro_fresca(con):
@@ -3987,6 +4094,10 @@ def mensaje_candidato(n, p):
     if p.get("promo") and p.get("precio_suelto"):
         socio += (f" por unidad comprando {p.get('unidades', 2)} ({p['precio_suelto']:g} € la unidad suelta; "
                   f"{p['promo']})")
+    if p.get("cupon") and p.get("precio_sin_cupon"):
+        socio += f" con {p['cupon']} (sin cupón: {p['precio_sin_cupon']:g} €)"
+    elif p.get("cupon_posible"):
+        resenas += f"\nPosible cupón: {p['cupon_posible']}"
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
             f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'])}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
@@ -4599,6 +4710,8 @@ def decidir_item(item, cfg=None):
     p0, ahora = item.get("p"), ficha.get("precio_ahora")
     if ahora and item.get("ps") and p0:
         ahora = round(ahora * p0 / item["ps"], 2)  # multicompra: la ficha da la unidad suelta; se aplica la promoción
+    elif ahora and item.get("psc") and p0:
+        ahora = round(ahora * p0 / item["psc"], 2)  # cupón: la ficha da el precio sin cupón; se aplica el cupón
     if str(item.get("memoria", "")).startswith("dudosa"):
         return fin("descartado", f"ya descartado antes: {item['memoria']}")
     if not item.get("validada"):
@@ -4731,6 +4844,8 @@ def bloques_de_codigo(item, d):
     if suelto:
         precios = [f"{eur(precio)} por unidad comprando {uds} ({promo})",
                    f"Unidad suelta: {eur(suelto)}. Total por {uds}: {eur(round(precio * uds, 2))}."]
+    elif item.get("cup") and item.get("psc"):
+        precios = [f"{eur(precio)} con {item['cup']}", f"Sin cupón: {eur(item['psc'])}."]
     if h.get("habitual") and item.get("rt") == "mas_bajo" and h["habitual"] == item.get("a"):
         precios.append(f"Precio más bajo de los últimos 30 días: {eur(h['habitual'])} (según Amazon)")
     elif h.get("habitual"):
@@ -4808,7 +4923,8 @@ def bloques_de_codigo(item, d):
             "foto": ficha.get("foto") or item.get("img"), "etiqueta": d["etiqueta"],
             "redaccion": {"num": item["num"], "etiqueta": d["etiqueta"], "nombre": item.get("n"),
                           "tallas": [v.split(":")[0] for v in tallas[:15]], "specs": (ficha.get("specs") or [])[:15],
-                          "resumen": ficha.get("resumen"), "titulo_ficha": ficha.get("titulo")}}
+                          "resumen": ficha.get("resumen"), "titulo_ficha": ficha.get("titulo"),
+                          "cupon": item.get("cup")}}
 
 
 def plantilla_redaccion(r):
@@ -5299,7 +5415,7 @@ def compacto(p):
                  if p.get("_cm_hot") and p["_cm_hot"].get("precio") else None),
          "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None),
          "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades"),
-         "rt": p.get("ref_tienda"),
+         "rt": p.get("ref_tienda"), "cup": p.get("cupon"), "psc": p.get("precio_sin_cupon"),
          "mp": p.get("_mercado_propio"),
          "hab": (f"{p['_hist']['habitual']:g} € ({p['_hist']['fuente_corta']})"
                  if (p.get("_hist") or {}).get("fuente_corta") else None)}
@@ -5427,6 +5543,21 @@ def ronda(categoria, solo=None):
     # 1) Filtros gratis: novedad, marca, precio y descuento de la tienda.
     previos = []
     vigilar_sesiones(con, cfg, lecturas)
+    # Cupones de Miravia y AliExpress (18/11/2026): si cambia el juego de cupones de una tienda, sus productos se
+    # revisan aunque su precio no haya cambiado (es cuando salen los chollos).
+    cupones, cupones_nuevos = {}, set()
+    if f.get("cupones", True) and any(x[0] in CUPONES_CM and x[2] for x in lecturas):
+        try:
+            actualizar_cupones(con)
+        except Exception as e:
+            log(f"cupones: {str(e)[:100]}")
+        for t in {x[0] for x in lecturas if x[0] in CUPONES_CM}:
+            cupones[t] = cupones_activos(con, t)
+            firma = firma_cupones(con, t)
+            fila = con.execute("SELECT v FROM meta WHERE k=?", (f"cupones_firma:{t}",)).fetchone()
+            if firma and (not fila or fila[0] != firma):
+                cupones_nuevos.add(t)
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"cupones_firma:{t}", firma))
     for tienda, url_leida, productos, error in lecturas:
         estadistica(con, tienda, leidos=len(productos), errores=1 if error else 0)
         modo = "navegador" if tienda in navegador else "descarga"
@@ -5445,9 +5576,12 @@ def ronda(categoria, solo=None):
             if p.get("precio_unidad"):
                 # Multicompra: cuenta el precio por unidad comprando las que pide la promoción (mínimo, mercado...).
                 p["precio_suelto"], p["precio"] = p["precio"], p["precio_unidad"]
-            estado = novedad(con, tienda, p)
+            estado = novedad(con, tienda, p)  # el historial guarda el precio de la tienda, sin cupón
             if sembrada and not estado and vuelve_oferta_caducada(con, p):
                 estado = "vuelve"
+            if tienda in cupones and aplicar_cupon(con, tienda, p, cupones[tienda]) and not estado \
+                    and tienda in cupones_nuevos:
+                estado = "cupón"
             if not sembrada or not estado:
                 continue  # primera lectura de la tienda: solo memoriza
             n_cambios += 1

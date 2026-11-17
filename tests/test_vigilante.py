@@ -248,9 +248,76 @@ class Cupones(unittest.TestCase):
             {"id": 3, "titulo": "Zapatillas adidas", "precio": 30, "tienda": "Miravia", "host": "miravia.es",
              "temp": 10, "publicado": ahora, "caducado": 0},
             {"id": 4, "titulo": "Cupón 10 % en Zalando", "precio": None, "tienda": "Zalando", "host": "zalando.es",
-             "temp": 10, "publicado": ahora, "caducado": 0}])
+             "temp": 10, "publicado": ahora, "caducado": 0},
+            {"id": 5, "titulo": "Volante Logitech G29 con tres pedales; cupón 12D1109", "precio": 159, "tienda": "Miravia",
+             "host": "miravia.es", "temp": 300, "publicado": ahora, "caducado": 0}])
         self.assertEqual(sorted((i, t) for i, t, _ in v.hilos_de_cupones(self.con)),
-                         [(1, "miravia.es"), (2, "aliexpress.com")])
+                         [(1, "miravia.es"), (2, "aliexpress.com")], "una oferta que menciona un cupón no es un hilo de cupones")
+
+    @staticmethod
+    def voucher(codigo, caption, terms, fin="2026-11-19T08:59:00.000Z", titulo="Cupón"):
+        return ('{\\"voucher\\":{\\"idPool\\":\\"x\\",\\"title\\":\\"%s\\",\\"caption1\\":\\"%s\\",\\"endTime\\":\\"%s\\",'
+                '\\"encryptedAffiliateUrl\\":\\"abc\\",\\"code\\":%s,\\"description\\":null,'
+                '\\"termsAndConditions\\":\\"%s\\"}}' % (titulo, caption, fin,
+                                                         '\\"%s\\"' % codigo if codigo else "null", terms))
+
+    def test_pagina_de_cupones_de_chollometro(self):
+        # /cupones/<tienda> (18/11/2026): el código va en los datos aunque la web lo esconda tras "Ver cupón".
+        html = "".join([
+            self.voucher("AEES12", "12€", "AliExpress ofrece una promoción para pedidos a España, con un gasto mínimo de 69€."),
+            self.voucher("ESD1112", "12€", "Cupón aplicable en compras mínimas de 69€, para pedidos enviados a España."),
+            self.voucher("04D1102", "4€", "Código aplicable a compras de al menos 35€ en artículos del «Festival de descuentos 11.11»."),
+            self.voucher("4D1102", "4€", "Para compras de al menos 49€ en artículos identificados con la etiqueta «MegaPROMO»."),
+            self.voucher(None, "70%", "Ofertas del día con hasta un 70%."),                       # sin código: es una oferta
+            self.voucher("BIENV15", "15€", "Descuento de bienvenida para nuevos clientes, mínimo de compra de 30€."),
+            self.voucher("SINMIN", "5€", "Sujeto a disponibilidad.")])                            # sin mínimo conocido
+        cs = v.cupones_de_pagina(html)
+        self.assertEqual([(c["codigo"], c["descuento"], c["tipo"], c["minimo"], c["sello"], c["hasta"]) for c in cs], [
+            ("AEES12", 12, "€", 69, "", "2026-11-19"), ("ESD1112", 12, "€", 69, "", "2026-11-19"),
+            ("04D1102", 4, "€", 35, "Festival de descuentos 11.11", "2026-11-19"),
+            ("4D1102", 4, "€", 49, "MegaPROMO", "2026-11-19")])
+
+    def test_aplicar_cupon_y_posible(self):
+        v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 12, "tipo": "€", "minimo": 69, "codigo": "AEES12"},
+                                                       {"descuento": 3, "tipo": "€", "minimo": 18, "codigo": "ESD1103"}])
+        v.guardar_cupones(self.con, "miravia.es", [{"descuento": 7, "tipo": "€", "minimo": 49, "codigo": "07D1102b"}],
+                          sello="Festival de descuentos 11.11")
+        p = {"precio": 80.0}
+        self.assertTrue(v.aplicar_cupon(self.con, "aliexpress.com", p))
+        self.assertEqual((p["precio"], p["precio_sin_cupon"]), (68.0, 80.0))
+        self.assertEqual(p["cupon"], "cupón de 12 € desde 69 € con el código AEES12")
+        p = {"precio": 50.0}
+        self.assertTrue(v.aplicar_cupon(self.con, "aliexpress.com", p))
+        self.assertEqual(p["precio"], 47.0, "el de 12 € no llega al mínimo: el de 3 €")
+        # Miravia: los de sello no bajan el precio si la tarjeta no dice que el producto entra; se avisa como posible.
+        p = {"precio": 60.0}
+        self.assertFalse(v.aplicar_cupon(self.con, "miravia.es", p))
+        self.assertEqual(p["precio"], 60.0)
+        self.assertIn("07D1102b", p["cupon_posible"])
+        p = {"precio": 60.0, "cupon_elegible": True}
+        self.assertTrue(v.aplicar_cupon(self.con, "miravia.es", p))
+        self.assertEqual(p["precio"], 53.0)
+        # Un cupón nuevo cambia la firma de la tienda (la ronda revisa sus productos aunque no cambie el precio).
+        antes = v.firma_cupones(self.con, "aliexpress.com")
+        v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 23, "tipo": "€", "minimo": 135, "codigo": "ESD1123"}])
+        self.assertNotEqual(antes, v.firma_cupones(self.con, "aliexpress.com"))
+
+    def test_actualizar_cupones_sustituye_los_de_la_pagina(self):
+        paginas = {"miravia": self.voucher("04D1102", "4€", "Compras de al menos 35€ en artículos del «Festival».")}
+        paginas["aliexpress"] = self.voucher("AEES12", "12€", "Gasto mínimo de 69€.")
+        orig_d, orig_s = v.descargar, v.time.sleep
+        v.descargar = lambda url, **k: (paginas["miravia" if "miravia" in url else "aliexpress"], url)
+        v.time.sleep = lambda s: None
+        try:
+            v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 5, "tipo": "€", "minimo": 40, "codigo": "AMANO5"}])
+            self.assertEqual(v.actualizar_cupones(self.con), {"miravia.es": 1, "aliexpress.com": 1})
+            self.assertEqual(v.actualizar_cupones(self.con), {}, "como mucho cada 6 h")
+            paginas["aliexpress"] = self.voucher("ESD1123", "23€", "Gasto mínimo de 135€.")
+            v.actualizar_cupones(self.con, forzar=True)
+            codigos = sorted(c["codigo"] for c in v.cupones_activos(self.con, "aliexpress.com"))
+            self.assertEqual(codigos, ["AMANO5", "ESD1123"], "el retirado sale; el puesto a mano se queda")
+        finally:
+            v.descargar, v.time.sleep = orig_d, orig_s
 
     def test_comando_cupon_a_mano(self):
         with redirect_stdout(io.StringIO()) as buf:

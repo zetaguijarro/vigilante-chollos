@@ -11,7 +11,7 @@ PY = C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3
 V = C:\Users\Zeus\proyectos\vigilante-chollos\src\vigilante.py
 
 ## 1. Datos
-Ejecuta `PY V redaccion N`. Devuelve una línea JSON con: `nombre`, `etiqueta`, `tallas`, `specs`, `resumen` y `titulo_ficha`.
+Ejecuta `PY V redaccion N`. Devuelve una línea JSON con: `nombre`, `etiqueta`, `tallas`, `specs`, `resumen`, `titulo_ficha` y `cupon` (texto del cupón que hace falta para el precio, o null).
 
 Si devuelve `error`, responde "#N: no hay decisión guardada" y para.
 
@@ -22,6 +22,7 @@ Escribe C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8,
   - Ropa y calzado: todas las tallas de `tallas` y su variante (color). Rango ("36 a 40") solo si están todas las intermedias; si hay huecos, enuméralas ("36, 37⅓, 38 y 40"). Si no caben en 140 caracteres, no las acortes ni las conviertas en rango: responde "#N espera: no caben las tallas en el título" y para.
   - Videojuegos: nombre completo, edición y plataforma. No pongas "digital"; el formato físico sí se indica.
   - Viajes: fechas y duración.
+  - Si `cupon` no es null, el código hace falta para el precio: termina el título con "con cupón CÓDIGO" (el código que aparece en `cupon`). Es la única excepción a "sin código alfanumérico".
 - "descripcion": solo producto, en bloques. Cada bloque empieza con un encabezado con un emoji y el texto entre dobles asteriscos (el script lo convierte en negrita real), pegado a sus viñetas "• ". Una línea en blanco entre bloques. Pocos emojis, solo en los encabezados. Ejemplo:
 
   🧥 **Diseño y materiales**
