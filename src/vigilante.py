@@ -700,6 +700,41 @@ def productos_aliexpress(html):
         if "Elegible con cupones" in m:
             p["cupon_elegible"] = True
         salida.append(p)
+    return salida or productos_aliexpress_busqueda(html)
+
+
+RE_ALI_BUSQ_ID = re.compile(r'"productId":"(\d{8,20})"')
+
+
+def productos_aliexpress_busqueda(html):
+    """Búsquedas de AliExpress (/w/wholesale-<palabras>.html, 17/11/2026): otro formato de datos. Por producto:
+    productId, title.displayTitle, prices.salePrice (minPrice en euros y "discount" en %; el original no
+    viene, se calcula con el descuento), evaluation.starRating (sobre 5) y trade.tradeDesc ("800+ vendidos")."""
+    salida, vistos = [], set()
+    marcas = list(RE_ALI_BUSQ_ID.finditer(html))
+    for i, m in enumerate(marcas):
+        item = m.group(1)
+        trozo = html[m.end():marcas[i + 1].start() if i + 1 < len(marcas) else m.end() + 8000][:8000]
+        titulo = re.search(r'"displayTitle":"((?:[^"\\]|\\.)*)"', trozo)
+        venta = re.search(r'"salePrice":\{([^{}]*)\}', trozo)
+        if item in vistos or not titulo or not venta or '"currencyCode":"EUR"' not in venta.group(1):
+            continue
+        precio = re.search(r'"minPrice":([\d.]+)', venta.group(1))
+        if not precio:
+            continue
+        precio = float(precio.group(1))
+        dto = re.search(r'"discount":(\d+)', venta.group(1))
+        antes = round(precio / (1 - int(dto.group(1)) / 100), 2) if dto and 0 < int(dto.group(1)) < 95 else None
+        estrellas = re.search(r'"starRating":"?([\d.]+)', trozo)
+        try:
+            nombre = json.loads(f'"{titulo.group(1)}"')
+        except ValueError:
+            nombre = titulo.group(1)
+        vistos.add(item)
+        salida.append({"nombre": " ".join(nombre.split()), "precio": round(precio, 2),
+                       "precio_antes": antes if antes and antes > precio else None, "marca": None, "ean": None,
+                       "url": f"https://es.aliexpress.com/item/{item}.html", "imagen_url": None,
+                       "valoracion": round(float(estrellas.group(1)) * 20) if estrellas else None, "resenas": None})
     return salida
 
 
@@ -3122,6 +3157,76 @@ def ofertas_extra_turno(con, cfg, urls, tiendas):
     return salida
 
 
+def tasas_familia_tienda(con, tienda, grados=200, min_hilos=8, horas=6):
+    """{familia: tasa} de hilos de esa tienda en la copia de Chollometro que llegan a `grados`, más "_media"
+    (la de toda la tienda). Una familia con menos de `min_hilos` hilos se queda fuera (cuenta la media).
+    Caché de 6 h en meta."""
+    clave = f"tasas_familia:{tienda}"
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+    if fila:
+        try:
+            g = json.loads(fila[0])
+            if datetime.fromisoformat(g["t"]) > datetime.now() - timedelta(hours=horas):
+                return g["p"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    nombre = raiz(tienda)
+    filas = con.execute("SELECT titulo, temp FROM cm WHERE host LIKE ? OR lower(tienda) LIKE ?",
+                        (f"%{nombre}%", f"%{nombre}%")).fetchall()
+    total, hot = Counter(), Counter()
+    for titulo, temp in filas:
+        fam = familia_de(titulo)
+        caliente = (temp or 0) >= grados
+        total["_media"] += 1
+        hot["_media"] += caliente
+        if fam:
+            total[fam] += 1
+            hot[fam] += caliente
+    tasas = {f: round(hot[f] / n, 3) for f, n in total.items() if n >= min_hilos or f == "_media"}
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                (clave, json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": tasas})))
+    return tasas
+
+
+def busquedas_turno(con, cfg, tiendas):
+    """[(tienda, url)] de las búsquedas por familia que tocan en esta ronda (Miravia y AliExpress, 17/11/2026:
+    "por categorías que más grados dan en Chollometro", 4 por ronda). Cada tienda tiene en tiendas.json
+    (`busquedas_familia`) sus consultas agrupadas por familia; salen por turnos y la familia con más hilos a
+    200° en esa tienda sale más a menudo: cada consulta avanza 1/tasa cada vez que se lee y se eligen las
+    `por_ronda` más atrasadas. Como mucho cada `cada_min` por tienda."""
+    b = (cfg or {}).get("busquedas_familia") or {}
+    por_ronda, cada = int(b.get("por_ronda", 4)), int(b.get("cada_min", 15))
+    ahora, salida = datetime.now(), []
+    for tienda, d in (b.get("tiendas") or {}).items():
+        consultas = [(fam, q) for fam, qs in (d.get("consultas") or {}).items() for q in qs]
+        if tienda not in tiendas or not consultas or not d.get("url"):
+            continue
+        fila = con.execute("SELECT v FROM meta WHERE k=?", (f"busq_ultimo:{tienda}",)).fetchone()
+        if fila and datetime.fromisoformat(fila[0]) > ahora - timedelta(minutes=cada):
+            continue
+        tasas = tasas_familia_tienda(con, tienda, (cfg.get("filtros_codigo") or {}).get("peso_grados", 200))
+        media = tasas.get("_media") or 0.5
+        fila = con.execute("SELECT v FROM meta WHERE k=?", (f"busq_pase:{tienda}",)).fetchone()
+        try:
+            pase = json.loads(fila[0]) if fila else {}
+        except ValueError:
+            pase = {}
+        base = min((pase[q] for _, q in consultas if q in pase), default=0.0)
+        for _, q in consultas:  # una consulta nueva entra al nivel de la más atrasada, sin adelantar a todas
+            pase.setdefault(q, base)
+        orden = sorted(range(len(consultas)), key=lambda i: (pase[consultas[i][1]], i))
+        for i in orden[:por_ronda]:
+            fam, q = consultas[i]
+            pase[q] += 1 / max(0.05, tasas.get(fam, media))
+            texto = q.strip().lower().replace(" ", d.get("espacio", "+"))
+            salida.append((tienda, d["url"].format(q=quote(texto, safe="-+"))))
+        pase = {q: round(pase[q], 3) for _, q in consultas if q in pase}  # sin consultas que ya no están
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"busq_pase:{tienda}", json.dumps(pase)))
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"busq_ultimo:{tienda}", ahora.isoformat(timespec="minutes")))
+    con.commit()
+    return salida
+
+
 def catalogo(*nombres):
     """Saca de la portada de cada tienda sus categorías normales y las guarda en urls_catalogo.json.
     nombres: categorías del vigilante o tiendas (vacío: todas). Respeta robots.txt (no lee lo prohibido)."""
@@ -4934,7 +5039,7 @@ def ronda(categoria, solo=None):
     sin_demanda = con_pausa - set(tiendas) - set(navegador)
     if refrescar_extras(con, cfg, categoria, solo, set(tiendas) | set(navegador)):
         urls = urls_ofertas()
-    extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador)
+    extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador) + busquedas_turno(con, cfg, navegador)
     turno = catalogo_turno(con, cfg, tiendas + navegador) + extras
     todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
     if rec:
@@ -4946,8 +5051,11 @@ def ronda(categoria, solo=None):
             recorrido(f"    sin demanda en Chollometro, no se leen: {', '.join(sorted(sin_demanda))}")
     de_catalogo = set(turno)
     lecturas = [x for x in todas if (x[0], x[1]) not in de_catalogo]
-    registrar_fallos(con, lecturas, {t: int(cfg["navegador_normal"].get("pausa_min", 30))
-                                     for t in tiendas_navegador_normal(cfg)})
+    fijas = {t: int(cfg["navegador_normal"].get("pausa_min", 30)) for t in tiendas_navegador_normal(cfg)}
+    # Un reto en una búsqueda de Miravia o AliExpress también para la tienda sus 30 min.
+    retos = [x for x in todas if (x[0], x[1]) in de_catalogo and x[0] in fijas and x[3]
+             and re.search(r"reto|antibot|captcha", x[3], re.I)]
+    registrar_fallos(con, lecturas + list({x[0]: x for x in retos}.values()), fijas)
     anotar_vacias(con, cfg, lecturas, set(tiendas))
     for tienda, url_cat, productos, error in todas:
         if (tienda, url_cat) in de_catalogo:

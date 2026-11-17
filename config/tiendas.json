@@ -153,6 +153,105 @@
   "_nota_siempre_leer": "Tiendas del ranking de Chollometro del 10 al 14/11/2026 (hilos que llegan a 200 grados; ver docs/SPEC.md, apartado 3). Se leen aunque la copia local no les cuente demanda.",
   "descuento_real_min": 0.2
  },
+ "busquedas_familia": {
+  "por_ronda": 4,
+  "cada_min": 15,
+  "_nota": "Búsquedas por familia en Miravia y AliExpress (Zeta, 17/11/2026: por las categorías que más grados dan en Chollometro, 4 por ronda). Salen por turnos; la familia con más hilos a 200° en esa tienda (copia local de Chollometro) sale más a menudo. Se leen con el Chrome normal, 1 página cada una. Las consultas se cambian aquí.",
+  "tiendas": {
+   "aliexpress.com": {
+    "url": "https://es.aliexpress.com/w/wholesale-{q}.html",
+    "espacio": "-",
+    "consultas": {
+     "consolas": [
+      "ps5",
+      "nintendo switch 2",
+      "xbox series",
+      "consola retro portatil"
+     ],
+     "televisores": [
+      "smart tv",
+      "proyector"
+     ],
+     "relojes": [
+      "smartwatch",
+      "garmin",
+      "amazfit"
+     ],
+     "muebles": [
+      "silla gaming",
+      "escritorio elevable"
+     ],
+     "componentes": [
+      "ssd nvme",
+      "memoria ram ddr5",
+      "tarjeta grafica"
+     ],
+     "portatiles": [
+      "portatil",
+      "mini pc"
+     ],
+     "moviles": [
+      "xiaomi",
+      "samsung galaxy",
+      "poco"
+     ],
+     "tablets": [
+      "tablet"
+     ],
+     "herramientas": [
+      "taladro",
+      "destornillador electrico"
+     ],
+     "audio": [
+      "auriculares bluetooth"
+     ],
+     "aspiracion": [
+      "robot aspirador"
+     ]
+    }
+   },
+   "miravia.es": {
+    "url": "https://www.miravia.es/catalog/?q={q}",
+    "espacio": "+",
+    "consultas": {
+     "aspiracion": [
+      "robot aspirador",
+      "aspiradora escoba"
+     ],
+     "gran_electro": [
+      "lavadora",
+      "frigorifico",
+      "lavavajillas"
+     ],
+     "bebidas": [
+      "cerveza",
+      "capsulas cafe"
+     ],
+     "lego": [
+      "lego"
+     ],
+     "consolas": [
+      "ps5",
+      "nintendo switch"
+     ],
+     "relojes": [
+      "smartwatch"
+     ],
+     "higiene": [
+      "pañales",
+      "detergente"
+     ],
+     "cocina_pequena": [
+      "freidora de aire",
+      "cafetera"
+     ],
+     "moviles": [
+      "smartphone"
+     ]
+    }
+   }
+  }
+ },
  "navegador_normal": {
   "tiendas": ["miravia.es", "aliexpress.com"],
   "paginas": 1,

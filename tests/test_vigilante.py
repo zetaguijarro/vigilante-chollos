@@ -3636,6 +3636,42 @@ class MiraviaAliExpress(Base):
         self.assertEqual([(t, p) for t, _, p in normal], [("miravia.es", 1)])
         self.assertEqual(sorted(r[0] for r in res), ["coolmod.com", "miravia.es"])
 
+    def test_busqueda_de_aliexpress(self):
+        html = ('{"productId":"1005011741324622","title":{"displayTitle":"Consola PS5 Chassis E Digital"},'
+                '"prices":{"salePrice":{"discount":20,"currencyCode":"EUR","minPrice":400.0,"cent":40000}},'
+                '"evaluation":{"starRating":4.5},"trade":{"tradeDesc":"800+ vendidos"}}'
+                '{"productId":"1005000000000001","title":{"displayTitle":"Funda"},'
+                '"prices":{"salePrice":{"currencyCode":"EUR","minPrice":3.5}}}')
+        ps = v.extraer(html, "https://es.aliexpress.com/w/wholesale-ps5.html")
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"], p["valoracion"]) for p in ps],
+                         [("Consola PS5 Chassis E Digital", 400.0, 500.0, 90), ("Funda", 3.5, None, None)])
+        self.assertEqual(ps[0]["url"], "https://es.aliexpress.com/item/1005011741324622.html")
+
+    def test_busquedas_por_familia_por_turnos_y_por_grados(self):
+        con = v.bd()
+        # Copia de Chollometro: en esta tienda las consolas llegan a 200° siempre; los taladros, 1 de cada 4.
+        filas = [(i, f"PS5 Slim {i}", 400, "AliExpress", "es.aliexpress.com", 500, 0, 0, "") for i in range(8)]
+        filas += [(100 + i, f"Taladro {i}", 40, "AliExpress", "es.aliexpress.com", 300 if i % 4 == 0 else 50, 0, 0, "")
+                  for i in range(8)]
+        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        cfg = {"busquedas_familia": {"por_ronda": 2, "cada_min": 15, "tiendas": {"aliexpress.com": {
+            "url": "https://es.aliexpress.com/w/wholesale-{q}.html", "espacio": "-",
+            "consultas": {"consolas": ["ps5", "switch 2"], "herramientas": ["taladro", "sierra"]}}}}}
+        primera = v.busquedas_turno(con, cfg, ["aliexpress.com"])
+        self.assertEqual([u for _, u in primera], ["https://es.aliexpress.com/w/wholesale-ps5.html",
+                                                   "https://es.aliexpress.com/w/wholesale-switch-2.html"])
+        self.assertEqual(v.busquedas_turno(con, cfg, ["aliexpress.com"]), [], "cada 15 min como mucho")
+        self.assertEqual(v.busquedas_turno(con, cfg, ["miravia.es"]), [], "solo tiendas de esta ronda")
+        cuenta = Counter(u for _, u in primera)
+        for _ in range(11):
+            con.execute("DELETE FROM meta WHERE k LIKE 'busq_ultimo:%'")
+            cuenta.update(u for _, u in v.busquedas_turno(con, cfg, ["aliexpress.com"]))
+        ps5, taladro = cuenta["https://es.aliexpress.com/w/wholesale-ps5.html"], \
+            cuenta["https://es.aliexpress.com/w/wholesale-taladro.html"]
+        self.assertGreater(taladro, 0, "ninguna se queda sin leer")
+        self.assertGreaterEqual(ps5, 3 * taladro, (ps5, taladro))
+        con.close()
+
     def test_redireccion_a_reto_falla(self):
         class Falso(v.Navegador):
             def leer(self, url, completo=False):
