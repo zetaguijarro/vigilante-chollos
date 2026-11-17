@@ -176,6 +176,21 @@ class ComparaPropio(unittest.TestCase):
             f = (self.ahora - timedelta(days=dias)).isoformat(timespec="minutes")
             self.con.execute("INSERT INTO precios VALUES (?,?,?)", (clave, f, precio))
 
+    def test_enlaces_canonicos(self):
+        # Amazon mete el puesto en la lista y la sesión en el enlace: sin esto, cada lectura era un producto nuevo.
+        for url in ("https://www.amazon.es/Xiaomi-Redmi-Buds-Pro/dp/B0CXYZ1234/ref=zg_bs_g_electronics_d_sccl_3/261-1234567?psc=1",
+                    "https://www.amazon.es/dp/b0cxyz1234?th=1",
+                    "https://www.amazon.es/gp/product/B0CXYZ1234/ref=ox_sc_act_title_1"):
+            self.assertEqual(v.url_canonica(url), "https://www.amazon.es/dp/B0CXYZ1234", url)
+        self.assertEqual(v.asin_de("https://www.amazon.es/x/dp/B0CXYZ1234/ref=a"), "B0CXYZ1234")
+        self.assertEqual(v.url_canonica("https://es.aliexpress.com/item/1005006123456789.html?spm=a2g0o&algo_pvid=x"),
+                         "https://es.aliexpress.com/item/1005006123456789.html")
+        otra = "https://www.mediamarkt.es/es/product/_xiaomi-123.html?utm_source=x"
+        self.assertEqual(v.url_canonica(otra), otra, "las demás tiendas no cambian: su historial sigue igual")
+        self.assertIsNone(v.url_canonica(None))
+        self.assertEqual(v.url_canonica("https://www.amazon.es/gp/bestsellers/electronics"),
+                         "https://www.amazon.es/gp/bestsellers/electronics")
+
     def test_habitual_propio(self):
         h = lambda c: v.habitual_propio(self.con, c, self.ahora.isoformat(timespec="minutes"))
         # 49,99 € durante 20 días, un pico de un día a 69,99 €, y ahora 34,99 € desde hace 2 días.

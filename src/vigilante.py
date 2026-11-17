@@ -1026,6 +1026,36 @@ def bd():
 ERROR_PRECIO = 0.40
 
 
+RE_ASIN = re.compile(r"/(?:dp|gp/product|gp/aw/d|exec/obidos/ASIN)/([A-Z0-9]{10})(?=[/?#]|$)", re.I)
+RE_ALI_ITEM = re.compile(r"/item/(\d{8,20})\.html", re.I)
+
+
+def url_canonica(url):
+    """El mismo producto siempre con el mismo enlace. Amazon pone en el enlace el puesto en la lista
+    ("/ref=zg_bs_electronics_3") y parámetros de sesión: cada lectura daba un enlace distinto, así que el
+    producto contaba como nuevo cada vez y nunca acumulaba historial (17/11/2026). Amazon -> /dp/ASIN;
+    AliExpress -> /item/<id>.html sin parámetros. El resto, tal cual."""
+    if not url:
+        return url
+    u = urlparse(url)
+    host = (u.hostname or "").lower()
+    if "amazon." in host:
+        m = RE_ASIN.search(u.path)
+        if m:
+            return f"https://{host}/dp/{m.group(1).upper()}"
+    elif "aliexpress." in host:
+        m = RE_ALI_ITEM.search(u.path)
+        if m:
+            return f"https://{host}/item/{m.group(1)}.html"
+    return url
+
+
+def asin_de(url):
+    """El código ASIN de un enlace de Amazon, o None."""
+    m = RE_ASIN.search(urlparse(url or "").path)
+    return m.group(1).upper() if m else None
+
+
 def clave_vista(tienda, p):
     """Clave de un producto en vistos, productos y precios: tienda + enlace (o el nombre si no hay enlace)."""
     return f"{tienda}|{p.get('url') or p['nombre'].lower()}"
@@ -4779,6 +4809,7 @@ def ronda(categoria, solo=None):
         pagina = f"{tienda}|{url_leida}"
         sembrada = con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
         for p in productos:
+            p["url"] = url_canonica(p.get("url"))
             if p.get("precio_unidad"):
                 # Multicompra: cuenta el precio por unidad comprando las que pide la promoción (mínimo, mercado...).
                 p["precio_suelto"], p["precio"] = p["precio"], p["precio_unidad"]
