@@ -297,6 +297,25 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertEqual(len(self.portada(pedidas)), 6)
         self.assertIn("fin del historial", buf.getvalue())
 
+    def test_subiendo_para_cuando_repite_la_pagina_1(self):
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "nuevos" in url:
+                return cm_html([hilo("viejo", "Amazon", 5, dias=5)]), url
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            n = 1 if n > 4 else n  # pasado el final, Chollometro devuelve la página 1
+            # Subiendo no va ordenado por fecha: la página 3 trae hilos más nuevos que la 2 y no debe parar
+            return cm_html([hilo(f"sube {n}-{i}", "Amazon", 10 + i, temp=150, dias=[0, 9, 2, 20][n - 1]) for i in range(3)]), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()) as buf:
+            v.precargar_chollometro(1, 50, listado="subiendo")
+        portada = self.portada(pedidas)
+        self.assertTrue(all("/subiendo" in u for u in portada))
+        self.assertEqual(len(portada), 5)
+        self.assertIn("fin del historial", buf.getvalue())
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()

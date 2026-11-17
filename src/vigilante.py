@@ -24,6 +24,7 @@ Solo usa la librería estándar de Python: no hay que instalar nada.
 import gzip
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -1829,6 +1830,7 @@ def precioreal_red(p):
 
 CM_NUEVOS = "https://www.chollometro.com/nuevos"
 CM_PORTADA = "https://www.chollometro.com/"
+CM_LISTADOS = {"destacados": CM_PORTADA, "subiendo": CM_PORTADA + "subiendo"}  # pestañas de Chollometro
 CM_REFRESCO_MIN = 4      # como mucho una actualización cada 4 minutos
 CM_FRESCA_MIN = 30       # sin actualizar en 30 min, "no publicado" pasa a "sin comprobar"
 CM_RECIENTE_DIAS = 30    # un post de hace más de 30 días y caducado ya no es duplicado
@@ -2570,17 +2572,19 @@ def avisos_recientes(con, horas=24):
     return salida
 
 
-def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None):
+def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None, listado="destacados"):
     """Primera carga: /nuevos de los últimos días (duplicados) y la portada hacia atrás (lo que se
     calentó, ~1 día por página). Educada: una página cada `pausa` segundos.
     desde (fecha 'AAAA-MM-DD'): la portada para al llegar ahí. También para si una página no va más atrás
-    que la anterior (pasado el final, Chollometro puede devolver otra vez lo de hoy)."""
+    que la anterior (pasado el final, Chollometro puede devolver otra vez lo de hoy) o repite la página 1.
+    listado: "destacados" (portada) o "subiendo" (CM_LISTADOS). La pausa varía un ±20 % entre páginas."""
+    portada = CM_LISTADOS.get(listado, listado)
     con = bd()
     tope = datetime.fromisoformat(desde).timestamp() if desde else 0
     limite = (datetime.now() - timedelta(days=dias_nuevos)).timestamp()
     total = 0
-    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (CM_PORTADA, paginas_portada, tope)):
-        n, anterior = 0, None
+    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (portada, paginas_portada, tope)):
+        n, anterior, primera = 0, None, None
         for n in range(1, paginas + 1):
             try:
                 html, _ = descargar(_pagina(base, n))
@@ -2591,17 +2595,20 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
             if not hilos:
                 break
             viejo = min(h["publicado"] for h in hilos)
-            if base == CM_PORTADA and anterior is not None and viejo >= anterior + 86400:
-                print(f"  la página {n} vuelve a fechas recientes: fin del historial")
+            ids = sorted(h["id"] for h in hilos)
+            primera = primera or ids
+            if base == portada and n > 1 and (ids == primera or (listado == "destacados" and anterior is not None
+                                                                   and viejo >= anterior + 86400)):
+                print(f"  la página {n} vuelve a lo de hoy: fin del historial")
                 break
             guardar_hilos(con, hilos)
             total += len(hilos)
             anterior = min(viejo, anterior) if anterior is not None else viejo
             if viejo < hasta:
                 break
-            if base == CM_PORTADA and n % 50 == 0:
-                print(f"  portada página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}")
-            time.sleep(pausa)
+            if base == portada and n % 50 == 0:
+                print(f"  {listado} página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}")
+            time.sleep(pausa * random.uniform(0.8, 1.2) if base == portada else pausa)
         print(f"{base}: hasta la página {n}, {total} posts guardados")
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (datetime.now().isoformat(timespec="minutes"),))
     con.commit()
@@ -6071,7 +6078,8 @@ if __name__ == "__main__":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:
         precargar_chollometro(*(int(a) for a in args[1:3]), desde=args[3] if len(args) > 3 else None,
-                              pausa=float(args[4]) if len(args) > 4 else 1.5)
+                              pausa=float(args[4]) if len(args) > 4 else 1.5,
+                              listado=args[5] if len(args) > 5 else "destacados")
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:
