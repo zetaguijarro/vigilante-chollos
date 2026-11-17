@@ -2572,13 +2572,22 @@ def avisos_recientes(con, horas=24):
     return salida
 
 
-def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None, listado="destacados", inicio=1):
+def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None, listado="destacados", inicio=1,
+                          hasta_hora=None):
     """Primera carga: /nuevos de los últimos días (duplicados) y la portada hacia atrás (lo que se
     calentó, ~1 día por página). Educada: una página cada `pausa` segundos.
     desde (fecha 'AAAA-MM-DD'): la portada para al llegar ahí. También para si una página no va más atrás
     que la anterior (pasado el final, Chollometro puede devolver otra vez lo de hoy) o repite la página 1.
     listado: "destacados" (portada) o "subiendo" (CM_LISTADOS). La pausa varía un ±20 % entre páginas.
-    inicio: página del listado por la que empezar (para repartir una carga larga en varias noches)."""
+    inicio: página del listado por la que empezar (para repartir una carga larga en varias noches).
+    hasta_hora ("HH:MM"): para al llegar a esa hora (la de hoy o, si ya pasó, la de mañana) y dice por qué
+    página seguir."""
+    fin = None
+    if hasta_hora:
+        hh, mm = map(int, hasta_hora.split(":"))
+        fin = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if fin <= datetime.now():
+            fin += timedelta(days=1)
     portada = CM_LISTADOS.get(listado, listado)
     con = bd()
     tope = datetime.fromisoformat(desde).timestamp() if desde else 0
@@ -2587,6 +2596,9 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
     for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (portada, paginas_portada, tope)):
         n, anterior, primera = 0, None, None
         for n in (range(inicio, inicio + paginas) if base == portada else range(1, paginas + 1)):
+            if base == portada and fin and datetime.now() >= fin:
+                print(f"  son las {hasta_hora}: paro. Para seguir otra noche, página de inicio {n}")
+                break
             try:
                 html, _ = descargar(_pagina(base, n))
             except Exception as e:
@@ -6078,7 +6090,9 @@ if __name__ == "__main__":
     elif len(args) >= 3 and args[0] == "recordar":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:
-        precargar_chollometro(*(int(a) for a in args[1:3]), desde=args[3] if len(args) > 3 else None,
+        hora = next((x for x in args if re.fullmatch(r"\d{1,2}:\d{2}", x)), None)
+        args = [x for x in args if x != hora]
+        precargar_chollometro(*(int(a) for a in args[1:3]), hasta_hora=hora, desde=args[3] if len(args) > 3 else None,
                               pausa=float(args[4]) if len(args) > 4 else 1.5,
                               listado=args[5] if len(args) > 5 else "destacados",
                               inicio=int(args[6]) if len(args) > 6 else 1)

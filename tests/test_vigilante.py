@@ -322,6 +322,23 @@ class PrecargaHistorial(unittest.TestCase):
             v.precargar_chollometro(1, 3, listado="subiendo", inicio=40)
         self.assertEqual([u.split("page=")[1] for u in self.portada(pedidas)], ["40", "41", "42"])
 
+    def test_para_a_la_hora_y_dice_por_donde_seguir(self):
+        pedidas = self.red(ultima=100)
+        reloj = iter([datetime(2026, 11, 18, 8, 0)] * 2 + [datetime(2026, 11, 18, 8, 10)] * 3 + [datetime(2026, 11, 18, 8, 31)] * 50)
+
+        class Reloj(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(reloj)
+        orig, v.datetime = v.datetime, Reloj
+        try:
+            with redirect_stdout(io.StringIO()) as buf:
+                v.precargar_chollometro(1, 100, listado="subiendo", inicio=10, hasta_hora="08:30")
+        finally:
+            v.datetime = orig
+        self.assertIn("página de inicio", buf.getvalue())
+        self.assertLess(len(self.portada(pedidas)), 100)
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
