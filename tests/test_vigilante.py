@@ -204,6 +204,60 @@ class ModosNavegador(unittest.TestCase):
             filas = v.modos(["https://www.aliexpress.com/ofertas"], nav_cls=Nav)
         self.assertEqual(len(usados), 1, "con un reto no se prueba ningún modo más")
         self.assertIn("reto", filas[0][4])
+class Cupones(unittest.TestCase):
+    """Cupones de AliExpress y Miravia desde los hilos de Chollometro o a mano (17/11/2026)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        self.con = v.bd()
+
+    def tearDown(self):
+        self.con.close()
+        v.DATOS, v.DB = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_formatos_de_los_hilos(self):
+        texto = ("Cupón 2€: Pedido Mínimo 29€<br>-12€ en pedidos de 109€ (válido hasta las 00:00h)<br>"
+                 "<li>10€ de descuento en compras de 60€ (¡Nuevo!).</li><p>$7 / $50 código MES06</p>"
+                 "15% en compras de 100€\nEnvío gratis desde 9.90€ si compras desde la APP")
+        self.assertEqual([(c["descuento"], c["tipo"], c["minimo"], c["codigo"]) for c in v.cupones_de_texto(texto)],
+                         [(2, "€", 29, ""), (12, "€", 109, ""), (10, "€", 60, ""), (7, "€", 50, "MES06"),
+                          (15, "%", 100, "")])
+
+    def test_mejor_cupon_minimo_sello_y_caducidad(self):
+        v.guardar_cupones(self.con, "miravia.es", [{"descuento": 3, "tipo": "€", "minimo": 29},
+                                                    {"descuento": 7, "tipo": "€", "minimo": 59}], hasta="2026-11-18")
+        v.guardar_cupones(self.con, "miravia.es", [{"descuento": 20, "tipo": "%", "minimo": 50}], sello="MegaPROMO")
+        hoy = datetime(2026, 11, 17)
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 25, ahora=hoy), (25, None))  # no llega al mínimo
+        final, c = v.mejor_cupon(self.con, "miravia.es", 60, ahora=hoy)
+        self.assertEqual((final, c["descuento"]), (53, 7))  # el de 20 % es de sello y no está marcado
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 60, elegible=True, ahora=hoy)[0], 48)
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 60, ahora=datetime(2026, 11, 19))[0], 60)
+        self.assertEqual(v.texto_cupon(c), "cupón de 7 € desde 59 €")
+
+    def test_hilos_de_cupones_en_la_copia(self):
+        ahora = int(datetime.now().timestamp())
+        v.guardar_hilos(self.con, [
+            {"id": 1, "titulo": "Nuevos Cupones Miravia (Desde el 1 de Noviembre)", "precio": None, "tienda": "Miravia",
+             "host": "miravia.es", "temp": 50, "publicado": ahora, "caducado": 0},
+            {"id": 2, "titulo": "Recopilación Cupones 11.11 AliExpress", "precio": None, "tienda": "AliExpress",
+             "host": "aliexpress.com", "temp": 300, "publicado": ahora, "caducado": 0},
+            {"id": 3, "titulo": "Zapatillas adidas", "precio": 30, "tienda": "Miravia", "host": "miravia.es",
+             "temp": 10, "publicado": ahora, "caducado": 0},
+            {"id": 4, "titulo": "Cupón 10 % en Zalando", "precio": None, "tienda": "Zalando", "host": "zalando.es",
+             "temp": 10, "publicado": ahora, "caducado": 0}])
+        self.assertEqual(sorted((i, t) for i, t, _ in v.hilos_de_cupones(self.con)),
+                         [(1, "miravia.es"), (2, "aliexpress.com")])
+
+    def test_comando_cupon_a_mano(self):
+        with redirect_stdout(io.StringIO()) as buf:
+            v.comando_cupon(["aliexpress", "10%/60", "es11", "sello", "Día", "de", "marca"])
+        c = v.cupones_activos(v.bd(), "aliexpress.com")[0]
+        self.assertEqual((c["descuento"], c["tipo"], c["minimo"], c["codigo"], c["sello"]), (10, "%", 60, "ES11", "Día de marca"))
+        self.assertIn("cupón de 10 % desde 60 € con el código ES11", buf.getvalue())
 
 
 class ComparaPropio(unittest.TestCase):

@@ -1268,6 +1268,11 @@ def bd():
         CREATE INDEX IF NOT EXISTS precios_fecha ON precios(fecha);
         -- Códigos de modelo de cada hilo de Chollometro (17/11/2026): cruce inmediato producto -> hilos.
         CREATE TABLE IF NOT EXISTS cm_codigos (codigo TEXT, id INTEGER, PRIMARY KEY (codigo, id)) WITHOUT ROWID;
+        -- Cupones de tienda (17/11/2026), sacados de los hilos de cupones de Chollometro o puestos a mano.
+        -- descuento en € (tipo '€') o en % (tipo '%'); sello: solo para productos marcados (MegaPROMO...).
+        CREATE TABLE IF NOT EXISTS cupones (tienda TEXT, codigo TEXT DEFAULT '', descuento REAL, tipo TEXT,
+            minimo REAL DEFAULT 0, hasta TEXT, sello TEXT DEFAULT '', hilo INTEGER, alta TEXT,
+            PRIMARY KEY (tienda, codigo, descuento, tipo, minimo));
         -- Fichas de PCComTracker por código de modelo (17/11/2026): sirven de histórico para el mismo modelo en
         -- Amazon, MediaMarkt... Se llena al leer su catálogo; su buscador va por /api/ (prohibido en su robots.txt).
         CREATE TABLE IF NOT EXISTS pcct (codigo TEXT, url TEXT, nombre TEXT, PRIMARY KEY (codigo, url)) WITHOUT ROWID;
@@ -1906,6 +1911,137 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
     con.execute("DELETE FROM cm WHERE publicado < ?", (int((ahora - timedelta(days=CM_GUARDAR_DIAS)).timestamp()),))
     con.commit()
     return True
+
+
+# ------------------------------------------------------------------ cupones de tienda (17/11/2026)
+# Fuente: los hilos "Nuevos cupones AliExpress/Miravia" y las recopilaciones de Chollometro. Muchos van en
+# imagen: lo que no se pueda leer del texto se pone a mano con `cupon` (Zeta).
+TIENDAS_CUPONES = {"aliexpress": "aliexpress.com", "miravia": "miravia.es"}
+RE_HILO_CUPONES = re.compile(r"cup[oó]n", re.I)
+_E = r"(\d+(?:[.,]\d+)?)\s*(?:€|eur(?:os)?\b)"
+RE_CUPON_PAR = [  # (descuento, mínimo) en el orden en que aparecen
+    re.compile(r"\$\s*(\d+(?:[.,]\d+)?)\s*/\s*\$\s*(\d+(?:[.,]\d+)?)"),                    # $7 / $50
+    re.compile(_E + r"\s*/\s*" + _E, re.I),                                                     # 7€ / 50€
+    re.compile(r"-?" + _E + r"[^.\n€]{0,40}?(?:compras?|pedidos?)(?:\s+m[ií]nimo)?\s+(?:de|desde)\s+" + _E, re.I),
+    re.compile(r"cup[oó]n\s+(?:de\s+)?" + _E + r"\s*[:\-–]?\s*pedido\s+m[ií]nimo\s+(?:de\s+)?" + _E, re.I),
+]
+RE_CUPON_PCT = re.compile(r"(\d{1,2})\s*%[^.\n%]{0,40}?(?:compras?|pedidos?)(?:\s+m[ií]nimo)?\s+(?:de|desde)\s+" + _E, re.I)
+RE_CODIGO_CUPON = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z][A-Z0-9]{3,14}\b")
+
+
+def _num(x):
+    return float(x.replace(",", "."))
+
+
+def cupones_de_texto(texto):
+    """Cupones escritos en el texto de un hilo: [{descuento, tipo, minimo, codigo}]. Uno por línea como mucho
+    por patrón; el código, si lo hay, va en la misma línea (MES03, ES11...). Lo que va en imagen no sale."""
+    salida, vistos = [], set()
+    for linea in re.split(r"[\n\r]+|<br\s*/?>|</(?:p|li|div)>", texto):
+        plano = unescape(re.sub(r"<[^>]+>", " ", linea))
+        codigo = (RE_CODIGO_CUPON.findall(plano) or [""])[0]
+        for rx in RE_CUPON_PAR:
+            for m in rx.finditer(plano):
+                d, mn = _num(m.group(1)), _num(m.group(2))
+                if 0 < d < mn:
+                    clave = (d, "€", mn, codigo)
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        salida.append({"descuento": d, "tipo": "€", "minimo": mn, "codigo": codigo})
+        for m in RE_CUPON_PCT.finditer(plano):
+            d, mn = _num(m.group(1)), _num(m.group(2))
+            clave = (d, "%", mn, codigo)
+            if 0 < d < 90 and clave not in vistos:
+                vistos.add(clave)
+                salida.append({"descuento": d, "tipo": "%", "minimo": mn, "codigo": codigo})
+    return salida
+
+
+def tienda_cupones(texto):
+    t = (texto or "").lower()
+    return next((d for k, d in TIENDAS_CUPONES.items() if k in t), None)
+
+
+def hilos_de_cupones(con, dias=10):
+    """Hilos de cupones de AliExpress y Miravia en la copia de Chollometro (sin caducar): [(id, tienda, titulo)]."""
+    desde = int((datetime.now() - timedelta(days=dias)).timestamp())
+    filas = con.execute("SELECT id, titulo, tienda, host FROM cm WHERE publicado >= ? AND caducado = 0 "
+                        "ORDER BY publicado DESC", (desde,)).fetchall()
+    return [(i, tienda_cupones(f"{t} {h} {ti}"), ti) for i, ti, t, h in filas
+            if RE_HILO_CUPONES.search(ti) and tienda_cupones(f"{t} {h} {ti}")]
+
+
+def guardar_cupones(con, tienda, cupones, hasta=None, sello="", hilo=None):
+    ahora = datetime.now().isoformat(timespec="minutes")
+    con.executemany("""INSERT OR REPLACE INTO cupones (tienda, codigo, descuento, tipo, minimo, hasta, sello, hilo, alta)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    [(tienda, c.get("codigo") or "", c["descuento"], c["tipo"], c.get("minimo") or 0, hasta,
+                      sello or "", hilo, ahora) for c in cupones])
+    con.commit()
+
+
+def cupones_activos(con, tienda, ahora=None):
+    hoy = (ahora or datetime.now()).date().isoformat()
+    filas = con.execute("SELECT codigo, descuento, tipo, minimo, hasta, sello FROM cupones WHERE tienda = ? "
+                        "AND (hasta IS NULL OR hasta >= ?)", (tienda, hoy)).fetchall()
+    return [dict(zip(("codigo", "descuento", "tipo", "minimo", "hasta", "sello"), f)) for f in filas]
+
+
+def mejor_cupon(con, tienda, precio, elegible=False, ahora=None):
+    """Mejor cupón para UNA unidad: (precio_final, cupón) o (precio, None). El mínimo se cumple con el propio
+    precio (no se suma nada al carrito). Los cupones con sello solo valen si la tarjeta dice que el producto
+    los admite (AliExpress: "Elegible con cupones" -> cupon_elegible)."""
+    mejor = (precio, None)
+    for c in cupones_activos(con, tienda, ahora):
+        if precio < (c["minimo"] or 0) or (c["sello"] and not elegible):
+            continue
+        final = precio - c["descuento"] if c["tipo"] == "€" else precio * (1 - c["descuento"] / 100)
+        if final < mejor[0]:
+            mejor = (round(final, 2), c)
+    return mejor
+
+
+def texto_cupon(c):
+    d = f"{c['descuento']:g} €" if c["tipo"] == "€" else f"{c['descuento']:g} %"
+    s = f"cupón de {d}" + (f" desde {c['minimo']:g} €" if c.get("minimo") else "")
+    return s + (f" con el código {c['codigo']}" if c.get("codigo") else "") + (f" ({c['sello']})" if c.get("sello") else "")
+
+
+def comando_cupon(args):
+    """cupon <tienda> <descuento>/<mínimo> [hasta DD/MM] [CÓDIGO] [sello <texto>]
+    Ej.: cupon miravia 7/59 hasta 18/11   ·   cupon aliexpress 10%/60 ES11 sello MegaPROMO"""
+    tienda = TIENDAS_CUPONES.get(args[0].lower().split(".")[0], args[0].lower())
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)?)(%?)/(\d+(?:[.,]\d+)?)", args[1])
+    if not m:
+        raise SystemExit("Formato: cupon <tienda> <descuento>/<mínimo> [hasta DD/MM] [CÓDIGO] [sello <texto>]")
+    resto, hasta, codigo, sello = args[2:], None, "", ""
+    while resto:
+        x = resto.pop(0)
+        if x == "hasta" and resto:
+            d, mes = map(int, resto.pop(0).split("/")[:2])
+            hoy = datetime.now()
+            hasta = datetime(hoy.year + (1 if mes < hoy.month else 0), mes, d).date().isoformat()
+        elif x == "sello":
+            sello, resto = " ".join(resto), []
+        else:
+            codigo = x.upper()
+    con = bd()
+    guardar_cupones(con, tienda, [{"descuento": _num(m.group(1)), "tipo": m.group(2) and "%" or "€",
+                                    "minimo": _num(m.group(3)), "codigo": codigo}], hasta, sello)
+    listar_cupones(con)
+
+
+def listar_cupones(con=None):
+    con = con or bd()
+    for t in sorted(set(TIENDAS_CUPONES.values())):
+        print(f"{t}:")
+        for c in sorted(cupones_activos(con, t), key=lambda c: (c["minimo"], c["descuento"])):
+            print("  " + texto_cupon(c) + (f" · hasta {c['hasta']}" if c["hasta"] else ""))
+    hilos = hilos_de_cupones(con)
+    if hilos:
+        print("Hilos de cupones en Chollometro (si van en imagen, ponlos con 'cupon'):")
+        for i, t, ti in hilos[:8]:
+            print(f"  {t}: {ti[:70]}  https://www.chollometro.com/ofertas/{i}")
 
 
 def chollometro_fresca(con):
@@ -5904,6 +6040,10 @@ if __name__ == "__main__":
         login(*args[1:])
     elif len(args) >= 2 and args[0] == "historial":
         historial(" ".join(args[1:]))
+    elif args[:1] == ["cupones"]:
+        listar_cupones()
+    elif len(args) >= 3 and args[0] == "cupon":
+        comando_cupon(args[1:])
     elif args[:1] == ["informe"]:
         informe(int(args[1]) if len(args) > 1 else 7)
     elif len(args) == 2 and args[0] == "entregar":
