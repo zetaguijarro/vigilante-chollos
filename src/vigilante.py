@@ -24,6 +24,7 @@ Solo usa la librería estándar de Python: no hay que instalar nada.
 import gzip
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -1268,6 +1269,11 @@ def bd():
         CREATE INDEX IF NOT EXISTS precios_fecha ON precios(fecha);
         -- Códigos de modelo de cada hilo de Chollometro (17/11/2026): cruce inmediato producto -> hilos.
         CREATE TABLE IF NOT EXISTS cm_codigos (codigo TEXT, id INTEGER, PRIMARY KEY (codigo, id)) WITHOUT ROWID;
+        -- Cupones de tienda (17/11/2026), sacados de los hilos de cupones de Chollometro o puestos a mano.
+        -- descuento en € (tipo '€') o en % (tipo '%'); sello: solo para productos marcados (MegaPROMO...).
+        CREATE TABLE IF NOT EXISTS cupones (tienda TEXT, codigo TEXT DEFAULT '', descuento REAL, tipo TEXT,
+            minimo REAL DEFAULT 0, hasta TEXT, sello TEXT DEFAULT '', hilo INTEGER, alta TEXT,
+            PRIMARY KEY (tienda, codigo, descuento, tipo, minimo));
         -- Fichas de PCComTracker por código de modelo (17/11/2026): sirven de histórico para el mismo modelo en
         -- Amazon, MediaMarkt... Se llena al leer su catálogo; su buscador va por /api/ (prohibido en su robots.txt).
         CREATE TABLE IF NOT EXISTS pcct (codigo TEXT, url TEXT, nombre TEXT, PRIMARY KEY (codigo, url)) WITHOUT ROWID;
@@ -1824,11 +1830,13 @@ def precioreal_red(p):
 
 CM_NUEVOS = "https://www.chollometro.com/nuevos"
 CM_PORTADA = "https://www.chollometro.com/"
+CM_LISTADOS = {"destacados": CM_PORTADA, "subiendo": CM_PORTADA + "subiendo"}  # pestañas de Chollometro
 CM_REFRESCO_MIN = 4      # como mucho una actualización cada 4 minutos
 CM_FRESCA_MIN = 30       # sin actualizar en 30 min, "no publicado" pasa a "sin comprobar"
 CM_RECIENTE_DIAS = 30    # un post de hace más de 30 días y caducado ya no es duplicado
 CM_HOT = 300             # temperatura a partir de la que un post "se calentó"
 CM_GUARDAR_DIAS = 400
+CM_GUARDAR_HOT_DIAS = 800  # los de 200° o más se guardan más tiempo: son la base de la lista de vigilancia
 CM_PORTADA_PAGINAS = 8   # la portada son destacados por orden de llegada: 8 páginas ≈ una semana
 
 
@@ -1903,9 +1911,142 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
         log(f"chollometro (copia local): {str(e)[:120]}")
         return chollometro_fresca(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (ahora.isoformat(timespec="minutes"),))
-    con.execute("DELETE FROM cm WHERE publicado < ?", (int((ahora - timedelta(days=CM_GUARDAR_DIAS)).timestamp()),))
+    con.execute("DELETE FROM cm WHERE publicado < ? AND (temp < 200 OR publicado < ?)",
+                (int((ahora - timedelta(days=CM_GUARDAR_DIAS)).timestamp()),
+                 int((ahora - timedelta(days=CM_GUARDAR_HOT_DIAS)).timestamp())))
     con.commit()
     return True
+
+
+# ------------------------------------------------------------------ cupones de tienda (17/11/2026)
+# Fuente: los hilos "Nuevos cupones AliExpress/Miravia" y las recopilaciones de Chollometro. Muchos van en
+# imagen: lo que no se pueda leer del texto se pone a mano con `cupon` (Zeta).
+TIENDAS_CUPONES = {"aliexpress": "aliexpress.com", "miravia": "miravia.es"}
+RE_HILO_CUPONES = re.compile(r"cup[oó]n", re.I)
+_E = r"(\d+(?:[.,]\d+)?)\s*(?:€|eur(?:os)?\b)"
+RE_CUPON_PAR = [  # (descuento, mínimo) en el orden en que aparecen
+    re.compile(r"\$\s*(\d+(?:[.,]\d+)?)\s*/\s*\$\s*(\d+(?:[.,]\d+)?)"),                    # $7 / $50
+    re.compile(_E + r"\s*/\s*" + _E, re.I),                                                     # 7€ / 50€
+    re.compile(r"-?" + _E + r"[^.\n€]{0,40}?(?:compras?|pedidos?)(?:\s+m[ií]nimo)?\s+(?:de|desde)\s+" + _E, re.I),
+    re.compile(r"cup[oó]n\s+(?:de\s+)?" + _E + r"\s*[:\-–]?\s*pedido\s+m[ií]nimo\s+(?:de\s+)?" + _E, re.I),
+]
+RE_CUPON_PCT = re.compile(r"(\d{1,2})\s*%[^.\n%]{0,40}?(?:compras?|pedidos?)(?:\s+m[ií]nimo)?\s+(?:de|desde)\s+" + _E, re.I)
+RE_CODIGO_CUPON = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z][A-Z0-9]{3,14}\b")
+
+
+def _num(x):
+    return float(x.replace(",", "."))
+
+
+def cupones_de_texto(texto):
+    """Cupones escritos en el texto de un hilo: [{descuento, tipo, minimo, codigo}]. Uno por línea como mucho
+    por patrón; el código, si lo hay, va en la misma línea (MES03, ES11...). Lo que va en imagen no sale."""
+    salida, vistos = [], set()
+    for linea in re.split(r"[\n\r]+|<br\s*/?>|</(?:p|li|div)>", texto):
+        plano = unescape(re.sub(r"<[^>]+>", " ", linea))
+        codigo = (RE_CODIGO_CUPON.findall(plano) or [""])[0]
+        for rx in RE_CUPON_PAR:
+            for m in rx.finditer(plano):
+                d, mn = _num(m.group(1)), _num(m.group(2))
+                if 0 < d < mn:
+                    clave = (d, "€", mn, codigo)
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        salida.append({"descuento": d, "tipo": "€", "minimo": mn, "codigo": codigo})
+        for m in RE_CUPON_PCT.finditer(plano):
+            d, mn = _num(m.group(1)), _num(m.group(2))
+            clave = (d, "%", mn, codigo)
+            if 0 < d < 90 and clave not in vistos:
+                vistos.add(clave)
+                salida.append({"descuento": d, "tipo": "%", "minimo": mn, "codigo": codigo})
+    return salida
+
+
+def tienda_cupones(texto):
+    t = (texto or "").lower()
+    return next((d for k, d in TIENDAS_CUPONES.items() if k in t), None)
+
+
+def hilos_de_cupones(con, dias=10):
+    """Hilos de cupones de AliExpress y Miravia en la copia de Chollometro (sin caducar): [(id, tienda, titulo)]."""
+    desde = int((datetime.now() - timedelta(days=dias)).timestamp())
+    filas = con.execute("SELECT id, titulo, tienda, host FROM cm WHERE publicado >= ? AND caducado = 0 "
+                        "ORDER BY publicado DESC", (desde,)).fetchall()
+    return [(i, tienda_cupones(f"{t} {h} {ti}"), ti) for i, ti, t, h in filas
+            if RE_HILO_CUPONES.search(ti) and tienda_cupones(f"{t} {h} {ti}")]
+
+
+def guardar_cupones(con, tienda, cupones, hasta=None, sello="", hilo=None):
+    ahora = datetime.now().isoformat(timespec="minutes")
+    con.executemany("""INSERT OR REPLACE INTO cupones (tienda, codigo, descuento, tipo, minimo, hasta, sello, hilo, alta)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    [(tienda, c.get("codigo") or "", c["descuento"], c["tipo"], c.get("minimo") or 0, hasta,
+                      sello or "", hilo, ahora) for c in cupones])
+    con.commit()
+
+
+def cupones_activos(con, tienda, ahora=None):
+    hoy = (ahora or datetime.now()).date().isoformat()
+    filas = con.execute("SELECT codigo, descuento, tipo, minimo, hasta, sello FROM cupones WHERE tienda = ? "
+                        "AND (hasta IS NULL OR hasta >= ?)", (tienda, hoy)).fetchall()
+    return [dict(zip(("codigo", "descuento", "tipo", "minimo", "hasta", "sello"), f)) for f in filas]
+
+
+def mejor_cupon(con, tienda, precio, elegible=False, ahora=None):
+    """Mejor cupón para UNA unidad: (precio_final, cupón) o (precio, None). El mínimo se cumple con el propio
+    precio (no se suma nada al carrito). Los cupones con sello solo valen si la tarjeta dice que el producto
+    los admite (AliExpress: "Elegible con cupones" -> cupon_elegible)."""
+    mejor = (precio, None)
+    for c in cupones_activos(con, tienda, ahora):
+        if precio < (c["minimo"] or 0) or (c["sello"] and not elegible):
+            continue
+        final = precio - c["descuento"] if c["tipo"] == "€" else precio * (1 - c["descuento"] / 100)
+        if final < mejor[0]:
+            mejor = (round(final, 2), c)
+    return mejor
+
+
+def texto_cupon(c):
+    d = f"{c['descuento']:g} €" if c["tipo"] == "€" else f"{c['descuento']:g} %"
+    s = f"cupón de {d}" + (f" desde {c['minimo']:g} €" if c.get("minimo") else "")
+    return s + (f" con el código {c['codigo']}" if c.get("codigo") else "") + (f" ({c['sello']})" if c.get("sello") else "")
+
+
+def comando_cupon(args):
+    """cupon <tienda> <descuento>/<mínimo> [hasta DD/MM] [CÓDIGO] [sello <texto>]
+    Ej.: cupon miravia 7/59 hasta 18/11   ·   cupon aliexpress 10%/60 ES11 sello MegaPROMO"""
+    tienda = TIENDAS_CUPONES.get(args[0].lower().split(".")[0], args[0].lower())
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)?)(%?)/(\d+(?:[.,]\d+)?)", args[1])
+    if not m:
+        raise SystemExit("Formato: cupon <tienda> <descuento>/<mínimo> [hasta DD/MM] [CÓDIGO] [sello <texto>]")
+    resto, hasta, codigo, sello = args[2:], None, "", ""
+    while resto:
+        x = resto.pop(0)
+        if x == "hasta" and resto:
+            d, mes = map(int, resto.pop(0).split("/")[:2])
+            hoy = datetime.now()
+            hasta = datetime(hoy.year + (1 if mes < hoy.month else 0), mes, d).date().isoformat()
+        elif x == "sello":
+            sello, resto = " ".join(resto), []
+        else:
+            codigo = x.upper()
+    con = bd()
+    guardar_cupones(con, tienda, [{"descuento": _num(m.group(1)), "tipo": m.group(2) and "%" or "€",
+                                    "minimo": _num(m.group(3)), "codigo": codigo}], hasta, sello)
+    listar_cupones(con)
+
+
+def listar_cupones(con=None):
+    con = con or bd()
+    for t in sorted(set(TIENDAS_CUPONES.values())):
+        print(f"{t}:")
+        for c in sorted(cupones_activos(con, t), key=lambda c: (c["minimo"], c["descuento"])):
+            print("  " + texto_cupon(c) + (f" · hasta {c['hasta']}" if c["hasta"] else ""))
+    hilos = hilos_de_cupones(con)
+    if hilos:
+        print("Hilos de cupones en Chollometro (si van en imagen, ponlos con 'cupon'):")
+        for i, t, ti in hilos[:8]:
+            print(f"  {t}: {ti[:70]}  https://www.chollometro.com/ofertas/{i}")
 
 
 def chollometro_fresca(con):
@@ -2431,15 +2572,43 @@ def avisos_recientes(con, horas=24):
     return salida
 
 
-def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5):
+def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=None, listado="destacados", inicio=1,
+                          hasta_hora=None):
     """Primera carga: /nuevos de los últimos días (duplicados) y la portada hacia atrás (lo que se
-    calentó, ~1 día por página). Educada: una página cada `pausa` segundos."""
+    calentó, ~1 día por página). Educada: una página cada `pausa` segundos.
+    desde (fecha 'AAAA-MM-DD'): la portada para al llegar ahí. También para si una página no va más atrás
+    que la anterior (pasado el final, Chollometro puede devolver otra vez lo de hoy) o repite la página 1.
+    listado: "destacados" (portada) o "subiendo" (CM_LISTADOS). La pausa varía un ±20 % entre páginas.
+    inicio: página del listado por la que empezar (para repartir una carga larga en varias noches).
+    hasta_hora ("HH:MM"): para al llegar a esa hora (la de hoy o, si ya pasó, la de mañana) y dice por qué
+    página seguir."""
+    fin = None
+    if hasta_hora:
+        hh, mm = map(int, hasta_hora.split(":"))
+        fin = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if fin <= datetime.now():
+            fin += timedelta(days=1)
+    DATOS.mkdir(parents=True, exist_ok=True)
+    cerrojo = DATOS / "precarga.lock"
+    cerrojo.write_text(str(os.getpid()), encoding="utf-8")  # las rondas no arrancan mientras exista
+    try:
+        _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora)
+    finally:
+        cerrojo.unlink(missing_ok=True)
+
+
+def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora):
+    portada = CM_LISTADOS.get(listado, listado)
     con = bd()
+    tope = datetime.fromisoformat(desde).timestamp() if desde else 0
     limite = (datetime.now() - timedelta(days=dias_nuevos)).timestamp()
     total = 0
-    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (CM_PORTADA, paginas_portada, 0)):
-        n = 0
-        for n in range(1, paginas + 1):
+    for base, paginas, hasta in ((CM_NUEVOS, 40 * dias_nuevos + 10, limite), (portada, paginas_portada, tope)):
+        n, anterior, primera = 0, None, None
+        for n in (range(inicio, inicio + paginas) if base == portada else range(1, paginas + 1)):
+            if base == portada and fin and datetime.now() >= fin:
+                print(f"  son las {hasta_hora}: paro. Para seguir otra noche, página de inicio {n}")
+                break
             try:
                 html, _ = descargar(_pagina(base, n))
             except Exception as e:
@@ -2448,11 +2617,22 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5):
             hilos = hilos_chollometro(html)
             if not hilos:
                 break
+            (DATOS / "precarga.lock").touch()
+            viejo = min(h["publicado"] for h in hilos)
+            ids = sorted(h["id"] for h in hilos)
+            primera = primera or ids
+            if base == portada and n > inicio and (ids == primera or (listado == "destacados" and anterior is not None
+                                                                   and viejo >= anterior + 86400)):
+                print(f"  la página {n} vuelve a lo de hoy: fin del historial")
+                break
             guardar_hilos(con, hilos)
             total += len(hilos)
-            if min(h["publicado"] for h in hilos) < hasta:
+            anterior = min(viejo, anterior) if anterior is not None else viejo
+            if viejo < hasta:
                 break
-            time.sleep(pausa)
+            if base == portada and n % 50 == 0:
+                print(f"  {listado} página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}")
+            time.sleep(pausa * random.uniform(0.8, 1.2) if base == portada else pausa)
         print(f"{base}: hasta la página {n}, {total} posts guardados")
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (datetime.now().isoformat(timespec="minutes"),))
     con.commit()
@@ -5131,10 +5311,24 @@ def compacto(p):
 GRUPOS = {"rapidas": "descarga", "navegador": "navegador"}
 
 
+def carga_en_marcha():
+    """Hay una precarga larga de Chollometro en marcha (su cerrojo se renueva en cada página). Si lleva más de
+    15 min sin renovarse, la carga murió: no cuenta."""
+    cerrojo = DATOS / "precarga.lock"
+    try:
+        return time.time() - cerrojo.stat().st_mtime < 900
+    except FileNotFoundError:
+        return False
+
+
 def ronda_grupo(grupo):
     """Una sola tarea para todas las categorías, separadas por forma de lectura: 'rapidas' (descarga normal
     y fuentes de datos, cada pocos minutos) o 'navegador' (las tiendas que necesitan Chrome). Cada tienda
     sigue con las reglas de su categoría; solo cambia cuándo se lee."""
+    if carga_en_marcha():  # Zeta (18/11): mientras se carga el historial de Chollometro, no hay rondas
+        log(f"ronda {grupo}: saltada, hay una carga de Chollometro en marcha")
+        print(SILENCIO)
+        return
     if grupo == "rapidas" and en_horario(cargar_config()):
         # La copia de Chollometro se mantiene al día en cada ronda rápida (si no, tendría huecos).
         try:
@@ -5911,6 +6105,10 @@ if __name__ == "__main__":
         login(*args[1:])
     elif len(args) >= 2 and args[0] == "historial":
         historial(" ".join(args[1:]))
+    elif args[:1] == ["cupones"]:
+        listar_cupones()
+    elif len(args) >= 3 and args[0] == "cupon":
+        comando_cupon(args[1:])
     elif args[:1] == ["informe"]:
         informe(int(args[1]) if len(args) > 1 else 7)
     elif len(args) == 2 and args[0] == "entregar":
@@ -5924,7 +6122,12 @@ if __name__ == "__main__":
     elif len(args) >= 3 and args[0] == "recordar":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:
-        precargar_chollometro(*(int(a) for a in args[1:3]))
+        hora = next((x for x in args if re.fullmatch(r"\d{1,2}:\d{2}", x)), None)
+        args = [x for x in args if x != hora]
+        precargar_chollometro(*(int(a) for a in args[1:3]), hasta_hora=hora, desde=args[3] if len(args) > 3 else None,
+                              pausa=float(args[4]) if len(args) > 4 else 1.5,
+                              listado=args[5] if len(args) > 5 else "destacados",
+                              inicio=int(args[6]) if len(args) > 6 else 1)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:

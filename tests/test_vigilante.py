@@ -204,6 +204,180 @@ class ModosNavegador(unittest.TestCase):
             filas = v.modos(["https://www.aliexpress.com/ofertas"], nav_cls=Nav)
         self.assertEqual(len(usados), 1, "con un reto no se prueba ningún modo más")
         self.assertIn("reto", filas[0][4])
+class Cupones(unittest.TestCase):
+    """Cupones de AliExpress y Miravia desde los hilos de Chollometro o a mano (17/11/2026)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        self.con = v.bd()
+
+    def tearDown(self):
+        self.con.close()
+        v.DATOS, v.DB = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_formatos_de_los_hilos(self):
+        texto = ("Cupón 2€: Pedido Mínimo 29€<br>-12€ en pedidos de 109€ (válido hasta las 00:00h)<br>"
+                 "<li>10€ de descuento en compras de 60€ (¡Nuevo!).</li><p>$7 / $50 código MES06</p>"
+                 "15% en compras de 100€\nEnvío gratis desde 9.90€ si compras desde la APP")
+        self.assertEqual([(c["descuento"], c["tipo"], c["minimo"], c["codigo"]) for c in v.cupones_de_texto(texto)],
+                         [(2, "€", 29, ""), (12, "€", 109, ""), (10, "€", 60, ""), (7, "€", 50, "MES06"),
+                          (15, "%", 100, "")])
+
+    def test_mejor_cupon_minimo_sello_y_caducidad(self):
+        v.guardar_cupones(self.con, "miravia.es", [{"descuento": 3, "tipo": "€", "minimo": 29},
+                                                    {"descuento": 7, "tipo": "€", "minimo": 59}], hasta="2026-11-18")
+        v.guardar_cupones(self.con, "miravia.es", [{"descuento": 20, "tipo": "%", "minimo": 50}], sello="MegaPROMO")
+        hoy = datetime(2026, 11, 17)
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 25, ahora=hoy), (25, None))  # no llega al mínimo
+        final, c = v.mejor_cupon(self.con, "miravia.es", 60, ahora=hoy)
+        self.assertEqual((final, c["descuento"]), (53, 7))  # el de 20 % es de sello y no está marcado
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 60, elegible=True, ahora=hoy)[0], 48)
+        self.assertEqual(v.mejor_cupon(self.con, "miravia.es", 60, ahora=datetime(2026, 11, 19))[0], 60)
+        self.assertEqual(v.texto_cupon(c), "cupón de 7 € desde 59 €")
+
+    def test_hilos_de_cupones_en_la_copia(self):
+        ahora = int(datetime.now().timestamp())
+        v.guardar_hilos(self.con, [
+            {"id": 1, "titulo": "Nuevos Cupones Miravia (Desde el 1 de Noviembre)", "precio": None, "tienda": "Miravia",
+             "host": "miravia.es", "temp": 50, "publicado": ahora, "caducado": 0},
+            {"id": 2, "titulo": "Recopilación Cupones 11.11 AliExpress", "precio": None, "tienda": "AliExpress",
+             "host": "aliexpress.com", "temp": 300, "publicado": ahora, "caducado": 0},
+            {"id": 3, "titulo": "Zapatillas adidas", "precio": 30, "tienda": "Miravia", "host": "miravia.es",
+             "temp": 10, "publicado": ahora, "caducado": 0},
+            {"id": 4, "titulo": "Cupón 10 % en Zalando", "precio": None, "tienda": "Zalando", "host": "zalando.es",
+             "temp": 10, "publicado": ahora, "caducado": 0}])
+        self.assertEqual(sorted((i, t) for i, t, _ in v.hilos_de_cupones(self.con)),
+                         [(1, "miravia.es"), (2, "aliexpress.com")])
+
+    def test_comando_cupon_a_mano(self):
+        with redirect_stdout(io.StringIO()) as buf:
+            v.comando_cupon(["aliexpress", "10%/60", "es11", "sello", "Día", "de", "marca"])
+        c = v.cupones_activos(v.bd(), "aliexpress.com")[0]
+        self.assertEqual((c["descuento"], c["tipo"], c["minimo"], c["codigo"], c["sello"]), (10, "%", 60, "ES11", "Día de marca"))
+        self.assertIn("cupón de 10 % desde 60 € con el código ES11", buf.getvalue())
+
+
+class PrecargaHistorial(unittest.TestCase):
+    """Historial largo de Destacados (17/11/2026): parar en una fecha o cuando la página vuelve a hoy,
+    y guardar los calientes 800 días."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB, v.descargar, v.time.sleep
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        v.time.sleep = lambda s: None
+
+    def tearDown(self):
+        v.DATOS, v.DB, v.descargar, v.time.sleep = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def red(self, ultima):
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "nuevos" in url:
+                return cm_html([hilo("nuevo hoy", "Amazon", 5, dias=0), hilo("viejo", "Amazon", 5, dias=5)]), url
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            dias = n if n <= ultima else 0  # pasado el final, Chollometro devuelve lo de hoy
+            return cm_html([hilo(f"hilo {n}-{i}", "Amazon", 10 + i, temp=250, dias=dias) for i in range(3)]), url
+        v.descargar = red
+        return pedidas
+
+    def portada(self, pedidas):
+        return [u for u in pedidas if "nuevos" not in u]
+
+    def test_para_cuando_vuelve_a_hoy(self):
+        pedidas = self.red(ultima=5)
+        with redirect_stdout(io.StringIO()) as buf:
+            v.precargar_chollometro(1, 20)
+        self.assertEqual(len(self.portada(pedidas)), 6)
+        self.assertIn("fin del historial", buf.getvalue())
+
+    def test_subiendo_para_cuando_repite_la_pagina_1(self):
+        pedidas = []
+
+        def red(url, timeout=20, reintentos=1):
+            pedidas.append(url)
+            if "nuevos" in url:
+                return cm_html([hilo("viejo", "Amazon", 5, dias=5)]), url
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            n = 1 if n > 4 else n  # pasado el final, Chollometro devuelve la página 1
+            # Subiendo no va ordenado por fecha: la página 3 trae hilos más nuevos que la 2 y no debe parar
+            return cm_html([hilo(f"sube {n}-{i}", "Amazon", 10 + i, temp=150, dias=[0, 9, 2, 20][n - 1]) for i in range(3)]), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()) as buf:
+            v.precargar_chollometro(1, 50, listado="subiendo")
+        portada = self.portada(pedidas)
+        self.assertTrue(all("/subiendo" in u for u in portada))
+        self.assertEqual(len(portada), 5)
+        self.assertIn("fin del historial", buf.getvalue())
+
+    def test_empieza_en_la_pagina_que_se_le_diga(self):
+        pedidas = self.red(ultima=100)
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 3, listado="subiendo", inicio=40)
+        self.assertEqual([u.split("page=")[1] for u in self.portada(pedidas)], ["40", "41", "42"])
+
+    def test_para_a_la_hora_y_dice_por_donde_seguir(self):
+        pedidas = self.red(ultima=100)
+        reloj = iter([datetime(2026, 11, 18, 8, 0)] * 2 + [datetime(2026, 11, 18, 8, 10)] * 3 + [datetime(2026, 11, 18, 8, 31)] * 50)
+
+        class Reloj(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(reloj)
+        orig, v.datetime = v.datetime, Reloj
+        try:
+            with redirect_stdout(io.StringIO()) as buf:
+                v.precargar_chollometro(1, 100, listado="subiendo", inicio=10, hasta_hora="08:30")
+        finally:
+            v.datetime = orig
+        self.assertIn("página de inicio", buf.getvalue())
+        self.assertLess(len(self.portada(pedidas)), 100)
+
+    def test_sin_rondas_mientras_carga(self):
+        dentro = []
+
+        def red(url, timeout=20, reintentos=1):
+            dentro.append(v.carga_en_marcha())
+            return cm_html([hilo(f"h {url}", dias=1)]), url
+        v.descargar = red
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 2)
+        self.assertTrue(dentro and all(dentro), "mientras carga, el cerrojo está puesto")
+        self.assertFalse(v.carga_en_marcha(), "al terminar se quita")
+        (self.tmp / "precarga.lock").write_text("1")
+        orig = v.ronda
+        v.ronda = lambda *a, **k: self.fail("no debe haber ronda durante la carga")
+        try:
+            with redirect_stdout(io.StringIO()) as buf:
+                v.ronda_grupo("rapidas")
+        finally:
+            v.ronda = orig
+        self.assertEqual(buf.getvalue().strip(), v.SILENCIO)
+        viejo = time.time() - 1000
+        os.utime(self.tmp / "precarga.lock", (viejo, viejo))
+        self.assertFalse(v.carga_en_marcha(), "un cerrojo de una carga muerta no cuenta")
+
+    def test_para_en_la_fecha_desde(self):
+        pedidas = self.red(ultima=100)
+        desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 50, desde=desde)
+        self.assertLessEqual(len(self.portada(pedidas)), 5)
+
+    def test_los_calientes_se_guardan_mas_tiempo(self):
+        con = v.bd()
+        v.guardar_hilos(con, v.hilos_chollometro(cm_html([hilo("caliente", temp=250, dias=500),
+                                                          hilo("frio", temp=50, dias=500),
+                                                          hilo("muy viejo", temp=900, dias=900)])))
+        v.descargar = lambda url, **k: (cm_html([hilo("hoy", dias=0)]), url)
+        v.actualizar_chollometro(con, forzar=True, max_paginas=1)
+        self.assertEqual([t for (t,) in con.execute("SELECT titulo FROM cm ORDER BY titulo")], ["caliente", "hoy"])
 
 
 class ComparaPropio(unittest.TestCase):
