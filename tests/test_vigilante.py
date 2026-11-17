@@ -316,6 +316,12 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertEqual(len(portada), 5)
         self.assertIn("fin del historial", buf.getvalue())
 
+    def test_empieza_en_la_pagina_que_se_le_diga(self):
+        pedidas = self.red(ultima=100)
+        with redirect_stdout(io.StringIO()):
+            v.precargar_chollometro(1, 3, listado="subiendo", inicio=40)
+        self.assertEqual([u.split("page=")[1] for u in self.portada(pedidas)], ["40", "41", "42"])
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
