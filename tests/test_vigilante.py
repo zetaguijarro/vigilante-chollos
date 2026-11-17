@@ -474,6 +474,22 @@ class PrecargaHistorial(unittest.TestCase):
         os.utime(self.tmp / "precarga.lock", (viejo, viejo))
         self.assertFalse(v.carga_en_marcha(), "un cerrojo de una carga muerta no cuenta")
 
+    def test_guarda_grupo_enlace_y_cupon_para_analizar(self):
+        h = {**hilo("Café en grano Lavazza 1 kg", "Amazon", 12.9, temp=420),
+             "mainGroup": {"threadGroupName": "Supermercado", "threadGroupUrlName": "supermercado"},
+             "link": "https://www.amazon.es/dp/B000SDKDM4", "voucherCode": "", "commentCount": 37,
+             "description": "texto largo que no hace falta " * 50}
+        con = v.bd()
+        v.guardar_hilos(con, v.hilos_chollometro(cm_html([h])))
+        extra = json.loads(con.execute("SELECT extra FROM cm").fetchone()[0])
+        self.assertEqual(extra["mainGroup"]["threadGroupName"], "Supermercado")
+        self.assertEqual(extra["link"], "https://www.amazon.es/dp/B000SDKDM4")
+        self.assertEqual(extra["commentCount"], 37)
+        self.assertNotIn("description", extra)
+        self.assertNotIn("voucherCode", extra, "los vacíos no se guardan")
+        v.guardar_hilos(con, [{**v.hilos_chollometro(cm_html([h]))[0], "extra": None, "temp": 500}])
+        self.assertIsNotNone(con.execute("SELECT extra FROM cm").fetchone()[0], "una página sin datos no borra los guardados")
+
     def test_para_en_la_fecha_desde(self):
         pedidas = self.red(ultima=100)
         desde = (datetime.now() - timedelta(days=3, hours=12)).date().isoformat()
@@ -1742,7 +1758,7 @@ class Rondas(Base):
         con = v.bd()
         hace = lambda d: int(time.time() - d * 86400)
         filas = [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)]
-        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)", filas)
         con.commit()
         cfg = {"filtros_codigo": {"solo_tiendas_con_demanda": True, "siempre_leer": ["bricoking.es"]}}
         tiendas = ["mediamarkt.es", "pccomponentes.com", "bricoking.es", "prenatal.es"]
@@ -1799,7 +1815,7 @@ class Rondas(Base):
         # La lista manda sobre el filtro de demanda aunque la copia de Chollometro no las cuente.
         con = v.bd()
         hace = lambda d: int(time.time() - d * 86400)
-        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)",
+        con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)",
                         [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
         con.commit()
         self.assertEqual(v.filtrar_por_demanda(con, cfg, ["www.aeg.com.es", "footlocker.es", "prenatal.es"]),
@@ -3605,7 +3621,7 @@ class Catalogo(Base):
             for i in range(total):
                 n += 1
                 filas.append((n, f"{titulo} {i}", 10.0, "X", "x.es", 500.0 if i < calientes else 20.0, hace(i % 60), 0, ""))
-        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)", filas)
         con.commit()
         pesos = v.pesos_demanda(con, {})
         # Media: 240 de 600 = 40 %. Móviles 60 % -> 1,5. Impresoras 10 % -> 0,25, que se queda en el mínimo 0,3.
@@ -4072,7 +4088,7 @@ class MiraviaAliExpress(Base):
         filas = [(i, f"PS5 Slim {i}", 400, "AliExpress", "es.aliexpress.com", 500, 0, 0, "") for i in range(8)]
         filas += [(100 + i, f"Taladro {i}", 40, "AliExpress", "es.aliexpress.com", 300 if i % 4 == 0 else 50, 0, 0, "")
                   for i in range(8)]
-        con.executemany("INSERT INTO cm VALUES (?,?,?,?,?,?,?,?,?)", filas)
+        con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)", filas)
         cfg = {"busquedas_familia": {"por_ronda": 2, "cada_min": 15, "tiendas": {"aliexpress.com": {
             "url": "https://es.aliexpress.com/w/wholesale-{q}.html", "espacio": "-",
             "consultas": {"consolas": ["ps5", "switch 2"], "herramientas": ["taladro", "sierra"]}}}}}
