@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 187 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 188 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -36,7 +36,7 @@ Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no salt
 
 Pedidos desde Claude en el móvil. Por orden:
 
-1. **Fusionar la rama `comparar-mejor`** si no está en `main` (`git pull origin comparar-mejor`; 187 pruebas). Trae: precio habitual propio (`habitual_propio`, con la tabla `precios`; da resultados hacia el 24/11), mercado propio por EAN (`mercado_propio`) y enlaces fijos en Amazon y AliExpress (`url_canonica`: `/dp/ASIN` e `/item/<id>.html`). Mirar con los datos reales que no salgan avisos raros (un EAN mal leído que case dos productos distintos).
+1. **Fusionar la rama `comparar-mejor`** si no está en `main` (`git pull origin comparar-mejor`; 188 pruebas). Trae: precio habitual propio (`habitual_propio`, con la tabla `precios`; da resultados hacia el 24/11), mercado propio por EAN (`mercado_propio`) y enlaces fijos en Amazon y AliExpress (`url_canonica`: `/dp/ASIN` e `/item/<id>.html`). Mirar con los datos reales que no salgan avisos raros (un EAN mal leído que case dos productos distintos).
 2. **Miravia y AliExpress con Chrome visible. Autorizado por Zeta**, con las condiciones de Idealo (`docs/ESTADO.md`, "Decisiones de Zeta"): Chrome visible normal, sin perfil disfrazado ni ocultar la automatización, pocas páginas por ronda. **Si sale reto o captcha no se resuelve:** pausa fija de 30 min, siempre la misma aunque se repita (decisión de Zeta: sin pausas que se doblen). Primero probar a mano con una página de ofertas de cada una: cuántos productos da y si sale reto. Si funciona, añadirlo a las rondas y medirlo en `data/recorrido.txt`. Hoy: Miravia da 17 productos por descarga (el resto carga con JavaScript) y 0 con el Chrome oculto; AliExpress está en pausa por antibot.
 3. **Cupones de Miravia y AliExpress.** Zeta: "dan muy buenos resultados con los cupones". Cuando el punto 2 funcione, mirar cómo pinta cada web los cupones en las tarjetas de producto ("cupón de 3 €", "-10 % con cupón") y si se pueden leer del listado. Diseño propuesto, pendiente de que Zeta diga de dónde saca él los códigos (generales de la tienda, los de cada tarjeta o los dos):
     - Lista de cupones activos por tienda en `tiendas.json` (código, descuento en € o %, compra mínima, fecha de fin), rellenada a mano o desde los hilos calientes de cupones de esa tienda en la copia de Chollometro.

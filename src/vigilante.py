@@ -5342,6 +5342,48 @@ def volcar(seleccion):
                   [t for t in seleccion if t in con_nav], trabajo)
 
 
+MODOS_NAVEGADOR = (  # (nombre, oculto, canal, bloquear imágenes y fuentes)
+    ("oculto antiguo", True, None, True),       # Chromium de Playwright sin ventana (chrome-headless-shell)
+    ("oculto nuevo", True, "chrome", True),     # Chrome instalado sin ventana (--headless=new)
+    ("visible", False, "chrome", True),         # lo que usan hoy las rondas
+    ("visible+imágenes", False, "chrome", False),  # por si el scroll necesita las imágenes para cargar más
+)
+
+
+def modos(seleccion, nav_cls=None):
+    """Lee la misma página de cada tienda con cada modo del navegador y compara productos, tiempo y retos.
+    Una sola página por modo. Si sale un reto, no se resuelve: se paran los modos que quedan de esa tienda."""
+    nav_cls = nav_cls or Navegador
+    cfg, urls = cargar_config(), urls_ofertas()
+    filas = []
+    for tienda in seleccion:
+        url = tienda if tienda.startswith("http") else url_de(tienda, urls)
+        print(f"{tienda}  ({url})")
+        for nombre, oculto, canal, bloquear in MODOS_NAVEGADOR:
+            n = {**cfg.get("navegador", {}), "visible": not oculto, "canal": canal, "bloquear_recursos": bloquear}
+            inicio = time.monotonic()
+            try:
+                with nav_cls({**cfg, "navegador": n}) as nav:
+                    html, final, datos = nav.leer(url)
+            except Exception as e:
+                print(f"  {nombre:<17} ERROR {str(e)[:100]}")
+                filas.append((tienda, nombre, None, None, "error"))
+                continue
+            seg = round(time.monotonic() - inicio)
+            productos = len(extraer(html, final, datos))
+            reto = RE_ANTIBOT.search(html)
+            nota = f"reto: '{reto.group(0)}'" if reto else ""
+            print(f"  {nombre:<17} {productos:>4} productos  {seg:>3} s  {len(html) // 1024:>5} KB  {nota}")
+            filas.append((tienda, nombre, productos, seg, nota))
+            if reto:
+                print("  reto: no se resuelve; no pruebo más modos en esta tienda (pausa fija de 30 min)")
+                break
+    with open(DATOS / "modos.txt", "a", encoding="utf-8") as f:
+        for fila in filas:
+            f.write(datetime.now().strftime("%d/%m %H:%M") + " | " + " | ".join("" if x is None else str(x) for x in fila) + "\n")
+    return filas
+
+
 def prueba(categoria):
     cfg = cargar_config()
     tiendas, navegador = tiendas_de(cfg, categoria)
@@ -5425,6 +5467,8 @@ if __name__ == "__main__":
         {"descubrir": descubrir, "prueba": prueba}[args[0]](args[1])
     elif len(args) >= 2 and args[0] == "volcar":
         volcar(args[1:])
+    elif len(args) >= 2 and args[0] == "modos":
+        modos(args[1:])
     elif len(args) >= 2 and args[0] == "dossier":
         dossier([a for x in args[1:] for a in re.findall(r"\d+", x)])
     elif len(args) >= 2 and args[0] == "login":
