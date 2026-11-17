@@ -2704,6 +2704,18 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
         cerrojo.unlink(missing_ok=True)
 
 
+def aviso_precarga(texto):
+    """Precarga: el progreso también por Telegram (Zeta, 18/11/2026: "avísame cada 50 páginas"). Sin token o sin
+    red, solo en pantalla."""
+    print(texto)
+    try:
+        token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
+        if token and chat:
+            enviar_telegram(token, chat, "📚 Precarga Chollometro: " + texto.strip())
+    except Exception as e:
+        log(f"aviso de precarga: {str(e)[:80]}")
+
+
 def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora):
     portada = CM_LISTADOS.get(listado, listado)
     con = bd()
@@ -2716,12 +2728,14 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
         n, anterior, primera = 0, None, None
         for n in (range(inicio, inicio + paginas) if base == portada else range(1, paginas + 1)):
             if base == portada and fin and datetime.now() >= fin:
-                print(f"  son las {hasta_hora}: paro. Para seguir otra noche, página de inicio {n}")
+                aviso_precarga(f"  {listado}: son las {hasta_hora}, paro. Para seguir otra noche, página de inicio {n}")
                 break
             try:
                 html, _ = descargar(_pagina(base, n))
             except Exception as e:
                 log(f"precarga chollometro {base} p{n}: {e}")
+                if base == portada:
+                    aviso_precarga(f"  {listado}: la página {n} falla ({str(e)[:60]}), paro. No se reintenta")
                 break
             hilos = hilos_chollometro(html)
             if not hilos:
@@ -2736,7 +2750,7 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
             primera = primera or ids
             if base == portada and n > inicio and (ids == primera or (listado == "destacados" and anterior is not None
                                                                    and viejo >= anterior + 86400)):
-                print(f"  la página {n} vuelve a lo de hoy: fin del historial")
+                aviso_precarga(f"  {listado}: la página {n} vuelve a lo de hoy, fin del historial")
                 break
             guardar_hilos(con, hilos)
             total += len(hilos)
@@ -2744,13 +2758,14 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
             if viejo < hasta:
                 break
             if base == portada and n % 50 == 0:
-                print(f"  {listado} página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}")
+                aviso_precarga(f"  {listado} página {n}: {datetime.fromtimestamp(viejo):%d/%m/%Y}, {total} hilos leídos")
             time.sleep(pausa * random.uniform(0.8, 1.2) if base == portada else pausa)
         print(f"{base}: hasta la página {n}, {total} posts guardados")
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_ok', ?)", (datetime.now().isoformat(timespec="minutes"),))
     con.commit()
     n_hot = con.execute("SELECT COUNT(*) FROM cm WHERE temp>=?", (CM_HOT,)).fetchone()[0]
-    print(f"copia local: {con.execute('SELECT COUNT(*) FROM cm').fetchone()[0]} posts, {n_hot} con {CM_HOT}° o más")
+    aviso_precarga(f"{listado} terminado. Copia local: {con.execute('SELECT COUNT(*) FROM cm').fetchone()[0]} hilos, "
+                   f"{n_hot} con {CM_HOT}° o más")
     con.close()
 
 # ------------------------------------------------------------------ rondas

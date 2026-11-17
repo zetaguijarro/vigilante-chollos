@@ -333,12 +333,14 @@ class PrecargaHistorial(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self._orig = v.DATOS, v.DB, v.descargar, v.time.sleep
+        self._orig = v.DATOS, v.DB, v.descargar, v.time.sleep, v.enviar_telegram
         v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
         v.time.sleep = lambda s: None
+        self.telegram = []  # el token sale del .env de Hermes: sin esto, las pruebas mandarían mensajes de verdad
+        v.enviar_telegram = lambda token, chat, texto, *a, **k: self.telegram.append(texto)
 
     def tearDown(self):
-        v.DATOS, v.DB, v.descargar, v.time.sleep = self._orig
+        v.DATOS, v.DB, v.descargar, v.time.sleep, v.enviar_telegram = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def red(self, ultima):
@@ -403,6 +405,20 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertTrue(all("/subiendo" in u for u in portada))
         self.assertEqual(len(portada), 5)
         self.assertIn("fin del historial", buf.getvalue())
+
+    def test_avisa_por_telegram_cada_50_paginas(self):
+        pedidas = self.red(ultima=120)
+        orig = v.token_telegram
+        v.token_telegram = lambda: "x"
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.precargar_chollometro(0, 200)
+        finally:
+            v.token_telegram = orig
+        progreso = [t for t in self.telegram if "página 50" in t or "página 100" in t]
+        self.assertEqual(len(progreso), 2, self.telegram)
+        self.assertTrue(any("fin del historial" in t for t in self.telegram))
+        self.assertTrue(any("terminado" in t for t in self.telegram))
 
     def test_sin_nuevos_con_cero_dias(self):
         pedidas = self.red(ultima=100)
