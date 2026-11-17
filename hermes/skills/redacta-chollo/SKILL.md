@@ -18,14 +18,24 @@ Si devuelve `error`, responde "#N: no hay decisión guardada" y para.
 ## 2. Escribe el archivo
 Escribe C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8, con solo estas dos claves:
 
-- "titulo": título sobrio, de 140 caracteres como mucho: marca, modelo y especificación clave. En ropa y calzado, las tallas de `tallas`. Sin precio, sin tienda, sin emojis y sin etiqueta: la etiqueta la pone el script.
-- "descripcion": en dos partes y sin encabezados.
-  1. Un párrafo de 4 a 6 frases: qué es, para quién es, qué lo distingue y para qué sirve.
-  2. Una línea en blanco y entre 6 y 10 características, una por línea, empezando por "• ".
+- "titulo": 140 caracteres como mucho: marca, modelo comercial y características clave. Sin precio, sin tienda, sin código alfanumérico interno, sin emojis y sin etiqueta (la etiqueta va en la INFO, la pone el script).
+  - Ropa y calzado: todas las tallas de `tallas` y su variante (color). Rango ("36 a 40") solo si están todas las intermedias; si hay huecos, enuméralas ("36, 37⅓, 38 y 40"). Si no caben en 140 caracteres, no las acortes ni las conviertas en rango: responde "#N espera: no caben las tallas en el título" y para.
+  - Videojuegos: nombre completo, edición y plataforma. No pongas "digital"; el formato físico sí se indica.
+  - Viajes: fechas y duración.
+- "descripcion": solo producto, en bloques. Cada bloque empieza con un encabezado con un emoji y el texto entre dobles asteriscos (el script lo convierte en negrita real), pegado a sus viñetas "• ". Una línea en blanco entre bloques. Pocos emojis, solo en los encabezados. Ejemplo:
 
-Usa solo `specs`, `resumen` y lo que dice el propio `nombre`. Nada inventado ni tomado de un modelo parecido; si hay menos de 6 características, pon las que haya. Sin precio, sin tienda, sin afirmaciones médicas ni de durabilidad.
+  🧥 **Diseño y materiales**
+  • Corte clásico, capucha y bolsillos laterales.
+  • 100% poliéster reciclado.
+
+  📏 **Tallas disponibles**
+  • M, L y XL en color gris.
+
+  Bloques útiles: características (o diseño y materiales), especificaciones, tallas disponibles (ropa y calzado). Composición de ropa y calzado solo si viene en `specs` de esta variante; si no, no la pongas. En electrónica, solo especificaciones de este modelo.
+
+Usa solo `specs`, `resumen` y lo que dice el propio `nombre`. Nada inventado ni tomado de un modelo parecido; si hay pocas características, pon las que haya. Sin precios, ahorro, históricos, comparadores, tienda, notas de comprobación, bromas ni consejos para combinar ropa. Sin afirmaciones médicas ni de durabilidad. No escribas "Recogida en tienda GRATIS" (no está verificada).
 
 ## 3. Entrega
-Ejecuta `PY V entregar N`. El script añade la etiqueta, los precios, la información y el enlace, y manda los 5 mensajes.
+Ejecuta `PY V entregar N`. El script añade la foto, el enlace, el precio y la INFO ADICIONAL, y manda los 6 mensajes en orden: foto, título, enlace, precio, INFO y descripción.
 
 Tu respuesta final es solo: "#N enviado".

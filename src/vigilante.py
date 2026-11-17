@@ -12,7 +12,7 @@ Uso (desde la raíz del proyecto: python src/vigilante.py ...):
   python vigilante.py dossier <n> [<n>...]      datos de la ficha para "verifica N" (lo usa Hermes)
   python vigilante.py login <tienda>             abre la tienda para que inicies sesión (se guarda)
   python vigilante.py informe [días]             qué aporta cada tienda (para quitar las que no)
-  python vigilante.py entregar <n>                manda la oferta verificada en 5 mensajes (formato móvil)
+  python vigilante.py entregar <n>                manda la oferta verificada en 6 mensajes (formato móvil)
   python vigilante.py recordar <n> <buena|dudosa|caducada> <motivo>   guarda el veredicto del modelo
                                                 (caducada: la oferta se acabó; avisa si vuelve a ese precio)
   python vigilante.py wrappers                crea vig_<categoria>.py para cada categoría
@@ -27,6 +27,7 @@ import re
 import sqlite3
 import sys
 import time
+import unicodedata
 import zlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -1235,7 +1236,7 @@ def lista_codigos(nombre):
     return [c for c in RE_CODIGO_MODELO.findall(nombre.upper()) if len(c) >= 5 and len(re.findall(r"\d", c)) >= 2
             and not RE_PROCESADOR.fullmatch(c)
             and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P)?", c)
-            and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE)\d*\w?", c)
+            and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE|HDR|DVB-?[TSC]|H)\d*\w?", c)
             and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)]  # medidas: 135X190, 75X45CM
 
 
@@ -1443,6 +1444,32 @@ def estado_chollometro(p, copia=None):
     if otros:
         return f"otra:{min(otros):g}"
     return "no" if copia["fresca"] else "?"
+
+
+def enlace_hilo(h):
+    """Enlace completo de un hilo de la copia local. Chollometro redirige /ofertas/<lo-que-sea>-<id> al hilo."""
+    slug = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", h["titulo"].lower())
+                  .encode("ascii", "ignore").decode()).strip("-")[:80].rstrip("-") or "oferta"
+    return f"https://www.chollometro.com/ofertas/{slug}-{h['id']}"
+
+
+def antecedentes_chollometro(nombre, copia=None, n=3):
+    """Hasta `n` hilos del mismo producto (o parecidos) en la copia local, del más reciente al más antiguo.
+    Reglas de formato de Zeta (17/11/2026): precio, grados, enlace completo y fecha; exacto o alternativa."""
+    if copia is None:
+        con = bd()
+        try:
+            copia = cargar_chollometro(con)
+        finally:
+            con.close()
+    # Solo el mismo producto: mismo código de modelo o mismo modelo con la regla estricta. Con mismo_post salían
+    # televisores de Philips y Xiaomi como antecedentes de una Samsung TQ55Q7F5AU (17/11/2026).
+    cods = codigos_modelo(nombre)
+    hilos = sorted((h for h in copia["hilos"] if (cods & codigos_modelo(h["titulo"]))
+                    or (not cods and mismo_modelo(nombre, h["titulo"]))), key=lambda h: -h["publicado"])
+    return [{"precio": h["precio"], "temp": round(h["temp"]), "caducado": bool(h["caducado"]),
+             "fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "url": enlace_hilo(h),
+             "exacto": True, "titulo": h["titulo"][:80]} for h in hilos[:n]]
 
 
 # Familias de producto: no pesa lo mismo una categoría de móviles que una de impresoras (Zeta, 17/11/2026).
@@ -1661,10 +1688,10 @@ def demanda_probada_ok(p):
 # Tiendas leídas por un comparador: "Sin precio oficial de PCComponentes" = la tienda no lo vende y el
 # número de la tarjeta es otro (secadora AEG a 9 €, DJI Power 1000 a 49 €, localizador a 1 €).
 RE_SIN_PRECIO_OFICIAL = re.compile(r"sin precio oficial", re.I)
-# Tallas de niño en moda y deporte (Spartoo: "Zapatos Niña ... V Inf", "AC+ PS"). Júnior/GS se queda:
-# son tallas 35-40 que también compran adultos (Zeta publicó unas Gazelle Bold júnior).
+# Tallas de niño en ropa y calzado (Spartoo: "Zapatos Niña ... V Inf", "AC+ PS"). Desde el 17/11/2026 también
+# júnior/GS/teen: reglas de formato de Zeta ("ropa y calzado infantil/junior quedan fuera de las próximas tandas").
 RE_INFANTIL = re.compile(r"(?<!\w)(?:niñ[oa]s?|nin[oa]s?|beb[eé]s?|infantil|inf|ps|td|toddler|baby|kids?|"
-                         r"preescolar|pre-?school)(?!\w)", re.I)
+                         r"preescolar|pre-?school|j[uú]nior|jr|gs|youth|teen)(?!\w)", re.I)
 PRECIO_SOSPECHOSO = 0.4  # por debajo del 40 % del mercado o del mínimo histórico: error de lectura
 
 
@@ -2952,15 +2979,22 @@ def _post(url, datos, timeout=20):
         return json.loads(r.read().decode("utf-8"))
 
 
-def enviar_telegram(token, chat_id, texto, foto=None, teclado=None):
+def enviar_telegram(token, chat_id, texto, foto=None, teclado=None, html=False, hilo=None):
+    """html: el texto ya viene en HTML de Telegram (negrita real). hilo: message_thread_id del tema del grupo."""
     base = f"https://api.telegram.org/bot{token}/"
     extra = {"reply_markup": teclado} if teclado else {}
+    if html:
+        extra["parse_mode"] = "HTML"
+    if hilo:
+        extra["message_thread_id"] = str(hilo)
     if foto and len(texto) <= 1024:
         try:
             if _post(base + "sendPhoto", {"chat_id": chat_id, "photo": foto, "caption": texto, **extra}).get("ok"):
                 return True
         except Exception as e:  # foto que Telegram no acepta: va sin foto
             log(f"telegram foto: {str(e)[:80]}")
+    if not texto.strip():
+        return False  # solo era la foto y no se pudo mandar
     try:
         return bool(_post(base + "sendMessage", {"chat_id": chat_id, "text": texto[:4096],
                                                  "disable_web_page_preview": "true", **extra}).get("ok"))
@@ -3397,15 +3431,15 @@ def dossier_items(ids, ficha_manual=None):
     # "num" es el número de la lista (#N); "id" dentro de cada candidato es el precio de Idealo.
     salida, filas = [], []
     for n in ids:
-        fila = con.execute("SELECT id, base, datos FROM lista WHERE id=?", (int(n),)).fetchone()
+        fila = con.execute("SELECT id, base, datos, fecha FROM lista WHERE id=?", (int(n),)).fetchone()
         salida.append({"num": int(n), "error": "no existe"} if not fila else None)
         if fila:
             filas.append((len(salida) - 1, *fila))
 
     def con_lector(nav):
-        for pos, i, base, datos in filas:
+        for pos, i, base, datos, fecha in filas:
             c = json.loads(datos)
-            item = {"num": i, **c}
+            item = {"num": i, **c, "detectada": fecha}
             m = con.execute("SELECT veredicto, motivo, fecha FROM modelos WHERE base=?", (base,)).fetchone()
             if m:
                 item["memoria"] = f"{m[0]} ({m[2][:10]}): {m[1]}"
@@ -3430,6 +3464,7 @@ def dossier_items(ids, ficha_manual=None):
                     ahora = item["ficha"].get("precio_ahora")
                     c_ch = estado_chollometro({"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]})
                     item["ch_ahora"] = c_ch
+                    item["antecedentes"] = antecedentes_chollometro(c["n"])
                     if c_ch == "misma":
                         item["aviso_ch"] = "ya está publicado en Chollometro en esta tienda: descártalo"
                     if ahora and abs(ahora - c["p"]) > 0.01:
@@ -3446,7 +3481,7 @@ def dossier_items(ids, ficha_manual=None):
                         item["ficha"]["specs"] = (item["ficha"].get("specs") or []) + extra["specs"]
                         item["ficha"]["specs_fuente"] = extra["url"]
             salida[pos] = item
-    if not ficha_manual and any(json.loads(d).get("t") in con_nav for _, _, _, d in filas):
+    if not ficha_manual and any(json.loads(d).get("t") in con_nav for _, _, _, d, _ in filas):
         try:
             with Navegador(cfg) as nav:
                 con_lector(nav)
@@ -3582,38 +3617,104 @@ def decidir_item(item, cfg=None):
     return fin("pasa", prueba, etiqueta=etiqueta, prueba=prueba, precio=precio, clase=clase)
 
 
+def eur(x):
+    """44.95 -> '44,95 €'; 60.0 -> '60 €'; 1100 -> '1.100 €'."""
+    if x is None:
+        return "?"
+    entero = abs(x - round(x)) < 0.005
+    txt = f"{x:,.0f}" if entero else f"{x:,.2f}"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+
+def limpiar_envio(txt):
+    """'Envío: Desde 15,95 € Devolución: Gratuita 30 días Garantía...' -> 'Desde 15,95 €'."""
+    if not txt:
+        return None
+    txt = re.sub(r"^\s*(?:env[ií]o|gastos de env[ií]o|portes)\s*:?\s*", "", str(txt), flags=re.I)
+    txt = re.split(r"\s+(?:devoluci[oó]n|garant[ií]a|recogida|entrega estimada)\b", txt, flags=re.I)[0]
+    return txt.strip(" .;,")[:90] or None
+
+
+def _hora_entrega(detectada):
+    """'🕒 Detectada 15:31 · Enviada 15:39 del 17/11/2026' (con la fecha de detección si fue otro día)."""
+    ahora = ahora_madrid()
+    try:
+        det = datetime.fromisoformat(detectada)
+        txt = det.strftime("%H:%M") if det.date() == ahora.date() else det.strftime("%d/%m %H:%M")
+    except (TypeError, ValueError):
+        txt = "?"
+    return f"🕒 Detectada {txt} · Enviada {ahora:%H:%M} del {ahora:%d/%m/%Y}"
+
+
 def bloques_de_codigo(item, d):
-    """Los tres bloques de la entrega que no necesitan redacción (precios, información y enlace) y los
-    datos para que la IA, o la plantilla, escriban el título y la descripción."""
+    """Los bloques de la entrega que no necesitan redacción (precio, INFO ADICIONAL y enlace) y los datos para
+    que la IA, o la plantilla, escriban el título y la descripción. Reglas de formato de Zeta (17/11/2026):
+    resultado, no proceso; referencias bien etiquetadas (PVP no es habitual); lo desconocido se dice."""
     ficha, h = item.get("ficha") or {}, item.get("historico") or {}
     precio = d["precio"]
-    precios = [f"Precio inicial publicado: {item['p']:g} €", f"Precio actual: {precio:g} €"]
-    if h.get("habitual"):
-        precios.append(f"Referencia: {h['habitual']:g} € (precio habitual en {h.get('fuente', 'histórico')})")
-    elif item.get("id"):
-        precios.append(f"Referencia: {item['id']:g} € (siguiente precio en otras tiendas)")
-    if item.get("a"):
-        precios.append(f"PVP de tienda: {item['a']:g} € (referencia de la tienda, no verificada)")
-    precios.append(f"Envío: {ficha.get('envio') or 'no indicado en la ficha'}")
+    fuente = h.get("fuente", "histórico")
     tallas = [v for v in ficha.get("variantes") or [] if not v.endswith("agotada")]
-    info = ["INFO ADICIONAL", f"Comprobado: {item.get('comprobado', '')}", f"Etiqueta: {d['etiqueta']}",
-            f"Prueba: {d['prueba']}"]
-    if ficha.get("stock"):
-        info.append(f"Stock: {ficha['stock']}")
-    if tallas:
-        info.append("Tallas o variantes con stock: " + ", ".join(v.split(":")[0] for v in tallas[:15]))
-    if ficha.get("vendedor"):
-        info.append(f"Vendedor: {ficha['vendedor']}")
+    if familia_de(item.get("n", "")) not in ("ropa", "calzado"):
+        tallas = []  # en un televisor, las "variantes" de la ficha eran su propio nombre
+    nombres_tallas = [v.split(":")[0] for v in tallas[:15]]
+    envio = limpiar_envio(ficha.get("envio"))
+    pvp = item["a"] if item.get("a") and item["a"] > precio else None
+    # 4 · Precio: oferta, referencia acreditada y portes, por separado. El total solo si está comprobado.
+    precios = [eur(precio)]
+    if h.get("habitual"):
+        precios.append(f"Precio habitual: {eur(h['habitual'])} (en {fuente})")
+    if pvp:
+        precios.append(f"PVP de la tienda: {eur(pvp)}")
+    precios.append(f"Envío: {envio}" if envio else "Envío: portes no verificados.")
+    # 5 · INFO ADICIONAL
+    info = [f"🏷️ {d['etiqueta']}", ""]
+    if h.get("habitual") and h["habitual"] > precio:
+        info.append(f"💶 {eur(precio)} frente a su precio habitual de {eur(h['habitual'])} en {fuente}: "
+                    f"-{round((h['habitual'] - precio) / h['habitual'] * 100)} %.")
+    elif pvp:
+        info.append(f"💶 {eur(precio)} frente a PVP de {eur(pvp)}: -{round((pvp - precio) / pvp * 100)} % sobre "
+                    f"esa referencia, no sobre habitual probado.")
+    else:
+        info.append(f"💶 {eur(precio)}.")
+    info += ["", f"🚚 Envío: {envio}." if envio else "🚚 Portes no verificados: total según cesta.", "",
+             _hora_entrega(item.get("detectada")), ""]
     if h.get("minimo"):
-        info.append(f"Mínimo histórico: {h['minimo']:g} € ({h.get('fuente', '')})")
-    if ficha.get("cupones"):
-        info.append("Cupones vistos en la ficha (sin probar): " + ", ".join(ficha["cupones"]))
-    info.append(f"Vigencia: {ficha.get('vigencia') or 'no publicada'}")
-    info.append(f"Chollometro: {item.get('ch_ahora') or item.get('ch') or 'no'}")
-    for nombre, enlace in (item.get("buscar_chollometro") or {}).items():
-        info.append(f"PENDIENTE antes de publicar, buscar por {nombre}: {enlace}")
+        info.append(f"📉 Mínimo registrado en {fuente}: {eur(h['minimo'])}"
+                    + (f"; habitual {eur(h['habitual'])}." if h.get("habitual") else "."))
+    elif item.get("id"):
+        info.append(f"📉 Comparación puntual: siguiente precio en otras tiendas {eur(item['id'])}. "
+                    f"Habitual no acreditado.")
+    elif item.get("hot"):
+        info.append(f"📉 Ya fue chollo caliente en Chollometro: {item['hot']}.")
+    else:
+        info.append("📉 Habitual no acreditado.")
+    info.append("")
+    antes = item.get("antecedentes") or []
+    for a in antes[:3]:
+        tipo = "Antecedente" if a.get("exacto") else "Alternativa"
+        info.append(f"🔎 {tipo}: {eur(a['precio']) if a.get('precio') else 'sin precio'} · {a['temp']}° · "
+                    f"{a['fecha']}{' (caducado)' if a.get('caducado') else ''} · {a['url']}")
+    if not antes:
+        busqueda = next(iter((item.get("buscar_chollometro") or {}).values()), None)
+        info.append("🔎 Chollometro: no localizado en la consulta." + (f" Búsqueda manual: {busqueda}" if busqueda else ""))
+    avisos = []
+    if item.get("aviso_ch"):
+        avisos.append(item["aviso_ch"])
     if item.get("aviso"):
-        info.append(f"Aviso: {item['aviso']}")
+        avisos.append(item["aviso"])
+    if nombres_tallas:
+        avisos.append("Tallas con stock: " + ", ".join(nombres_tallas))
+    if ficha.get("vendedor"):
+        avisos.append(f"Vendido por {ficha['vendedor']}")
+    if ficha.get("cupones"):
+        avisos.append("Cupones vistos en la ficha, sin probar: " + ", ".join(ficha["cupones"]))
+    if not ficha.get("stock"):
+        avisos.append("Stock no verificado")
+    if not (ficha.get("foto") or item.get("img")):
+        avisos.append("Sin foto verificada del producto")
+    if avisos:
+        info.append("")
+        info += [f"⚠️ {a}." for a in avisos]
     return {"precios": "\n".join(precios), "info": "\n".join(info), "enlace": item.get("u", ""),
             "foto": ficha.get("foto") or item.get("img"), "etiqueta": d["etiqueta"],
             "redaccion": {"num": item["num"], "etiqueta": d["etiqueta"], "nombre": item.get("n"),
@@ -3622,13 +3723,26 @@ def bloques_de_codigo(item, d):
 
 
 def plantilla_redaccion(r):
-    """Título y descripción sin IA (0 tokens): correctos y sosos. Para `redaccion: plantilla` o sin Hermes."""
+    """Título y descripción sin IA (0 tokens): correctos y sosos. Para `redaccion: plantilla` o sin Hermes.
+    Descripción en bloques: encabezado con emoji y **negrita** pegado a sus viñetas, una línea entre bloques."""
     titulo = (r.get("nombre") or "")[:120]
     if r.get("tallas"):
-        titulo = f"{titulo} (tallas {', '.join(r['tallas'][:8])})"[:140]
-    cuerpo = (r.get("resumen") or r.get("titulo_ficha") or r.get("nombre") or "").strip()
-    specs = "\n".join(f"• {x}" for x in (r.get("specs") or [])[:10])
-    return {"titulo": titulo, "descripcion": cuerpo + ("\n\n" + specs if specs else "")}
+        titulo = f"{titulo}, tallas {', '.join(r['tallas'][:8])}"[:140]
+    bloques = []
+    specs = [x for x in (r.get("specs") or [])[:10] if x]
+    if specs:
+        bloques.append("📋 **Características**\n" + "\n".join(f"• {x}" for x in specs))
+    elif r.get("resumen"):
+        bloques.append("📋 **Características**\n• " + str(r["resumen"]).strip())
+    if r.get("tallas"):
+        bloques.append("📏 **Tallas disponibles**\n• " + ", ".join(r["tallas"][:15]))
+    return {"titulo": titulo, "descripcion": "\n\n".join(bloques) or (r.get("nombre") or "")}
+
+
+def a_html_telegram(texto):
+    """'🧥 **Diseño**' -> '🧥 <b>Diseño</b>' con el resto escapado: negrita real en Telegram (parse_mode HTML)."""
+    partes = re.split(r"\*\*(.+?)\*\*", escape(texto, quote=False))
+    return "".join(f"<b>{p}</b>" if i % 2 else p for i, p in enumerate(partes))
 
 
 def ficha_de_args(args):
@@ -3739,14 +3853,16 @@ def redaccion(n):
     print(json.dumps(b["redaccion"], ensure_ascii=False, separators=(",", ":")))
 
 
-BLOQUES = ("titulo", "precios", "info", "enlace", "descripcion")
+# Orden de envío de las reglas de formato de Zeta (17/11/2026): foto, título, enlace, precio, INFO, descripción.
+BLOQUES = ("titulo", "enlace", "precios", "info", "descripcion")
 
 
 def entregar(n, callado=False):
-    """Formato móvil: la IA deja vigilante_data/entrega_N.json con los 5 bloques y el script
-    los manda como 5 mensajes (el primero con la foto). Así la IA no repite texto y el formato
-    sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
-    "descripcion": precios, información, enlace, foto y etiqueta salen de la decisión por código."""
+    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 6 mensajes: foto,
+    título, enlace, precio, INFO ADICIONAL y descripción (con negrita real). Así la IA no repite texto y el
+    formato sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
+    "descripcion": precio, INFO, enlace y foto salen de la decisión por código. La etiqueta va en la INFO,
+    no en el título. Con `entrega.hilos` {categoría: id del tema}, va al tema de su categoría."""
     decir = (lambda *a: None) if callado else print
     archivo = DATOS / f"entrega_{int(n)}.json"
     decision = DATOS / f"decision_{int(n)}.json"
@@ -3764,8 +3880,8 @@ def entregar(n, callado=False):
         for k in ("precios", "info", "enlace"):  # lo calculado por código manda sobre lo que escriba la IA
             b[k] = hecha[k]
         b.setdefault("foto", hecha.get("foto"))
-        titulo = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(b.get("titulo", "")))
-        b["titulo"] = f"[{hecha['etiqueta']}] {titulo}".strip()
+    # Título sin etiqueta, precio, tienda ni código interno: la etiqueta va en la INFO.
+    b["titulo"] = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(b.get("titulo", ""))).strip()[:140]
     faltan = [k for k in BLOQUES if not str(b.get(k, "")).strip()]
     if faltan:
         decir(f"#{n}: faltan bloques: {', '.join(faltan)}")
@@ -3775,14 +3891,25 @@ def entregar(n, callado=False):
     con.close()
     d = json.loads(fila[0]) if fila else {}
     foto = b.get("foto") or d.get("img")
-    token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
+    entrega = cargar_config().get("entrega", {})
+    token, chat = token_telegram(), str(entrega.get("chat_id", ""))
     if not (token and chat):
         decir("falta token o chat_id")
         return False
-    ok = enviar_telegram(token, chat, str(b["titulo"]).strip(), foto)
-    for k in BLOQUES[1:]:
-        ok = enviar_telegram(token, chat, str(b[k]).strip()) and ok
-    decir(f"#{n} entregado en 5 mensajes" if ok else f"#{n}: algún mensaje no se pudo enviar")
+    hilo = (entrega.get("hilos") or {}).get(d.get("cat"))
+    extra = {"hilo": hilo} if hilo else {}
+    ok, enviados = True, 0
+    if foto:
+        ok = enviar_telegram(token, chat, "", foto, **extra)
+        enviados += 1
+    for k in BLOQUES:
+        texto = str(b[k]).strip()
+        if k == "descripcion":
+            ok = enviar_telegram(token, chat, a_html_telegram(texto), html=True, **extra) and ok
+        else:
+            ok = enviar_telegram(token, chat, texto, **extra) and ok
+        enviados += 1
+    decir(f"#{n} entregado en {enviados} mensajes" if ok else f"#{n}: algún mensaje no se pudo enviar")
     if ok:
         archivo.unlink(missing_ok=True)
         if hecha:
@@ -4201,8 +4328,9 @@ def ronda(categoria, solo=None):
                 continue  # sin enlace a la ficha no se puede verificar (Hermes: "Footlocker sin url ni ficha")
             if RE_SIN_PRECIO_OFICIAL.search(p["nombre"]):
                 continue  # la tienda no lo vende: el precio leído no es suyo
-            if categoria in f.get("sin_infantil_en", []) and RE_INFANTIL.search(p["nombre"]):
-                continue
+            if (categoria in f.get("sin_infantil_en", []) or familia_de(p["nombre"]) in ("calzado", "ropa")) \
+                    and RE_INFANTIL.search(p["nombre"]):
+                continue  # 17/11/2026: ropa y calzado infantil y junior, fuera en cualquier categoría
             if r["marca"] and not marca_ok(p, rx, tienda):
                 continue
             d = (1 - p["precio"] / p["precio_antes"]) if p["precio_antes"] else None

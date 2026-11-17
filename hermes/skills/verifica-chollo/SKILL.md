@@ -1,6 +1,6 @@
 ---
 name: verifica-chollo
-description: Verifica a fondo los candidatos de chollos que el vigilante envía por Telegram cuando Zeta escribe "verifica N" (o "verifica 3 7 12") y deja la publicación lista para Chollometro., en 5 mensajes.
+description: Verifica a fondo los candidatos de chollos que el vigilante envía por Telegram cuando Zeta escribe "verifica N" (o "verifica 3 7 12") y deja la publicación lista para Chollometro, en 6 mensajes.
 ---
 
 # Verifica chollo
@@ -136,24 +136,20 @@ Los porcentajes son "al menos", no "alrededor de", y no sustituyen la comparaci�
 ## Redacción
 - Datos verificados separados de impresiones: el veredicto es opinión y se marca como tal ("Opinión: ...").
 - Sin afirmaciones médicas ni de durabilidad sin prueba.
-- Incluye siempre la hora de la comprobación (comprobado).
+- La hora va en una sola línea de la INFO ("🕒 Detectada ... · Enviada ..."), sin segundos ni relato de controles.
 
-## 4. Entrega (formato móvil, siempre)
-Si pasa, escribe el archivo C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8, con estas 5 claves:
+## 4. Entrega (reglas de formato de Zeta, 17/11/2026)
+Si pasa, escribe el archivo C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8, con estas 5 claves. El script manda 6 mensajes en este orden: foto, título, enlace, precio, INFO y descripción.
 
-- "titulo": [EXCEPCIONAL], [DESTACADOS] o [SUBIENDO] + título sobrio: marca, modelo y especificación clave. En ropa y calzado, las tallas disponibles. Sin precio, sin emojis y sin tienda.
-- "precios": "Precio inicial publicado: X €\nPrecio actual: Y €\nReferencia: Z € (fuente)\nEnvío: E €\nTotal: T € (orientativo, cesta no probada)"
-- "info": INFO ADICIONAL: comprobado (hora), stock y variantes, vendedor, comparables exactos con portes (y similares aparte), mínimo histórico (solo si es independiente, con fecha y fuente), cupón con condiciones, vigencia (o "no publicada"), devolución, estado en Chollometro, "PENDIENTE antes de publicar: buscar en Chollometro <enlaces>" y "Opinión: merece la pena / dudosa", con el porqué en una línea, comparado con la alternativa.
-- "enlace": el enlace u, solo.
-- "descripcion": detallada, en dos partes y sin encabezados:
-  1. Un párrafo de 4 a 6 frases: qué es, para quién es, qué lo distingue y para qué sirve, redactado a partir de ficha.specs, ficha.resumen y el nombre del producto.
-  2. Una línea en blanco y las características clave, una por línea empezando por "• ": entre 6 y 10, las más útiles para decidir la compra (en tecnología: procesador, RAM, almacenamiento, pantalla, gráficos, batería/autonomía, conectividad, puertos, sistema operativo, peso; en audio: cancelación de ruido, autonomía, Bluetooth, códecs, resistencia al agua; en ropa: composición y tallas disponibles). Formato "• Nombre: valor".
-  Fuentes, por este orden: ficha.specs (si trae ficha.specs_fuente, son del mismo modelo en un comparador), ficha.resumen y las especificaciones que aparecen en el propio nombre del producto (n). Si con eso no llegas a 6 características, pon las que haya: nada inventado ni sacado de un modelo parecido.
-  Sin precio, sin tienda y sin "letra pequeña". En multicompras: 5 o 6 productos de ejemplo con su enlace y un listado de nombres.
+- "titulo": 140 caracteres como mucho: marca, modelo comercial y características clave. Sin etiqueta, precio, tienda, código interno ni emojis. Ropa y calzado: todas las tallas verificadas y su variante; rango solo si están todas las intermedias, si no, enuméralas; si no caben, "#N espera: no caben las tallas en el título". Videojuegos: nombre completo, edición y plataforma, sin "digital". Viajes: fechas y duración. Código de cupón en el título si hace falta para la oferta.
+- "precios": la oferta en euros; debajo, la referencia solo si está acreditada y con su nombre ("PVP de la tienda: X €" o "Precio habitual: X € (fuente)"); "Envío: ..." o "Envío: portes no verificados."; "Total a pagar" solo si está comprobado. Con reembolso: lo que se paga, el reembolso posible y el neto condicionado, por separado.
+- "info": INFO ADICIONAL, resultado y no proceso, en viñetas con emoji y una línea en blanco entre ellas, en este orden: "🏷️ ETIQUETA"; "💶" precio, referencia bien etiquetada y descuento (y código y precio final si hay cupón); "🚚" portes y condiciones, lo desconocido se dice; "🕒 Detectada HH:MM · Enviada HH:MM del DD/MM/AAAA"; "📉" valoración fundamentada (mínimo exacto y fecha, habitual acreditado o comparación puntual con sus límites; PVP no es habitual); "🔎" hasta tres antecedentes de Chollometro, del más reciente al más antiguo, con precio, grados, enlace completo y fecha, separando producto exacto de alternativas (si no hay: "no localizado en la consulta"); "⚠️" avisos que cambian la oferta (variante, tallas, socio, cupón, contradicciones, total no comprobado). Solo enlaces de Chollometro. Sin narrar búsquedas, comprobaciones ni botones.
+- "enlace": el enlace u, solo, sin afiliación.
+- "descripcion": solo producto, en bloques con encabezado de emoji y **negrita** (dobles asteriscos), pegado a sus viñetas "• ", y una línea en blanco entre bloques. Características útiles, materiales y tallas. Composición de ropa solo si está comprobada en esta variante. Fuentes: ficha.specs, ficha.resumen y el nombre (n); nada inventado ni de un modelo parecido. Sin precios, ahorro, históricos, comparadores, tienda, notas de comprobación, bromas ni consejos para combinar. Recogida en tienda GRATIS, solo si está verificada y como primera línea. Videojuegos: tráiler verificado de YouTube primero; si no hay uno válido, dilo en ⚠️, no lo inventes. Reembolsos: un bloque "🎁 **Reembolso del fabricante**" con el trámite.
 
-Si la foto de la ficha es mejor que img, añade "foto": url.
+Si la foto de la ficha es mejor que img, añade "foto": url. Foto real del producto y variante exactos; si no hay, el script lo declara en la INFO.
 
-Después ejecuta `PY V entregar N`. El script manda los 5 mensajes: el primero con la foto, y los otros cuatro con los precios, la información, el enlace y la descripción.
+Después ejecuta `PY V entregar N`.
 
 Tu respuesta final es solo: "#N enviado".
 Si no pasa: "#N descartado: motivo con números", en una línea, sin archivo.

@@ -1760,7 +1760,7 @@ class ModoTelegram(Base):
         v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
         self.enviados, self.teclados = [], []
         self._orig_tg = (v.enviar_telegram, v.token_telegram)
-        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: (self.enviados.append((chat, texto, foto)), self.teclados.append(teclado)) and True
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: (self.enviados.append((chat, texto, foto)), self.teclados.append(teclado)) and True
         v.token_telegram = lambda: "123:ABC"
         self.red.tiendas = {"mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro Negro", "m": "Xiaomi", "e": "6941812790000",
                                             "p": 39.99, "a": 79.99}],
@@ -1948,13 +1948,25 @@ class ModoTelegram(Base):
                 {"titulo": "[EXCEPCIONAL] Xiaomi Redmi Buds 6 Pro", "descripcion": "Texto.", "precios": "inventado"}), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(n))
+            # Reglas de formato de Zeta (17/11/2026): 6 mensajes, foto, título, enlace, precio, INFO, descripción.
             textos = [t for _, t, _ in self.enviados]
-            self.assertEqual(len(textos), 5)
-            self.assertEqual(textos[0], "[SUBIENDO] Xiaomi Redmi Buds 6 Pro")
-            self.assertIn("Precio actual: 30 €", textos[1])
-            self.assertIn("Referencia: 41.5 € (siguiente precio en otras tiendas)", textos[1])
-            self.assertIn("Prueba: otras tiendas", textos[2])
-            self.assertIn("PENDIENTE antes de publicar", textos[2])
+            self.assertEqual(len(textos), 6)
+            self.assertEqual((textos[0], self.enviados[0][2]), ("", "https://img/x.jpg"), "la foto, sola")
+            self.assertEqual(textos[1], "Xiaomi Redmi Buds 6 Pro", "sin etiqueta en el título")
+            self.assertTrue(textos[2].startswith("http"))
+            self.assertTrue(textos[3].startswith("30 €"), textos[3])
+            self.assertIn("PVP de la tienda: 59,99 €", textos[3])
+            self.assertIn("Envío: portes no verificados", textos[3])
+            self.assertNotIn("41,5", textos[3], "el mercado no es una referencia del bloque de precio")
+            info = textos[4]
+            self.assertTrue(info.startswith("🏷️ SUBIENDO"))
+            self.assertIn("💶 30 € frente a PVP de 59,99 €: -50 % sobre esa referencia, no sobre habitual probado.", info)
+            self.assertIn("📉 Comparación puntual: siguiente precio en otras tiendas 41,50 €", info)
+            self.assertRegex(info, r"🕒 Detectada \S+ · Enviada \d\d:\d\d del \d\d/\d\d/\d{4}")
+            self.assertIn("🔎 Chollometro: no localizado en la consulta. Búsqueda manual: https://www.chollometro.com/search", info)
+            for proceso in ("Comprobado:", "Prueba:", "PENDIENTE", "Precio inicial publicado"):
+                self.assertNotIn(proceso, info + textos[3])
+            self.assertEqual(textos[5], "Texto.")
             self.assertFalse((v.DATOS / f"decision_{n}.json").exists())
             # Descarte: lo dice el código por Telegram, con números, y guarda el veredicto del modelo.
             self.enviados.clear()
@@ -1976,10 +1988,31 @@ class ModoTelegram(Base):
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n)
             self.assertTrue(d["entregado"])
-            self.assertEqual(len(self.enviados), 5)
-            self.assertIn("• Autonomía: 36 h", self.enviados[4][1])
+            self.assertEqual(len(self.enviados), 6)
+            self.assertIn("📋 <b>Características</b>\n• Autonomía: 36 h", self.enviados[5][1], "negrita real")
+
         finally:
             v.dossier_items = orig
+
+    def test_formato_de_ficha(self):
+        self.assertEqual((v.eur(44.95), v.eur(60.0), v.eur(1100), v.eur(41.5)), ("44,95 €", "60 €", "1.100 €", "41,50 €"))
+        self.assertEqual(v.a_html_telegram("🧥 **Diseño & materiales**\n• 100% <algodón>"),
+                         "🧥 <b>Diseño &amp; materiales</b>\n• 100% &lt;algodón&gt;")
+        self.assertTrue(v.enlace_hilo({"titulo": "Lorus Reloj Analógico", "id": 2074140})
+                        .endswith("/ofertas/lorus-reloj-analogico-2074140"))
+        copia = {"hilos": v.hilos_chollometro(cm_html([
+            hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 36.0, temp=850, dias=40, caducado=True),
+            hilo("Xiaomi Redmi Buds 6 Pro", "MediaMarkt", 39.0, temp=120, dias=5)])), "fresca": True}
+        a = v.antecedentes_chollometro("Xiaomi Redmi Buds 6 Pro Negro", copia)
+        self.assertEqual([(x["precio"], x["temp"], x["caducado"]) for x in a], [(39.0, 120, False), (36.0, 850, True)],
+                         "del más reciente al más antiguo")
+        self.assertTrue(a[0]["url"].startswith("https://www.chollometro.com/ofertas/xiaomi-redmi-buds-6-pro-"))
+        # Otro televisor del mismo tamaño no es antecedente de una Samsung TQ55Q7F5AU.
+        tv = {"hilos": v.hilos_chollometro(cm_html([hilo("TV Philips LED 55PUS7000 55 4K Ultra HD Smart TV HDR10+ DVB-T2", "Amazon", 297.99),
+                                                     hilo("Samsung TQ55Q7F5AU 55 QLED 4K", "Amazon", 399.0)])), "fresca": True}
+        self.assertEqual([x["precio"] for x in v.antecedentes_chollometro(
+            "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED HDR10+ Tizen Smart TV", tv)], [399.0])
+        self.assertEqual(v.limpiar_envio("Envío: Desde 15,95 € Devolución: Gratuita 30 días Garantía: 3 años"), "Desde 15,95 €")
 
     def test_decidir_con_la_ficha_que_lee_hermes(self):
         # #189 (17/11/2026): PcComponentes da 403 al script. Hermes abre la ficha y pasa precio y stock.
@@ -2287,10 +2320,10 @@ class ReglasInstinct(Base):
         c["categorias"]["tecnologia"]["precio_max"] = 1500
         self.assertEqual(v.reglas_de(c, "tecnologia", "mediamarkt.es")["precio_max"], 1500)
 
-    def test_entrega_en_5_mensajes(self):
+    def test_entrega_en_6_mensajes(self):
         enviados = []
         orig = (v.enviar_telegram, v.token_telegram)
-        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: enviados.append((texto, foto)) or True
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: enviados.append((texto, foto)) or True
         v.token_telegram = lambda: "x"
         c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
         c["entrega"] = {"modo": "telegram", "chat_id": "1"}
@@ -2306,8 +2339,10 @@ class ReglasInstinct(Base):
             (v.DATOS / "entrega_7.json").write_text(json.dumps(bloques), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(7))
-            self.assertEqual([e[0] for e in enviados], list(bloques.values()))
-            self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "foto en el primer mensaje")
+            # Reglas de formato de Zeta (17/11/2026): foto sola, título sin etiqueta, enlace, precio, INFO, descripción.
+            self.assertEqual([e[0] for e in enviados], ["", "JBL Flip 6 altavoz Bluetooth", "https://t.es/jbl",
+                                                        "Precio inicial: 149 €", "Mínimo histórico: 79 €", "Altavoz portátil."])
+            self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "la foto, sola, en el primer mensaje")
             self.assertTrue(all(f is None for _, f in enviados[1:]))
             self.assertFalse((v.DATOS / "entrega_7.json").exists())
             (v.DATOS / "entrega_7.json").write_text(json.dumps({"titulo": "x"}), encoding="utf-8")
@@ -2378,7 +2413,7 @@ class SilencioYUltimaComprobacion(Base):
         v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
         self.enviados = []
         self._orig_sil = (v.enviar_telegram, v.token_telegram, v.ahora_madrid)
-        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: self.enviados.append(texto) or True
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: self.enviados.append(texto) or True
         v.token_telegram = lambda: "x"
         self.hora = "14:30"
         v.ahora_madrid = lambda: datetime.strptime(self.hora, "%H:%M")
@@ -2507,7 +2542,7 @@ class Sesiones(Base):
         v.CONFIG.write_text(json.dumps(c), encoding="utf-8")
         self.avisos = []
         self._o = (v.enviar_telegram, v.token_telegram)
-        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None: self.avisos.append(texto) or True
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: self.avisos.append(texto) or True
         v.token_telegram = lambda: "x"
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}],
                             "pccomponentes": [{"n": "Sony WH-CH520", "m": "Sony", "p": 40, "a": 60}]}
@@ -3228,9 +3263,10 @@ class AjusteBasura16Nov(unittest.TestCase):
     def test_infantil(self):
         for n in ("Zapatos Niña Zapatillas bajas Puma Smash 3.0 Hearty V Inf Blanco / Rosa",
                   "Zapatillas bajas Puma Puma Caven III AC+ PS Blanco / Rosa",
-                  "Nike Air Max 90 - Bebés", "Camiseta infantil Adidas", "Nike Revolution 7 TD"):
+                  "Nike Air Max 90 - Bebés", "Camiseta infantil Adidas", "Nike Revolution 7 TD",
+                  "Adidas Gazelle Bold júnior rosa", "Nike Dunk Low GS", "Sujetador teen"):  # junior fuera desde el 17/11
             self.assertTrue(v.RE_INFANTIL.search(n), n)
-        for n in ("Adidas Gazelle Bold júnior rosa", "New Balance 550 blancas", "Sonic Racing CrossWorlds - PS5",
+        for n in ("New Balance 550 blancas", "Sonic Racing CrossWorlds - PS5",
                   "Asics Gel-Rocket 12 Hombre"):
             self.assertFalse(v.RE_INFANTIL.search(n), n)
 

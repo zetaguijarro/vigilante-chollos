@@ -52,7 +52,7 @@ Habla con Zeta en español, directo y con sinceridad: quiere que des tu opinión
 
    - La IA solo **juzga** (calidad, comparativa y veredicto) y **redacta**.
 
-   - Escribe `vigilante_data/entrega_N.json` y ejecuta `vigilante.py entregar N`, que manda **5 mensajes** en formato móvil.
+   - Escribe `vigilante_data/entrega_N.json` y ejecuta `vigilante.py entregar N`, que manda **6 mensajes** (foto, título, enlace, precio, INFO y descripción).
 
 3. Lo programa el **Programador de tareas de Windows** (con `pythonw.exe` y `vig_<categoría>.py`), no Hermes.
 
@@ -74,7 +74,7 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
-- Sin modo Morralla y sin tope de precio. Formato móvil de 5 mensajes, siempre.
+- Sin modo Morralla y sin tope de precio. Formato de ficha: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026.
 
 - AliExpress: se admiten vendedores terceros si la tienda tiene buenas ventas y reseñas.
 
@@ -379,3 +379,10 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - **Sin arreglo:** Fnac da 403 también con navegador (antibot). Miravia: su página de ofertas guardada es la de una marca (`/ch/loreal/ofertas`), y la portada con navegador da 0 productos. Hay que buscarle otra página a mano.
   - **Miravia, arreglado el mismo día:** página de ofertas `https://www.miravia.es/ch/pg/ofertas` en `data/urls_ofertas.json` (17 productos de 7 marcas por descarga, antes 12 de L'Oréal). Black Friday, Flash Sale y la campaña 11.11 cargan con JavaScript y dan 0 por descarga. Con navegador dan 0 todas, también esta: Miravia es de Alibaba y probablemente le pone un reto al navegador. Se queda por descarga.
 - **Moda y deporte sin PrecioReal como contraste (17/11, noche, a raíz del #203).** Unas Levi's 726 High Rise Flare "clean getaway" de Zalando a 44,95 € salieron con "-29 % sobre mercado" contra 63 € de PrecioReal: era la ficha del modelo en general, sin lavado ni talla, y ya daba 404. En ropa y calzado el comparador empareja por modelo, pero el precio depende del color, el lavado y la talla. Categorías `moda` y `deporte`: `sin_precioreal` true (`idealo_red(p, precioreal=False)`). Valen Idealo, el histórico propio y la demanda probada. Hasta hoy fueron 4 avisos.
+- **Reglas de formato de fichas (17/11, noche, pasadas por Zeta; copia en `docs/FORMATO.md`).** Sustituyen al formato de 5 mensajes.
+  - `entregar`: 6 mensajes en orden (foto sola, título, enlace, precio, INFO, descripción). Título sin etiqueta y recortado a 140. Descripción con negrita real (`**x**` → HTML, `a_html_telegram`). Tema del grupo por categoría si se rellena `entrega.hilos` (`message_thread_id`).
+  - `bloques_de_codigo`: precio con oferta, habitual acreditado (PCComTracker), PVP de la tienda y portes (`limpiar_envio`). INFO de resultado, no de proceso: 🏷️ etiqueta, 💶, 🚚, 🕒 detectada/enviada (`_hora_entrega`, con la fecha de `lista`), 📉, 🔎 hasta 3 antecedentes con enlace completo (`antecedentes_chollometro`, `enlace_hilo`: `/ofertas/<slug>-<id>` redirige al hilo) o "no localizado en la consulta" con la búsqueda manual, ⚠️ avisos. Fuera "Comprobado:", "Prueba:", "PENDIENTE…" y "Precio inicial publicado". Las tallas solo en ropa y calzado. `eur()` con coma decimal.
+  - Habilidades `redacta-chollo` y `verifica-chollo` reescritas con las reglas de título y descripción. Hace falta el instalador y reiniciar Hermes.
+  - Junior, GS, youth y teen se añaden a `RE_INFANTIL`. El filtro infantil vale ya para la ropa y el calzado de cualquier categoría (`familia_de`), no solo en moda y deporte.
+  - **Fallo encontrado al probarlo con el #198:** "HDR10" contaba como código de modelo. La Samsung TQ55Q7F5AU se emparejó con un hilo de un TCL 65C6K de 3.516° ("demanda probada", y así pasó) y salían antecedentes de Philips y Xiaomi. `lista_codigos` ya no cuenta HDR, DVB-T2/S2/C ni H.26x.
+  - Pendiente de Zeta: los id de los temas del grupo de Telegram (`entrega.hilos`); si se entrega sin foto (ahora se declara en ⚠️); el mínimo con fecha (PCComTracker no la da); los tráileres y las recopilaciones de Steam.

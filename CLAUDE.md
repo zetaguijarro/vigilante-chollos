@@ -22,7 +22,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
-Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot ni captcha (robots.txt no se mira desde el 16/11/2026, salvo en Chollometro: `respetar_robots` y `robots_siempre`); formato móvil de 5 mensajes; nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
+Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot ni captcha (robots.txt no se mira desde el 16/11/2026, salvo en Chollometro: `respetar_robots` y `robots_siempre`); formato de 6 mensajes de `docs/FORMATO.md` (desde el 17/11/2026); nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
 
 ## Análisis de Instinct (16/11/2026)
 
