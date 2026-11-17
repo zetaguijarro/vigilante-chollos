@@ -656,6 +656,8 @@ def extraer(html, base_url, extra_json=()):
     sin_antes = [p for p in productos if not p["precio_antes"]]
     if sin_antes:
         precio_antes_html(html, sin_antes, todos=productos)
+    if productos:
+        promos_html(html, productos)
     return productos
 
 
@@ -823,6 +825,64 @@ def precio_antes_html(html, productos, ventana=12000, todos=None):
                     break
             if p["precio_antes"]:
                 break
+
+
+# Multicompra (17/11/2026, Zeta: "si es la segunda unidad al 70 % no te enteras"). "2.ª unidad al 70 %" en
+# las tiendas españolas (Carrefour, Druni...) es un 70 % de descuento en la segunda, igual que "-70 %".
+_SEGUNDA = r"(?:2\s*[ªºa]\.?|segunda)\s*(?:unidad|ud\.?)"
+RE_SEGUNDA_PCT = re.compile(rf"{_SEGUNDA}\s*(?:al|a|con)?\s*(?:un\s*)?-?\s*(\d{{1,3}})\s*%"
+                            rf"|-?\s*(\d{{1,3}})\s*%\s*(?:de\s+descuento\s+|dto\.?\s+)?(?:en|a)\s+(?:la\s+)?{_SEGUNDA}", re.I)
+RE_ACUMULADO = re.compile(r"[\s.,:;()-]*(?:de\s+)?(?:dto\.?\s+)?(?:acum|en\s+(?:tu\s+)?(?:tarjeta|saldo|cheque|club)|"
+                          r"para\s+(?:tu\s+)?pr[oó]xima|reembols|cashback)", re.I)
+RE_SEGUNDA_GRATIS = re.compile(rf"{_SEGUNDA}\s*(?:gratis|de\s+regalo|a\s+0\s*€)", re.I)
+RE_NXM = re.compile(r"(?<![\d.,x×])([2-5])\s*[x×]\s*([1-4])(?![\d.,x×])(?!\s*(?:m|cm|mm|metros?|kg|g|l)\b)"
+                    r"|ll[eé]vate\s+([2-5])\s*,?\s*paga\s+([1-4])|([3-5])\s+por\s+([2-4])\b(?!\s*(?:cm|m)\b)", re.I)
+
+
+def promo_multicompra(texto):
+    """-> (descripción, unidades, factor del precio por unidad) o None.
+    '2.ª unidad al -70 %' -> ('2.ª unidad al -70 %', 2, 0.65); '3x2' -> ('3x2', 3, 0.667)."""
+    t = unescape(texto or "")
+    for m in RE_SEGUNDA_PCT.finditer(t):
+        # "2.ª unidad -50 % acum. en tu tarjeta" (Alcampo): es saldo para otra compra, no descuento en caja.
+        # Reglas de formato de Zeta: un reembolso nunca se resta del pago directo.
+        if RE_ACUMULADO.match(t[m.end():m.end() + 40]):
+            continue
+        pct = int(m.group(1) or m.group(2))
+        if 1 <= pct <= 100:
+            return f"2.ª unidad al -{pct} %", 2, round((2 - pct / 100) / 2, 4)
+    if RE_SEGUNDA_GRATIS.search(t):
+        return "2.ª unidad gratis", 2, 0.5
+    m = RE_NXM.search(t)
+    if m:
+        n, pagas = [int(x) for x in m.groups() if x][:2]
+        if n > pagas:
+            return f"{n}x{pagas}", n, round(pagas / n, 4)
+    return None
+
+
+def promos_html(html, productos, ventana=4000):
+    """Marca en cada producto la multicompra de su tarjeta (desde su enlace hasta el del siguiente producto) o de
+    su nombre: p['promo'], p['unidades'] y p['precio_unidad']. No cambia p['precio']: eso lo decide la ronda."""
+    plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<svg\b.*?</svg>", "", html, flags=re.S | re.I)
+    # Primera ancla encontrada de cada producto (enlace o nombre). La tarjeta va hasta la del producto
+    # siguiente: con todas las anclas, se cortaba en el nombre del propio producto, antes de la etiqueta.
+    primera = {}
+    for k, q in enumerate(productos):
+        posiciones = [x for x in (plano.find(a) for a in _anclas(q)) if x >= 0]
+        if posiciones:
+            primera[k] = min(posiciones)
+    inicios = sorted(set(primera.values()))
+    for k, p in enumerate(productos):
+        hallada = promo_multicompra(p["nombre"])
+        if not hallada and k in primera:
+            i = primera[k]
+            siguientes = [x for x in inicios if x > i]
+            trozo = plano[i:min(i + ventana, siguientes[0] if siguientes else len(plano))]
+            hallada = promo_multicompra(re.sub(r"<[^>]+>", " ", trozo))
+        if hallada:
+            p["promo"], p["unidades"] = hallada[0], hallada[1]
+            p["precio_unidad"] = round(p["precio"] * hallada[2], 2)
 
 
 def porcentaje(v):
@@ -3014,6 +3074,9 @@ def mensaje_candidato(n, p):
     h = p.get("_cm_hot")
     if h and h.get("precio"):
         resenas += f"\nYa fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)"
+    if p.get("promo") and p.get("precio_suelto"):
+        socio += (f" por unidad comprando {p.get('unidades', 2)} ({p['precio_suelto']:g} € la unidad suelta; "
+                  f"{p['promo']})")
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
             f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'])}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
@@ -3602,6 +3665,8 @@ def decidir_item(item, cfg=None):
         return fin("descartado", str(item["error"]))
     ficha = item.get("ficha") or {}
     p0, ahora = item.get("p"), ficha.get("precio_ahora")
+    if ahora and item.get("ps") and p0:
+        ahora = round(ahora * p0 / item["ps"], 2)  # multicompra: la ficha da la unidad suelta; se aplica la promoción
     if str(item.get("memoria", "")).startswith("dudosa"):
         return fin("descartado", f"ya descartado antes: {item['memoria']}")
     if not item.get("validada"):
@@ -3727,6 +3792,11 @@ def bloques_de_codigo(item, d):
     pvp = item["a"] if item.get("a") and item["a"] > precio else None
     # 4 · Precio: oferta, referencia acreditada y portes, por separado. El total solo si está comprobado.
     precios = [eur(precio)]
+    promo, uds = item.get("promo"), item.get("uds") or 2
+    suelto = round(precio * item["ps"] / item["p"], 2) if promo and item.get("ps") and item.get("p") else None
+    if suelto:
+        precios = [f"{eur(precio)} por unidad comprando {uds} ({promo})",
+                   f"Unidad suelta: {eur(suelto)}. Total por {uds}: {eur(round(precio * uds, 2))}."]
     if h.get("habitual"):
         precios.append(f"Precio habitual: {eur(h['habitual'])} (en {fuente})")
     if pvp:
@@ -3742,6 +3812,8 @@ def bloques_de_codigo(item, d):
                     f"esa referencia, no sobre habitual probado.")
     else:
         info.append(f"💶 {eur(precio)}.")
+    if suelto:
+        info.append(f"💶 Multicompra {promo}: {eur(precio)} por unidad comprando {uds}; suelta, {eur(suelto)}.")
     info += ["", f"🚚 Envío: {envio}." if envio else "🚚 Portes no verificados: total según cesta.", "",
              _hora_entrega(item.get("detectada")), ""]
     if h.get("minimo"):
@@ -3769,6 +3841,8 @@ def bloques_de_codigo(item, d):
         busqueda = next(iter((item.get("buscar_chollometro") or {}).values()), None)
         info.append("🔎 Chollometro: no localizado en la consulta." + (f" Búsqueda manual: {busqueda}" if busqueda else ""))
     avisos = []
+    if suelto:
+        avisos.append(f"Promoción {promo} leída en el listado: hay que comprar {uds} y confirmarla en la cesta")
     if item.get("aviso_ch"):
         avisos.append(item["aviso_ch"])
     if item.get("aviso"):
@@ -4266,7 +4340,8 @@ def compacto(p):
          "gratis": 1 if p.get("gratis") else None, "h": p.get("historico_url"),
          "hot": (f"{p['_cm_hot']['temp']}° a {p['_cm_hot']['precio']:g} € hace {p['_cm_hot']['dias']} días"
                  if p.get("_cm_hot") and p["_cm_hot"].get("precio") else None),
-         "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None)}
+         "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None),
+         "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades")}
     if p["estado"] == "bajada":
         c["baja"] = 1
     return {k: v for k, v in c.items() if v is not None}
@@ -4386,6 +4461,9 @@ def ronda(categoria, solo=None):
         pagina = f"{tienda}|{url_leida}"
         sembrada = con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
         for p in productos:
+            if p.get("precio_unidad"):
+                # Multicompra: cuenta el precio por unidad comprando las que pide la promoción (mínimo, mercado...).
+                p["precio_suelto"], p["precio"] = p["precio"], p["precio_unidad"]
             estado = novedad(con, tienda, p)
             if sembrada and not estado and vuelve_oferta_caducada(con, p):
                 estado = "vuelve"

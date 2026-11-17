@@ -855,6 +855,37 @@ class Rondas(Base):
         self.assertEqual(v.categorias_de_portada(menu, "https://www.carrefour.es/"),
                          ["https://www.carrefour.es/informatica"])
 
+    def test_multicompra(self):
+        # 17/11/2026, Zeta: "si es la segunda unidad al 70 % no te enteras".
+        casos = {"2ª unidad al 70%": ("2.ª unidad al -70 %", 2, 0.65), "Segunda unidad -50 %": ("2.ª unidad al -50 %", 2, 0.75),
+                 "-70% en la 2ª unidad": ("2.ª unidad al -70 %", 2, 0.65), "2a ud. gratis": ("2.ª unidad gratis", 2, 0.5),
+                 "Oferta 3x2 en toda la tienda": ("3x2", 3, 0.6667), "2 x 1": ("2x1", 2, 0.5),
+                 "Llévate 3, paga 2": ("3x2", 3, 0.6667)}
+        for texto, esperado in casos.items():
+            self.assertEqual(v.promo_multicompra(texto), esperado, texto)
+        for texto in ("Cable eléctrico 2x1,5 mm", "Alfombra 2x1 m", "Monitor 27 2560x1440", "Pack 4x4 pilas AA",
+                      "Sofá de 3 plazas", "Samsung Galaxy S26 128GB", "Descuento del 70 %",
+                      "2ª unidad -50% acum en tu tarjeta",       # Alcampo: saldo, no descuento en caja
+                      "Guisantes Bonduelle 3 x 130 g"):
+            self.assertIsNone(v.promo_multicompra(texto), texto)
+        tarjetas = ('<a href="/p/gel-ducha-123456">Gel de ducha Sanex 600 ml</a><span>4,00 €</span>'
+                    '<span class="badge">2ª unidad al 70%</span>'
+                    '<a href="/p/champu-654321">Champú H&S 300 ml</a><span>5,00 €</span>') * 1
+        ps = v.extraer("<html>" + tarjetas + "</html>", "https://tienda.es/ofertas")
+        por_nombre = {p["nombre"][:5]: p for p in ps}
+        self.assertEqual((por_nombre["Gel d"].get("promo"), por_nombre["Gel d"].get("precio_unidad")), ("2.ª unidad al -70 %", 2.6))
+        self.assertIsNone(por_nombre["Champ"].get("promo"), "la promoción de una tarjeta no pasa a la siguiente")
+        # En la ficha: precio por unidad, unidad suelta y total, y el aviso de confirmarla en la cesta.
+        item = {"num": 1, "n": "Gel de ducha Sanex 600 ml", "u": "https://tienda.es/p/gel", "p": 2.6, "ps": 4.0,
+                "promo": "2.ª unidad al -70 %", "uds": 2}
+        b = v.bloques_de_codigo(item, {"precio": 2.6, "etiqueta": "SUBIENDO", "prueba": "x"})
+        self.assertTrue(b["precios"].startswith("2,60 € por unidad comprando 2 (2.ª unidad al -70 %)\nUnidad suelta: 4 €. Total por 2: 5,20 €."))
+        self.assertIn("⚠️ Promoción 2.ª unidad al -70 % leída en el listado: hay que comprar 2 y confirmarla en la cesta.", b["info"])
+        # Verificar: la ficha da la unidad suelta (4 €); con la promoción sigue siendo 2,60 €, no "ha subido".
+        cfg = v.cargar_config()
+        d = v.decidir_item({**item, "validada": True, "id": 4.5, "ficha": {"precio_ahora": 4.0, "titulo": item["n"]}}, cfg)
+        self.assertEqual(d.get("precio"), 2.6, d)
+
     def test_historial_de_precios(self):
         # 17/11/2026: solo se guarda una fila cuando cambia el precio; el mínimo sale con su fecha.
         con = v.bd()
