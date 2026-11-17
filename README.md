@@ -17,7 +17,7 @@ vigilante-chollos/
 │   ├── tiendas.json          tiendas por categoría, filtros, apartadas, horario, entrega
 │   └── marcas.txt            marcas admitidas (tecnología, generalistas, móviles)
 ├── data/                     base de datos, cachés y perfil de Chrome (fuera de git)
-├── tests/test_vigilante.py   195 pruebas, sin red real
+├── tests/test_vigilante.py   199 pruebas, sin red real
 ├── tareas/                   lo que lanza el Programador de tareas (lo genera `wrappers`)
 ├── hermes/
 │   ├── skills/verifica-chollo/SKILL.md   habilidad «verifica N»
@@ -52,6 +52,8 @@ El token de Telegram se lee de la variable `VIGILANTE_TELEGRAM_TOKEN` o `TELEGRA
 & $py src\vigilante.py catalogo [cats|tiendas]# categorías normales de cada tienda
 & $py src\vigilante.py volcar <tienda> ...    # por qué una tienda da 0 productos
 & $py src\vigilante.py modos <tienda|url> ... # misma página con navegador oculto, oculto nuevo, visible y visible con imágenes
+& $py src\vigilante.py cupones               # cupones activos de Miravia y AliExpress y hilos de cupones pendientes
+& $py src\vigilante.py cupon miravia 7/59 hasta 18/11 [CÓDIGO] [sello X]  # mete un cupón a mano
 & $py src\vigilante.py login <tienda> ...     # abre la tienda para que inicies sesión
 & $py src\vigilante.py chollometro [días] [páginas]  # primera carga de la copia de Chollometro
 & $py src\vigilante.py dossier N              # datos para «verifica N» (lo usa Hermes)
