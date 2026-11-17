@@ -1119,6 +1119,89 @@ def historial_propio_ok(p, dias, bajada_min):
             and bool(p.get("_min_previo")) and p["precio"] <= p["_min_previo"] * (1 - bajada_min))
 
 
+# --------------------------------------------- comparar con lo que ya guarda el vigilante (17/11/2026)
+# Zeta: "quiero que mejore a la hora de comparar para sacar las mejores ofertas". Casi todo lo que salía era de
+# PcComponentes (la única con histórico, por PCComTracker) y el comparador de mercado solo encontraba precio en un
+# tercio de las consultas. El vigilante ya guarda cada cambio de precio de unos 57.000 productos de todas las
+# tiendas (`productos` y `precios`): con eso se calcula, sin consultar a nadie, (1) el precio habitual de un
+# producto en su tienda y (2) lo que cuesta ahora el mismo EAN en las otras tiendas que se leen.
+HABITUAL_VENTANA_DIAS = 60     # cuánto historial se mira antes de la bajada
+HABITUAL_MIN_DIAS = 7          # el precio anterior tiene que haberse visto al menos 7 días (regla del soporte)
+BAJADA_MAX_DIAS = 14           # una bajada de hace más de 14 días ya es el precio habitual
+MERCADO_PROPIO_HORAS = 48      # un precio de otra tienda solo cuenta si se ha visto en las últimas 48 h
+
+
+def _dias(a, b):
+    return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() / 86400
+
+
+def habitual_propio(con, clave, ahora=None):
+    """Precio habitual de un producto en su tienda, con el historial del vigilante.
+    El precio actual empieza en el último cambio guardado. Antes de él, en los `HABITUAL_VENTANA_DIAS` previos,
+    el habitual es la mediana ponderada por días de los precios que tuvo (un pico de un día no cuenta).
+    -> {"habitual", "minimo", "dias", "bajada" (fecha), "fuente"} o None si no hay al menos
+    `HABITUAL_MIN_DIAS` de historial previo, o si el precio actual ya dura más de `BAJADA_MAX_DIAS`."""
+    filas = con.execute("SELECT fecha, precio FROM precios WHERE clave=? ORDER BY fecha", (clave,)).fetchall()
+    if len(filas) < 2:
+        return None
+    ahora = ahora or datetime.now().isoformat(timespec="minutes")
+    inicio_actual = filas[-1][0]
+    if _dias(inicio_actual, ahora) > BAJADA_MAX_DIAS:
+        return None
+    desde = (datetime.fromisoformat(inicio_actual) - timedelta(days=HABITUAL_VENTANA_DIAS)).isoformat(timespec="minutes")
+    tramos = []  # (precio, días que duró), solo dentro de la ventana
+    for (f1, pr), (f2, _) in zip(filas[:-1], filas[1:]):
+        f1 = max(f1, desde)
+        if f2 > f1:
+            tramos.append((pr, _dias(f1, f2)))
+    total = sum(d for _, d in tramos)
+    if total < HABITUAL_MIN_DIAS:
+        return None
+    acumulado, habitual = 0, None
+    for pr, d in sorted(tramos):
+        acumulado += d
+        if acumulado >= total / 2:
+            habitual = pr
+            break
+    return {"habitual": habitual, "minimo": min(pr for pr, _ in tramos), "dias": int(total),
+            "bajada": inicio_actual, "fuente": "el historial del vigilante"}
+
+
+def _variantes_ean(e):
+    e = str(e or "").strip()
+    if not re.fullmatch(r"\d{8,14}", e):
+        return []
+    base = e.lstrip("0")
+    return sorted({e, base, base.zfill(13), base.zfill(14)})
+
+
+def mercado_propio(con, p, tienda, horas=MERCADO_PROPIO_HORAS):
+    """El mismo EAN en otras tiendas que lee el vigilante, con su precio de las últimas `horas`.
+    Es precio de mercado sin consultar a ningún comparador. -> {"precio", "tienda", "url"} (el más barato)
+    o None. No cuenta la propia tienda ni las del mismo grupo (El Corte Inglés e Hipercor), ni precios de
+    menos de la mitad o más del triple (otro formato, un pack o una lectura mala)."""
+    variantes = _variantes_ean(p.get("ean"))
+    if not variantes:
+        return None
+    limite = (datetime.now() - timedelta(hours=horas)).isoformat(timespec="minutes")
+    filas = con.execute(
+        "SELECT pr.tienda, pr.url, v.precio FROM productos pr JOIN vistos v ON v.clave = pr.clave "
+        f"WHERE pr.ean IN ({','.join('?' * len(variantes))}) AND v.visto >= ?",
+        (*variantes, limite)).fetchall()
+    grupo = {"elcorteingles", "hipercor"}
+    propia = raiz(tienda)
+    mejor = None
+    for t, url, precio in filas:
+        r = raiz(t)
+        if r == propia or (r in grupo and propia in grupo) or not precio:
+            continue
+        if not (p["precio"] * 0.5 <= precio <= p["precio"] * 3):
+            continue
+        if not mejor or precio < mejor["precio"]:
+            mejor = {"precio": precio, "tienda": t, "url": url}
+    return mejor
+
+
 def limpiar(con):
     limite = (datetime.now() - timedelta(days=OLVIDAR_DIAS)).isoformat(timespec="minutes")
     con.execute("DELETE FROM vistos WHERE visto < ?", (limite,))
@@ -1867,7 +1950,7 @@ def descuento_real(p, mejor, dias_min=14):
         refs.append((mejor, "mercado (mismo modelo en otras tiendas)"))
     h = p.get("_hist") or {}
     if h.get("habitual"):
-        refs.append((h["habitual"], "precio habitual en la tienda (PCComTracker)"))
+        refs.append((h["habitual"], f"precio habitual en la tienda ({h.get('fuente_corta', 'PCComTracker')})"))
     if p.get("estado") == "bajada" and p.get("_min_previo") and p.get("_seguido_dias", 0) >= max(1, dias_min):
         refs.append((p["_min_previo"], f"mínimo visto por el vigilante en {p['_seguido_dias']} días"))
     if (demanda_probada_ok(p) or p.get("_chollo_previo")) and p.get("precio_antes"):
@@ -3248,11 +3331,14 @@ def mensaje_candidato(n, p):
     d = f", -{round(100 * (1 - p['precio'] / p['precio_antes']))} %" if p.get("precio_antes") else ""
     antes = f" (referencia de la tienda: {p['precio_antes']:g} €{d})" if p.get("precio_antes") else ""
     # Etiquetas honestas (instrucciones de lectura, paso 7): lo comprobado y lo que NO se ha comprobado.
-    idealo = (f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
+    mp = p.get("_mercado_propio")
+    idealo = (f"Mercado: {p['idealo']:g} € en {mp['tienda']} (visto por el vigilante)" if p.get("idealo") and mp
+              else f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
               else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
     if p.get("_hist"):
         h = p["_hist"]
-        hist = (f"Histórico ({'PcComponentes, según PCComTracker' if p.get('_pcct_otra') else 'comparador'}): "
+        origen = (h.get("fuente_corta") or ("PcComponentes, según PCComTracker" if p.get("_pcct_otra") else "comparador"))
+        hist = (f"Histórico ({origen}): "
                 f"mínimo {h['minimo']:g} €"
                 + (f" · habitual {h['habitual']:g} €" if h.get("habitual") else ""))
     elif p.get("_min_previo") and p.get("_seguido_dias"):
@@ -3814,6 +3900,11 @@ def dossier_items(ids, ficha_manual=None):
                     if ahora and abs(ahora - c["p"]) > 0.01:
                         item["aviso"] = f"el precio ha cambiado: {c['p']:g} € -> {ahora:g} €"
                     h = historico(cfg, {**c, "p": ahora or c["p"]})
+                    if not h:
+                        hp = habitual_propio(con, clave_vista(c["t"], {"url": c.get("u"), "nombre": c["n"]}))
+                        if hp:  # sin comparador: el precio habitual que ha visto el propio vigilante
+                            h = {"minimo": hp["minimo"], "habitual": hp["habitual"], "fuente": hp["fuente"],
+                                 "es_minimo": (ahora or c["p"]) <= hp["minimo"] * 1.03}
                     if h:
                         item["historico"] = h
                 except Exception as e:
@@ -4564,7 +4655,10 @@ def compacto(p):
          "hot": (f"{p['_cm_hot']['temp']}° a {p['_cm_hot']['precio']:g} € hace {p['_cm_hot']['dias']} días"
                  if p.get("_cm_hot") and p["_cm_hot"].get("precio") else None),
          "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None),
-         "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades")}
+         "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades"),
+         "mp": p.get("_mercado_propio"),
+         "hab": (f"{p['_hist']['habitual']:g} € ({p['_hist']['fuente_corta']})"
+                 if (p.get("_hist") or {}).get("fuente_corta") else None)}
     if p["estado"] == "bajada":
         c["baja"] = 1
     return {k: v for k, v in c.items() if v is not None}
@@ -4758,10 +4852,18 @@ def ronda(categoria, solo=None):
     # 3) Idealo (con caché) solo para los mejores. Las consultas que faltan van 3 a la vez.
     cat_cfg = cfg["categorias"][categoria]
     sin_idealo = cat_cfg.get("sin_idealo", False)  # viajes y juegos digitales: Idealo no aplica
+    # Antes de consultar a nadie: lo que ya sabe el vigilante (cuesta milisegundos). Mercado propio (mismo EAN
+    # en otras tiendas) y precio habitual propio. Así entran también candidatos que no caben en las consultas
+    # externas (`max_idealo`), hasta `comparar_propio_max` más por ronda.
+    if f.get("comparar_propio", True):
+        for p in previos:
+            p["_mp"] = mercado_propio(con, p, p["tienda"])
+            p["_hp"] = habitual_propio(con, clave_vista(p["tienda"], p))
     lote = previos[:max_idealo]
+    lote += [p for p in previos[max_idealo:] if p.get("_mp") or p.get("_hp")][:f.get("comparar_propio_max", 60)]
     precios_idealo, pendientes = {}, []
     for i, p in enumerate(lote):
-        if sin_idealo:
+        if sin_idealo or i >= max_idealo:
             continue
         hay, precio = idealo_cache(con, p)
         if hay:
@@ -4807,6 +4909,12 @@ def ronda(categoria, solo=None):
             p["historico_url"], p["_pcct_otra"] = url, True
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
+        mp = p.get("_mp")
+        if mp and not sin_idealo and mejor is None:
+            # Sin comparador: el mismo EAN en otra tienda que lee el vigilante sirve de precio de mercado.
+            # Solo cuando el comparador no da nada: con Idealo, Idealo manda (si dos tiendas bajan a la vez
+            # en una promoción de marca, compararlas entre sí descartaría las dos; eso lo decide el habitual).
+            mejor, p["_mercado_propio"] = mp["precio"], mp
         d = p["d"]
         p["ch"] = estado_chollometro(p, copia)  # también deja _cm_hot (demanda probada)
         dias_hist = cat_cfg.get("historial_propio_dias", f.get("historial_propio_dias", 0))
@@ -4828,6 +4936,12 @@ def ronda(categoria, solo=None):
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
             ok = p["precio"] <= ref["minimo"] * 1.03 or bool(ref.get("habitual") and p["precio"] <= ref["habitual"] * 0.9)
+        elif p.get("_hp") and p["_hp"]["habitual"] and not sin_idealo:
+            # Historial del propio vigilante: el precio habitual de este producto en esta tienda (mediana de lo
+            # que costó al menos 7 días antes de la bajada). Es lo que mira el soporte de Chollometro.
+            hp = p["_hp"]
+            p["_hist"] = {"habitual": hp["habitual"], "minimo": hp["minimo"], "fuente_corta": "historial del vigilante"}
+            ok = p["precio"] <= hp["habitual"] * (1 - f.get("bajada_min_habitual", 0.20))
         elif cat_cfg.get("exigir_precio_mercado", f.get("exigir_precio_mercado", True)) and not p.get("error_precio"):
             # Sin precio de mercado no se puede saber si el "antes" de la tienda es real (Sony WF-C710N:
             # "antes 199 €" con el mercado a 71,95 €). Regla de Zeta: sin contraste claro, no se envía.
@@ -4840,6 +4954,11 @@ def ronda(categoria, solo=None):
                 ok = p.get("error_precio") or historial_propio_ok(p, dias_hist, bajada_hist)
             else:
                 ok = d is not None and d >= cat_cfg.get("descuento_min_sin_mercado", desc_sin_idealo)
+        if not ok and p.get("_mercado_propio") and p.get("_hp") and p["_hp"]["habitual"]:
+            # La otra tienda también ha bajado (promoción de marca, Black Friday): lo que cuenta es el habitual.
+            hp = p["_hp"]
+            p["_hist"] = {"habitual": hp["habitual"], "minimo": hp["minimo"], "fuente_corta": "historial del vigilante"}
+            ok = p["precio"] <= hp["habitual"] * (1 - f.get("bajada_min_habitual", 0.20))
         if not ok and mejor is None and not p.get("gratis") and demanda_probada_ok(p):
             # Sin comparador, pero la comunidad ya lo calentó a este precio o más caro: precio y demanda probados.
             ok = True

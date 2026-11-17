@@ -156,6 +156,72 @@ class Base(unittest.TestCase):
 
 # ----------------------------------------------------------- piezas sueltas
 
+class ComparaPropio(unittest.TestCase):
+    """Habitual propio y mercado propio, con el historial que ya guarda el vigilante (17/11/2026)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        self.con = v.bd()
+        self.ahora = datetime(2026, 12, 1, 12, 0)
+
+    def tearDown(self):
+        self.con.close()
+        v.DATOS, v.DB = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def precios(self, clave, *tramos):
+        for dias, precio in tramos:
+            f = (self.ahora - timedelta(days=dias)).isoformat(timespec="minutes")
+            self.con.execute("INSERT INTO precios VALUES (?,?,?)", (clave, f, precio))
+
+    def test_habitual_propio(self):
+        h = lambda c: v.habitual_propio(self.con, c, self.ahora.isoformat(timespec="minutes"))
+        # 49,99 € durante 20 días, un pico de un día a 69,99 €, y ahora 34,99 € desde hace 2 días.
+        self.precios("a", (25, 49.99), (10, 69.99), (9, 49.99), (2, 34.99))
+        r = h("a")
+        self.assertEqual((r["habitual"], r["minimo"], r["dias"]), (49.99, 49.99, 23))
+        # Solo 4 días de historial antes de la bajada: no se sabe cuál es el habitual.
+        self.precios("b", (6, 49.99), (2, 34.99))
+        self.assertIsNone(h("b"))
+        # El precio actual ya dura 20 días: es el habitual, no una bajada.
+        self.precios("c", (60, 49.99), (20, 34.99))
+        self.assertIsNone(h("c"))
+        self.assertIsNone(h("nada"))
+        # La ventana es de 60 días: lo de hace 200 días no cuenta.
+        self.precios("d", (200, 999.0), (40, 59.99), (1, 44.99))
+        self.assertEqual(h("d")["habitual"], 59.99)
+
+    def test_mercado_propio(self):
+        reciente = (datetime.now() - timedelta(hours=3)).isoformat(timespec="minutes")
+        viejo = (datetime.now() - timedelta(days=5)).isoformat(timespec="minutes")
+        for clave, tienda, ean, precio, visto in (
+                ("pcc|1", "pccomponentes.com", "06925281982170", 139.0, reciente),   # con un 0 delante
+                ("amz|1", "amazon.es", "6925281982170", 149.0, reciente),
+                ("mm2|1", "mediamarkt.es", "6925281982170", 119.0, reciente),       # la misma tienda: no cuenta
+                ("fnac|1", "fnac.es", "6925281982170", 99.0, viejo),                  # visto hace 5 días: no cuenta
+                ("raro|1", "otra.es", "6925281982170", 29.0, reciente),               # menos de la mitad: no cuenta
+                ("hip|1", "hipercor.es", "1234567890123", 50.0, reciente)):
+            self.con.execute("INSERT INTO productos VALUES (?,?,?,?,?)", (clave, tienda, "JBL", ean, f"https://{tienda}/x"))
+            self.con.execute("INSERT INTO vistos (clave, precio, minimo, visto, desde) VALUES (?,?,?,?,?)",
+                             (clave, precio, precio, visto, visto))
+        r = v.mercado_propio(self.con, {"ean": "6925281982170", "precio": 99.0}, "mediamarkt.es")
+        self.assertEqual((r["precio"], r["tienda"]), (139.0, "pccomponentes.com"))
+        self.assertIsNone(v.mercado_propio(self.con, {"ean": None, "precio": 99.0}, "mediamarkt.es"))
+        self.assertIsNone(v.mercado_propio(self.con, {"ean": "1234567890123", "precio": 45.0}, "elcorteingles.es"),
+                          "El Corte Inglés e Hipercor cuentan como una tienda")
+        self.assertEqual(v.mercado_propio(self.con, {"ean": "1234567890123", "precio": 45.0}, "amazon.es")["precio"], 50.0)
+
+    def test_decidir_con_el_habitual_propio(self):
+        # Al verificar, si no hay PCComTracker, el dossier trae el habitual propio y el código decide con él.
+        d = v.decidir_item({"num": 1, "n": "Sony WF-C710N", "t": "mediamarkt.es", "u": "u", "p": 64.0, "validada": True,
+                            "ficha": {"precio_ahora": 64.0, "titulo": "Sony WF-C710N", "stock": "sí"},
+                            "historico": {"habitual": 89.0, "minimo": 84.0, "fuente": "el historial del vigilante"}})
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "DESTACADOS"))
+        self.assertIn("historial del vigilante", d["prueba"])
+
+
 class Piezas(unittest.TestCase):
     def test_numeros(self):
         casos = {"1.299,00 €": 1299.0, "19.99": 19.99, "1,299.50": 1299.5, "39,99": 39.99,
@@ -664,6 +730,44 @@ class Rondas(Base):
             {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]
         self.red.idealo["6925281993145"] = "85,00"                               # con Idealo: pasa
         self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
+
+    def _exigir_mercado(self):
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["exigir_precio_mercado"] = True
+        v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def test_habitual_propio_en_la_ronda(self):
+        # 17/11/2026: sin comparador ni PCComTracker, el precio habitual que ha visto el propio vigilante.
+        self._exigir_mercado()
+        self.preparar()
+        self.red.tiendas["mediamarkt"].append({"n": "Sony WF-C710N", "m": "Sony", "p": 89.0, "a": 129.0})
+        self.ronda()
+        con = sqlite3.connect(v.DB)
+        hace_20 = (datetime.now() - timedelta(days=20)).isoformat(timespec="minutes")
+        con.execute("UPDATE precios SET fecha=? WHERE clave LIKE 'mediamarkt.es|%sony%'", (hace_20,))
+        con.commit()
+        con.close()
+        self.red.tiendas["mediamarkt"][-1]["p"] = 79.0   # -11 % sobre su habitual de 89 €: no llega al 20 %
+        self.assertEqual([x["n"] for x in self.ronda()], [])
+        self.red.tiendas["mediamarkt"][-1]["p"] = 64.0   # -28 %: pasa
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["Sony WF-C710N"])
+        self.assertEqual(c[0]["hab"], "89 € (historial del vigilante)")
+
+    def test_mercado_propio_en_la_ronda(self):
+        # El mismo EAN en otra tienda que lee el vigilante es precio de mercado, sin consultar a nadie.
+        self._exigir_mercado()
+        self.preparar()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Charge 5", "m": "JBL", "e": "6925281982170", "p": 129.0, "a": 179.0})
+        self.red.tiendas["pccomponentes"].append({"n": "JBL Charge 5", "m": "JBL", "e": "6925281982170", "p": 139.0, "a": 179.0})
+        self.ronda()
+        self.red.tiendas["mediamarkt"][-1]["p"] = 135.0   # baja de su mínimo, pero no es más barato que la otra tienda... sí lo es por poco
+        self.assertEqual([x["n"] for x in self.ronda()], [], "solo un 3 % por debajo de PcComponentes")
+        self.red.tiendas["mediamarkt"][-1]["p"] = 99.0
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Charge 5"])
+        self.assertEqual(c[0]["id"], 139.0)
+        self.assertEqual(c[0]["mp"]["tienda"], "pccomponentes.com")
 
     def test_categoria_sin_comparador(self):
         # Moda/hogar: sin precio de mercado vale un descuento grande (50 %), y el global sigue exigiendo mercado.
