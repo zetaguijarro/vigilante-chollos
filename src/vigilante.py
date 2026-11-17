@@ -6070,7 +6070,8 @@ if __name__ == "__main__":
     elif len(args) >= 3 and args[0] == "recordar":
         recordar(args[1], args[2], " ".join(args[3:]))
     elif args[:1] == ["chollometro"]:
-        precargar_chollometro(*(int(a) for a in args[1:3]), desde=args[3] if len(args) > 3 else None)
+        precargar_chollometro(*(int(a) for a in args[1:3]), desde=args[3] if len(args) > 3 else None,
+                              pausa=float(args[4]) if len(args) > 4 else 1.5)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:
