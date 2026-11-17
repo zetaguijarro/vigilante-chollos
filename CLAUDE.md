@@ -12,20 +12,13 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
-## Dos copias del código (importante)
+## En producción desde el 16/11/2026 (noche)
 
-- **En marcha:** `C:\Users\Zeus\AppData\Local\hermes\scripts` (vigilante.py, tiendas.json, vigilante_data/). La lanzan las tareas "Vigilante rapidas" y "Vigilante navegador" y la usa la habilidad `verifica-chollo` de Hermes.
-- **Este proyecto:** la misma versión, ordenada y con git. Datos propios en `data/` (vacía salvo las URLs).
-- Mientras no se pase a producción, un cambio aquí NO afecta a lo que funciona. Si Zeta pide un cambio en el vigilante, pregunta en cuál de las dos copias, o haz el cambio aquí y llévalo a la otra.
-
-## Pasar a producción (solo con autorización de Zeta)
-
-Lo hace `scripts\pasar_a_produccion.ps1`, que tiene que lanzar Zeta: el sistema de permisos bloquea a Claude desactivar o cambiar las tareas programadas (16/11/2026). La habilidad del proyecto ya tiene las rutas nuevas. Pasos que hace el script:
-
-1. Copiar `vigilante_data/` de Hermes a `data/` (o fijar `VIGILANTE_DATOS` a esa carpeta).
-2. Cambiar las dos tareas programadas para que lancen `tareas\vig_rapidas.py` y `tareas\vig_navegador.py` de este proyecto.
-3. Cambiar en `hermes/skills/verifica-chollo/SKILL.md` la ruta de `vigilante.py` y copiarla a `C:\Users\Zeus\AppData\Local\hermes\skills\verifica-chollo\`.
-4. Dejar de editar la copia de Hermes.
+- **Lo que funciona es este proyecto.** Las seis tareas "Vigilante rapidas/navegador" (y sus variantes 0001 y 0901) lanzan `tareas\vig_rapidas.py` y `tareas\vig_navegador.py` de esta carpeta, con los datos en `data\`. Un cambio aquí afecta a lo que está en marcha desde la siguiente ronda: pasa las pruebas antes.
+- La carpeta antigua `C:\Users\Zeus\AppData\Local\hermes\scripts` queda solo como copia de seguridad. No se edita ni se usa.
+- Hermes: las habilidades y el plugin del botón viven en `hermes\` de este proyecto y se instalan con `bash scripts/instalar_en_hermes.sh`. Después hay que **reiniciar Hermes**, que los carga al arrancar. Eso lo hace Zeta.
+- Crear, cambiar o desactivar tareas programadas: solo Zeta (el sistema de permisos lo bloquea a Claude). `scripts\pasar_a_produccion.ps1` ya se lanzó; sirve de referencia si hubiera que repetirlo.
+- Rutina de Zeta tras un cambio: `git pull origin <rama>`, pruebas, `git push origin main` y, si cambió algo de `hermes\`, el instalador y reiniciar Hermes.
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
@@ -38,6 +31,25 @@ Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no salt
 - El reglamento escrito para Instinct no se copia aquí: el vigilante ya hace casi todo y es más estricto.
 - Hay 8 conflictos con "Decisiones de Zeta" (apartado 4 del SPEC). Mientras Zeta no decida, manda `docs/ESTADO.md`. No los resuelvas por tu cuenta.
 - Los cambios del apartado 5 están propuestos, no autorizados.
+
+## Dónde lo dejamos (17/11/2026, 09:15)
+
+Contexto: Zeta pasa a trabajar con Claude Code en VS Code para que Claude ejecute él mismo los comandos. Lo de ayer y hoy está en `docs/ESTADO.md` (cada cambio con su fecha) y en `docs/SPEC.md`. Lo que sigue, por orden:
+
+1. **Comprobar que la última rama está en `main`.** Lo último subido es la rama `comprueba` (166 pruebas). Si `git log -1` en `main` no la incluye, falta `git pull origin comprueba`.
+2. **Probar el botón "Verificar" con Hermes de verdad.** Nada del lado de Hermes está probado en vivo: el plugin `vigilante-botones` (lanza `decidir N` y, según el veredicto, no despierta a Hermes, le manda "redacta N" o "comprueba N") y las habilidades `redacta-chollo` y `comprueba-chollo`. Caso de prueba: el **#189** de PcComponentes (30,00 € con habitual de 39,99 € en PCComTracker) tiene que salir DESTACADOS por la vía "comprueba". Si el plugin falla, cae a "verifica N", el camino antiguo.
+3. **Tres ofertas "buena" del 16/11 sin publicar** (PcComponentes, en la tabla `modelos`): Zeta reinició y no llegó a verlas. Comprobarlas con "comprueba N" y, si siguen, que las publique. Serán el primer dato real de resultados.
+4. **Ventas privadas (Privé, Showroomprivé, Privalia, Private Sport Shop).** Llegó un aviso de "sesión caducada" a las 08:26. Sospecha: es falso; la sesión está iniciada pero la portada no enseña productos, solo carteles de campañas. Comprobar con `volcar privalia.com zalando-prive.es showroomprive.es privatesportshop.es`. Si la página es grande y sin formulario de acceso, hay que leer las campañas de dentro en vez de la portada.
+5. **MediaMarkt lee poco** (16 % de lo que triunfa). Campañas por descarga: unos 13 productos (el resto carga con JavaScript al hacer scroll). Ya se leen 2 categorías de catálogo cada 10 min; las de direcciones con tildes fallaban y se arregló (`url_ascii`). Falta: `catalogo mediamarkt.es` con la versión que baja un nivel (subcategorías, hasta 40) y mirar en `data/recorrido.txt` cuántos productos salen. Si sigue siendo poco, probar MediaMarkt con navegador una tarde, con vuelta atrás si sale muro.
+6. **Radar**: `precioreal.com` ya se lee pero da 0 productos. Mirar con `volcar precioreal.com`.
+7. **Pendiente de revisar a mano**: la página de ofertas guardada de IKEA (una categoría de armarios), Dyson (3 productos) y DeLonghi (una categoría, no ofertas). Se corrigen en `data/urls_ofertas.json`.
+8. **Navegador a 4 pestañas y 3 páginas** desde hoy (portátil dedicado: 16 GB, i5-8265U). Vigilar en el diario que la ronda de navegador no pase de 14 min ni suban las lecturas vacías; si pasa, bajar primero las páginas.
+
+Herramientas para mirar sin tocar: `data/recorrido.txt` (diario por tienda y ronda), `data/log.txt`, `prueba <categoría>`, `volcar <tienda>`, `informe 1`, `decidir N --callado` (decide sin mandar nada).
+
+Cerrojo del navegador: si `data/navegador.lock` existe y su proceso no (`tasklist //FI "PID eq <pid>"`), está huérfano y bloquea las rondas de navegador y el `login`: se borra. Pasó el 16/11.
+
+Recomendación que se le dio a Zeta y conviene respetar: tras tantos cambios en dos días, dejar correr el sistema y medir (publicadas, grados, rechazos) antes de tocar filtros.
 
 ## Siguiente trabajo propuesto (16/11/2026)
 
