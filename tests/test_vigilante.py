@@ -156,6 +156,55 @@ class Base(unittest.TestCase):
 
 # ----------------------------------------------------------- piezas sueltas
 
+class ModosNavegador(unittest.TestCase):
+    """modos: la misma página con cada modo del navegador; un reto para los modos que quedan (17/11/2026)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.cargar_config, v.urls_ofertas
+        v.DATOS = self.tmp
+        v.cargar_config = lambda: {"navegador": {"visible": True, "canal": "chrome", "pestanas": 4}}
+        v.urls_ofertas = lambda: {"miravia.es": "https://www.miravia.es/ofertas"}
+
+    def tearDown(self):
+        v.DATOS, v.cargar_config, v.urls_ofertas = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def nav(self, respuestas):
+        usados = []
+
+        class Nav:
+            def __init__(s, cfg):
+                usados.append(cfg["navegador"])
+
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *e):
+                pass
+
+            def leer(s, url):
+                return respuestas[len(usados) - 1], url, []
+        return Nav, usados
+
+    def test_cuatro_modos_con_su_configuracion(self):
+        tarjetas = "".join(f'<a href="/p/x-{i}">Zapatillas modelo {i}</a><span>{20 + i},00 €</span>' for i in range(5))
+        Nav, usados = self.nav(["<html></html>"] * 2 + ["<html>" + tarjetas + "</html>"] * 2)
+        with redirect_stdout(io.StringIO()):
+            filas = v.modos(["miravia.es"], nav_cls=Nav)
+        self.assertEqual([(u["visible"], u["canal"], u["bloquear_recursos"]) for u in usados],
+                         [(False, None, True), (False, "chrome", True), (True, "chrome", True), (True, "chrome", False)])
+        self.assertEqual([f[2] for f in filas], [0, 0, 5, 5])
+        self.assertIn("visible+imágenes", (self.tmp / "modos.txt").read_text(encoding="utf-8"))
+
+    def test_un_reto_para_los_modos_que_quedan(self):
+        Nav, usados = self.nav(["<html>captcha-delivery datadome</html>"] * 4)
+        with redirect_stdout(io.StringIO()):
+            filas = v.modos(["https://www.aliexpress.com/ofertas"], nav_cls=Nav)
+        self.assertEqual(len(usados), 1, "con un reto no se prueba ningún modo más")
+        self.assertIn("reto", filas[0][4])
+
+
 class ComparaPropio(unittest.TestCase):
     """Habitual propio y mercado propio, con el historial que ya guarda el vigilante (17/11/2026)."""
 
