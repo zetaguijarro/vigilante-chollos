@@ -19,7 +19,7 @@ Objetivo: ofertas online en España validadas con rigor. **Nada sin verificar.**
 PY = C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe
 V = C:\Users\Zeus\proyectos\vigilante-chollos\src\vigilante.py
 
-> Desde el 17/11/2026 el botón "Verificar" decide primero por código (`PY V decidir N`). Esta habilidad queda para los casos que el código no puede validar (ficha con muro antibot, como PcComponentes) y para cuando Zeta escribe "verifica N" a mano. Si te llega "redacta N", usa la habilidad `redacta-chollo`, no esta.
+> Desde el 17/11/2026 el botón "Verificar" decide primero por código (`PY V decidir N`). Esta habilidad queda para los casos que el código no puede validar (ficha con muro antibot, como PcComponentes) y para cuando Zeta escribe "verifica N" a mano. Si te llega "redacta N", usa la habilidad `redacta-chollo`; si te llega "comprueba N", usa `comprueba-chollo`. No esta.
 
 ## 1. Datos
 Ejecuta `PY V dossier N M ...`, con todos los números a la vez.
