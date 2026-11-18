@@ -4489,6 +4489,13 @@ class EmparejamientoPorTipo(unittest.TestCase):
     def test_titulo_vago_no_es_demanda_probada(self):
         self.assertFalse(v.mismo_producto_hot(self.NOMBRE, "Calvin Klein jeans mujer"))
 
+    def test_configuracion_sin_concretar(self):
+        """#214 (18/11/2026): ThinkPad sin RAM ni disco en el nombre contra el precio de Idealo de otra configuración."""
+        self.assertTrue(v.configuracion_ambigua("ThinkPad P14s Gen 7 14 inch AMD"))
+        self.assertTrue(v.configuracion_ambigua("Samsung Galaxy S25 Ultra"))
+        self.assertFalse(v.configuracion_ambigua("Portátil ASUS Vivobook 15 i5-13420H 16GB 512GB"))
+        self.assertFalse(v.configuracion_ambigua("TP-Link TL-SG105 switch 5 puertos"))
+
     def test_busqueda_manual_con_marca_y_modelo(self):
         self.assertEqual(v.enlace_busqueda_chollometro(self.NOMBRE, "Calvin Klein Jeans"),
                          "https://www.chollometro.com/search?q=Calvin+Klein+Jeans+WOVEN+LABEL+RIB")

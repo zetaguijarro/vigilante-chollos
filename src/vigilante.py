@@ -2651,7 +2651,9 @@ FAMILIAS = [
     ("videojuegos", r"videojuegos?|\bjuegos?\b(?!\s+del?\b)|\bsteam\b|\bepic\b|\bgog\b|eshop"),
     ("moviles", r"smartphones?|m[oó]vil(?:es)?\b|iphone|\bgalaxy [sazm]\d|redmi|\bpoco [xfmc]\d|\bpixel \d|telefon[ií]a"),
     ("tablets", r"tablets?\b|\bipad\b|e-?readers?|kindle"),
-    ("portatiles", r"port[aá]til(?:es)?|macbook|notebooks?|ultrabook|chromebook"),
+    ("portatiles", r"port[aá]til(?:es)?|macbook|notebooks?|ultrabook|chromebook|\blaptops?\b|thinkpad|ideapad|"
+                   r"thinkbook|vivobook|zenbook|\bexpertbook\b|\baspire\b|\bswift\b|\bpavilion\b|\belitebook\b|"
+                   r"\bprobook\b|\blatitude\b|\binspiron\b|\bxps\b|\bvictus\b|\bomen\b|\blegion\b|\bloq\b"),
     ("monitores", r"monitor(?:es)?\b"),
     ("componentes", r"\bssd\b|disco duro|tarjetas? gr[aá]ficas?|\brtx ?\d|\bryzen\b|procesador(?:es)?|placas? base|"
                     r"memoria ram|\bram\b|fuentes? de alimentaci[oó]n|componentes"),
@@ -2926,6 +2928,20 @@ def ya_salio_mas_barato(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS)
     techo = max(precios, default=None)
     # Zeta (18/11/2026): hasta un 10 % más caro que un chollo que se calentó todavía puede ir bien; más, no.
     return techo if techo and p["precio"] > techo * 1.10 else None
+
+
+RE_CAPACIDAD = re.compile(r"\b\d+\s?(?:gb|tb)\b", re.I)
+RE_NO_ES_EL_EQUIPO = re.compile(r"\bbuds\b|auricular|earbuds|airpods|\bwatch\b|\bband\b|funda|carcasa|cargador|cable|"
+                                r"protector|soporte|\bbase\b|teclado|rat[oó]n|mochila|malet[ií]n|bolsa|stylus|l[aá]piz",
+                                re.I)
+
+
+def configuracion_ambigua(nombre):
+    """Portátil, sobremesa, móvil o tablet cuyo nombre no dice la RAM ni la capacidad: el mismo nombre se vende en
+    configuraciones con precios muy distintos, así que un precio de comparador no es del mismo producto. Los
+    auriculares, relojes y accesorios de esas marcas (Redmi Buds, fundas...) no tienen configuraciones."""
+    return (familia_de(nombre) in ("portatiles", "moviles", "tablets", "sobremesa") and not RE_CAPACIDAD.search(nombre)
+            and not RE_NO_ES_EL_EQUIPO.search(nombre))
 
 
 def chollo_previo(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
@@ -6451,14 +6467,21 @@ def ronda(categoria, solo=None):
             p["historico_url"], p["_pcct_otra"] = url, True
     # Amazon sin comparador: su histórico en CamelCamelCamel (17/11/2026), las de más descuento primero.
     if f.get("camelcamelcamel", True) and not sin_idealo:
+        # También los que solo tienen el histórico de PcComponentes (PCComTracker de otra tienda): para Amazon manda
+        # el de Amazon (18/11/2026, #216: switch TP-Link a 16,11 € "-37 %" frente al habitual de PcComponentes).
         de_amazon = [p for i, p in enumerate(lote) if p["tienda"] == "amazon.es" and not precios_idealo.get(i)
-                     and not p.get("historico_url") and asin_de(p.get("url"))]
+                     and (not p.get("historico_url") or p.get("_pcct_otra")) and asin_de(p.get("url"))]
         de_amazon.sort(key=lambda p: -(p.get("d") or 0))
         for p, h in zip(de_amazon, camel_lote(con, cfg, de_amazon[:CAMEL_MAX_RONDA])):
             if h:
                 p["_camel"] = h
     for i, p in enumerate(lote):
         mejor = precios_idealo.get(i)
+        if mejor and configuracion_ambigua(p["nombre"]):
+            # 18/11/2026 (#214): "ThinkPad P14s Gen 7 14 inch AMD" a 1.943 € contra 2.734 € de Idealo, que era otra
+            # configuración. Sin RAM ni capacidad en el nombre, el precio del comparador no es del mismo producto.
+            log(f"configuración sin concretar, no se compara con el mercado: {p['tienda']} {p['nombre'][:60]}")
+            mejor = None
         mp = p.get("_mp")
         if mp and not sin_idealo and mejor is None:
             # Sin comparador: el mismo EAN en otra tienda que lee el vigilante sirve de precio de mercado.
@@ -6480,7 +6503,8 @@ def ronda(categoria, solo=None):
             # Más barato que el mercado, no "parecido": LG QNED70 a 348 € con el mercado a 339 € pasaba
             # porque la tienda enseñaba un PVPR de 449 €. El "antes" de la tienda ya no cuenta aquí.
             ok = p.get("error_precio") or p["precio"] <= mejor * (1 - cat_cfg.get("min_bajo_mercado", min_bajo))
-        elif p.get("historico_url") and (ref := _historico_seguro(p["historico_url"])):
+        elif p.get("historico_url") and not (p.get("_pcct_otra") and p.get("_camel")) \
+                and (ref := _historico_seguro(p["historico_url"])):
             # Sin precio de mercado pero con el historial de la propia tienda (PcComponentes por PCComTracker):
             # cerca de su mínimo, o claramente por debajo de lo que suele costar.
             p["_hist"] = ref
