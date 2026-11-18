@@ -156,7 +156,7 @@
  "busquedas_familia": {
   "por_ronda": 4,
   "cada_min": 15,
-  "_nota": "Búsquedas por familia en Miravia y AliExpress (Zeta, 17/11/2026: por las categorías que más grados dan en Chollometro, 4 por ronda). Salen por turnos; la familia con más hilos a 200° en esa tienda (copia local de Chollometro) sale más a menudo. Se leen con el Chrome normal, 1 página cada una. Las consultas se cambian aquí.",
+  "_nota": "Búsquedas por familia en Miravia y AliExpress (Zeta, 17/11/2026: por las categorías que más grados dan en Chollometro, 4 por ronda). Salen por turnos; desde el 18/11 la familia sale más a menudo cuantos más hilos de 200°+ da en esa tienda (pesos_volumen, últimos 365 días, los de 500° cuentan doble), repartido entre sus consultas. Consultas del 18/11 sacadas de los títulos calientes de cada tienda (aceite 5L y café en grano en AliExpress; sartenes, Duralex, Skechers, auriculares y sudaderas en Miravia). Se leen con el Chrome normal, 1 página cada una. Las consultas se cambian aquí.",
   "tiendas": {
    "aliexpress.com": {
     "url": "https://es.aliexpress.com/w/wholesale-{q}.html",
@@ -207,6 +207,16 @@
      ],
      "aspiracion": [
       "robot aspirador"
+     ],
+     "alimentacion": [
+      "aceite de oliva virgen extra 5l"
+     ],
+     "bebidas": [
+      "cafe en grano"
+     ],
+     "cocina_pequena": [
+      "freidora de aire",
+      "cafetera espresso"
      ]
     }
    },
@@ -247,6 +257,19 @@
      ],
      "moviles": [
       "smartphone"
+     ],
+     "menaje": [
+      "set sartenes",
+      "vajilla duralex"
+     ],
+     "calzado": [
+      "zapatillas skechers"
+     ],
+     "audio": [
+      "auriculares"
+     ],
+     "ropa": [
+      "sudadera nike"
      ]
     }
    }

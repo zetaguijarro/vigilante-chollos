@@ -2462,7 +2462,8 @@ def mejor_chollometro(nombre, copia=None):
 # a la media. Gana la primera que encaje, así que van de lo más concreto a lo más general.
 FAMILIAS = [
     ("consolas", r"\bconsolas?\b|\bps[45]\b|playstation|nintendo switch|switch 2|\bxbox\b|steam deck|dualsense|joy-?con"),
-    ("videojuegos", r"videojuegos?|\bjuegos?\b|\bsteam\b|\bepic\b|\bgog\b|eshop"),
+    # "juego de sartenes / de mancuernas / de cubiertos" no es un videojuego (18/11/2026: inflaba la familia).
+    ("videojuegos", r"videojuegos?|\bjuegos?\b(?!\s+del?\b)|\bsteam\b|\bepic\b|\bgog\b|eshop"),
     ("moviles", r"smartphones?|m[oó]vil(?:es)?\b|iphone|\bgalaxy [sazm]\d|redmi|\bpoco [xfmc]\d|\bpixel \d|telefon[ií]a"),
     ("tablets", r"tablets?\b|\bipad\b|e-?readers?|kindle"),
     ("portatiles", r"port[aá]til(?:es)?|macbook|notebooks?|ultrabook|chromebook"),
@@ -3981,7 +3982,10 @@ def busquedas_turno(con, cfg, tiendas):
         orden = sorted(range(len(consultas)), key=lambda i: (pase[consultas[i][1]], i))
         for i in orden[:por_ronda]:
             fam, q = consultas[i]
-            pase[q] += 1 / max(PESO_MIN, pesos.get(fam, 1.0))
+            # El peso es de la familia: se reparte entre sus consultas (si no, una familia con 4 consultas salía el
+            # doble que otra con 2 del mismo peso).
+            n_fam = sum(1 for f2, _ in consultas if f2 == fam)
+            pase[q] += n_fam / max(PESO_MIN, pesos.get(fam, 1.0))
             texto = q.strip().lower().replace(" ", d.get("espacio", "+"))
             salida.append((tienda, d["url"].format(q=quote(texto, safe="-+"))))
         pase = {q: round(pase[q], 3) for _, q in consultas if q in pase}  # sin consultas que ya no están
@@ -6021,7 +6025,7 @@ def ronda(categoria, solo=None):
     if lote:  # copia local al día (como mucho una lectura cada 4 min, compartida por todas las categorías)
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
-    pesos = pesos_demanda(con, cfg)
+    pesos_t = {}  # 18/11/2026: orden de candidatos por volumen de calientes de la familia en su tienda (pesos_volumen)
     # Sin precio de mercado: histórico de PCComTracker del mismo modelo para productos de otras tiendas (Amazon,
     # MediaMarkt...), si su ficha está en el índice. Como mucho PCCT_MAX_RONDA fichas por ronda.
     n_pcct = 0
@@ -6134,7 +6138,9 @@ def ronda(categoria, solo=None):
             # Ordena por lo bueno que es: descuento + ventaja frente al mercado + error + demanda en Chollometro.
             hot = (p.get("_cm_hot") or {}).get("temp", 0)
             # Y por la demanda de su familia: un móvil va antes que una impresora con el mismo descuento.
-            p["peso"] = peso_de(pesos, p["nombre"])
+            if p["tienda"] not in pesos_t:
+                pesos_t[p["tienda"]] = pesos_volumen(con, cfg, p["tienda"])
+            p["peso"] = peso_de(pesos_t[p["tienda"]], p["nombre"])
             p["score"] = ((d or 0) + ((mejor - p["precio"]) / mejor if mejor else 0)
                           + (1 if p.get("error_precio") else 0) + min(hot, 3000) / 3000
                           + max(-0.35, min(1.0, (p["peso"] - 1) * 0.5)))

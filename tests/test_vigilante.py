@@ -3698,6 +3698,10 @@ class Catalogo(Base):
                            ("Mando DualSense PS5 Galactic Purple", "consolas"), ("/portatiles-gaming", "portatiles")):
             self.assertEqual(v.familia_de(texto), fam, texto)
         self.assertIsNone(v.familia_de("Tarjeta regalo 50 EUR"))
+        self.assertEqual(v.familia_de("Juego PS5 Astro Bot"), "consolas")
+        self.assertEqual(v.familia_de("Juegos gratis en Epic"), "videojuegos")
+        self.assertNotEqual(v.familia_de("Juego de sartenes Tefal Ingenio"), "videojuegos")
+        self.assertNotEqual(v.familia_de("Juego de mancuernas ajustables 10 kg"), "videojuegos")
         con = v.bd()
         self.assertIsNone(v.pesos_demanda(con, {}), "sin datos en la copia de Chollometro: todo pesa igual")
         self.assertEqual(v.peso_de(None, "Impresora HP"), 1.0)
