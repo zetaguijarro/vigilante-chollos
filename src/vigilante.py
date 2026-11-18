@@ -4320,6 +4320,12 @@ def historico_comparador(url):
         # 18/11/2026 (Zeta: "las últimas televisiones no coincide el precio"): PcComponentes no lo vende ahora; el
         # precio del listado era el de Amazon (Philips 48OLED770 a 609 €), un vendedor externo o el último visto.
         salida["sin_precio_tienda"] = True
+        # Lo que sale en pantalla es el precio de Amazon ("Comprar en Amazon por 609,00 €"), con su enlace.
+        a = re.search(r'href="([^"]*/goto/amazon\?[^"]+)"', html)
+        pa = re.search(r"Comprar en Amazon por\s*([\d.,]+)\s*€", texto)
+        asin = asin_de(enlace_real(urljoin(final, unescape(a.group(1))))) if a else None
+        if asin and pa:
+            salida["amazon_url"], salida["amazon_precio"] = f"https://www.amazon.es/dp/{asin}", a_numero(pa.group(1))
     # Fecha del mínimo (17/11/2026): viene en sus datos ("minPriceDate":"$D2026-11-16T06:06:39.000Z").
     f = RE_FECHA_MINIMO.search(html)
     if f:
@@ -7501,8 +7507,18 @@ def ronda(categoria, solo=None):
             # cerca de su mínimo, o claramente por debajo de lo que suele costar.
             p["_hist"] = ref
             if ref.get("sin_precio_tienda") and not p.get("_pcct_otra"):
-                log(f"PcComponentes no tiene precio oficial ahora, no se envía: {p['nombre'][:60]} a {p['precio']} €")
-                continue
+                pa = ref.get("amazon_precio")
+                if not (ref.get("amazon_url") and pa and abs(pa - p["precio"]) <= p["precio"] * 0.02):
+                    log(f"PcComponentes no tiene precio oficial ahora, no se envía: {p['nombre'][:60]} a {p['precio']} €")
+                    continue
+                # El precio en pantalla es el de Amazon (Zeta, 18/11/2026): la oferta es de Amazon, comparada con el
+                # habitual de PcComponentes. Los duplicados se miran otra vez, ahora como Amazon.
+                p.update(tienda="amazon.es", url=ref["amazon_url"], precio=pa, _vendedor_pcct="amazon")
+                ref = {**ref, "fuente_corta": "habitual en PcComponentes (PCComTracker)"}
+                ref.pop("tienda_url", None)
+                p["_hist"], p["ch"] = ref, estado_chollometro(p, copia)
+                if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
+                    continue
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
             ok = historico_clasico_ok(p["precio"], ref.get("habitual"), ref.get("minimo"), u_c)

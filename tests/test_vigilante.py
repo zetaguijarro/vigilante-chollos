@@ -4627,8 +4627,9 @@ class EmparejamientoPorTipo(unittest.TestCase):
 
     def test_pccomtracker_sin_precio_oficial(self):
         """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""
-        html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><p>Comprar en Amazon por '
-                '609,00 €</p><p>Precio habitual de 919,00 €</p><p>Precio mínimo 766,66 €</p>')
+        html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><a href="/goto/amazon?url='
+                'https%3A%2F%2Fwww.amazon.es%2Fdp%2FB0F33QY8R5%3FlinkCode%3Dosi&amp;source=web">Comprar en Amazon por '
+                '609,00 €</a><p>Precio habitual de 919,00 €</p><p>Precio mínimo 766,66 €</p>')
         orig = v.descargar
         try:
             v.descargar = lambda url, *a, **k: (html, url)
@@ -4636,6 +4637,8 @@ class EmparejamientoPorTipo(unittest.TestCase):
         finally:
             v.descargar = orig
         self.assertTrue(h and h.get("sin_precio_tienda"))
+        # Lo que sale en pantalla es el precio de Amazon: la oferta pasa a ser de Amazon, con su enlace.
+        self.assertEqual((h["amazon_url"], h["amazon_precio"]), ("https://www.amazon.es/dp/B0F33QY8R5", 609.0))
         self.assertTrue(v.RE_SIN_PRECIO_TIENDA.search("Hisense 55A6N 55\" Smart TV Precio no disponible"))
 
     def test_televisores_samsung_por_serie_y_pulgadas(self):
