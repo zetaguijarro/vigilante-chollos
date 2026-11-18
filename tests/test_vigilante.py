@@ -4429,6 +4429,29 @@ class ReglasPublicacionChollometro(unittest.TestCase):
                          "https://es.privalia.com/gr/catalog/1/2?producto=3")
 
 
+class PestanasTelegram(unittest.TestCase):
+    """18/11/2026: pestañas en el chat del bot (candidatos por categoría, para publicar y sistema)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v._post
+        v.DATOS = self.tmp
+        self.enviados = []
+        v._post = lambda url, datos, timeout=20: self.enviados.append(datos) or {"ok": True}
+
+    def tearDown(self):
+        v.DATOS, v._post = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_cada_mensaje_a_su_pestana(self):
+        (self.tmp / v.TEMAS).write_text(json.dumps({"sistema": 7, "cat:moda": 9}), encoding="utf-8")
+        v.enviar_telegram("t", "1", "hola", hilo="sistema")
+        v.enviar_telegram("t", "1", "hola", hilo="cat:moda")
+        v.enviar_telegram("t", "1", "hola", hilo="cat:hogar")  # sin pestaña: al chat general
+        v.enviar_telegram("t", "1", "hola", hilo=12)
+        self.assertEqual([e.get("message_thread_id") for e in self.enviados], ["7", "9", None, "12"])
+
+
 class ReglasDuplicadosChollometro(unittest.TestCase):
     """Reglas de publicación de Chollometro (chollometro.com/reglas, leídas el 18/11/2026)."""
 

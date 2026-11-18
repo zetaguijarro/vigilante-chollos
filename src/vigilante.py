@@ -3189,7 +3189,7 @@ def aviso_precarga(texto, seguir=False):
         token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
         if token and chat:
             enviar_telegram(token, chat, "📚 Precarga Chollometro: " + texto.strip(),
-                            teclado=TECLADO_SEGUIR if seguir else None)
+                            teclado=TECLADO_SEGUIR if seguir else None, hilo="sistema")
     except Exception as e:
         log(f"aviso de precarga: {str(e)[:80]}")
 
@@ -4526,7 +4526,8 @@ def freno_telegram(con, token, chat, pendientes):
     log(f"FRENO telegram: {pendientes} pendientes, {motivo}; pausa hasta {hasta:%H:%M}")
     enviar_telegram(token, chat, f"⚠️ Freno del vigilante: {motivo} ({pendientes} candidatos esperando). "
                                  f"Envíos en pausa hasta las {hasta:%H:%M}. Si no es normal, puede ser una tienda "
-                                 f"que ha cambiado sus enlaces: mira vigilante_data/log.txt antes de pedir 'verifica'.")
+                                 f"que ha cambiado sus enlaces: mira vigilante_data/log.txt antes de pedir 'verifica'.",
+                    hilo="sistema")
     return cupo
 
 
@@ -4555,7 +4556,7 @@ def enviar_pendientes(con, entrega):
                 continue
             p["ch"] = d["ch"] = ch
         if enviar_telegram(token, chat, mensaje_candidato(n, p or {}), (p or {}).get("imagen_url"),
-                           boton_verificar(n)):
+                           boton_verificar(n), hilo=f"cat:{d.get('cat')}"):  # pestaña de su categoría
             con.execute("UPDATE lista SET enviado=1, datos=? WHERE id=?", (json.dumps(d, ensure_ascii=False), n))
         con.commit()
 
@@ -4646,9 +4647,60 @@ def _post(url, datos, timeout=20):
         return json.loads(r.read().decode("utf-8"))
 
 
+TEMAS = "telegram_temas.json"  # pestañas del chat: {"publicar": id, "sistema": id, "cat:tecnologia": id, ...}
+NOMBRES_TEMA = {"publicar": "✅ Para publicar", "sistema": "⚠️ Sistema"}
+NOMBRES_CATEGORIA = {"tecnologia": "Tecnología", "generalistas": "Generalistas", "electro_marcas": "Electro de marca",
+                     "videojuegos": "Videojuegos", "supermercado": "Supermercado", "hogar": "Hogar",
+                     "salud_belleza": "Salud y belleza", "moda": "Moda", "deporte": "Deporte",
+                     "juguetes_bebe": "Juguetes y bebé", "radar": "Radar", "moviles": "Móviles",
+                     "mascotas": "Mascotas", "viajes": "Viajes"}
+
+
+def tema_id(clave):
+    """message_thread_id de una pestaña ("publicar", "sistema", "cat:<categoría>"), o None (chat general)."""
+    try:
+        return json.loads((DATOS / TEMAS).read_text(encoding="utf-8")).get(clave)
+    except (OSError, ValueError):
+        return None
+
+
+def crear_temas():
+    """`temas`: crea en el chat del bot las pestañas que falten (18/11/2026, Zeta: "como en Instinct"):
+    una por categoría con tiendas (candidatos y descartes), "✅ Para publicar" (los 6 mensajes) y "⚠️ Sistema"
+    (precarga, sesiones, frenos). El bot tiene los temas activados en el chat privado (has_topics_enabled)."""
+    cfg = cargar_config()
+    token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
+    try:
+        temas = json.loads((DATOS / TEMAS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        temas = {}
+    quiero = dict(NOMBRES_TEMA)
+    for cat, d in cfg["categorias"].items():
+        if d.get("tiendas") or d.get("navegador") or cat == "videojuegos":
+            quiero[f"cat:{cat}"] = "🔔 " + NOMBRES_CATEGORIA.get(cat, cat.replace("_", " ").capitalize())
+    for clave, nombre in quiero.items():
+        if temas.get(clave):
+            continue
+        try:
+            r = _post(f"https://api.telegram.org/bot{token}/createForumTopic", {"chat_id": chat, "name": nombre})
+        except HTTPError as e:
+            r = {"description": e.read().decode("utf-8", "replace")[:200]}
+        if r.get("ok"):
+            temas[clave] = r["result"]["message_thread_id"]
+            print(f"creada: {nombre}")
+        else:
+            print(f"{nombre}: {r.get('description')}")
+    DATOS.mkdir(parents=True, exist_ok=True)
+    (DATOS / TEMAS).write_text(json.dumps(temas, ensure_ascii=False, indent=1), encoding="utf-8")
+    return temas
+
+
 def enviar_telegram(token, chat_id, texto, foto=None, teclado=None, html=False, hilo=None):
-    """html: el texto ya viene en HTML de Telegram (negrita real). hilo: message_thread_id del tema del grupo."""
+    """html: el texto ya viene en HTML de Telegram (negrita real). hilo: message_thread_id del tema, o el nombre de
+    una pestaña ("publicar", "sistema", "cat:<categoría>"; ver `temas`). Sin esa pestaña, al chat general."""
     base = f"https://api.telegram.org/bot{token}/"
+    if hilo and not str(hilo).isdigit():
+        hilo = tema_id(hilo)
     extra = {"reply_markup": teclado} if teclado else {}
     if html:
         extra["parse_mode"] = "HTML"
@@ -5577,7 +5629,7 @@ def muro(n, avisar=True):
         cfg = cargar_config()
         token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
         if token and chat:
-            enviar_telegram(token, chat, texto_a_mano(n, item))
+            enviar_telegram(token, chat, texto_a_mano(n, item), hilo=f"cat:{item.get('cat')}")
     log(f"muro #{n}: {d['motivo']}")
     print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
     return d
@@ -5614,7 +5666,7 @@ def decidir(n, avisar=True, ficha_manual=None):
             token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
             if token and chat:
                 enviar_telegram(token, chat, f"#{n} descartado: {d['motivo']}" if d["veredicto"] == "descartado"
-                                else texto_a_mano(n, item))
+                                else texto_a_mano(n, item), hilo=f"cat:{item.get('cat')}")  # junto al candidato
     log(f"decidir #{n}: {d['veredicto']} {d.get('etiqueta', '')} {d['motivo'][:140]}")
     print(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
     return d
@@ -5674,8 +5726,9 @@ def entregar(n, callado=False):
     if not (token and chat):
         decir("falta token o chat_id")
         return False
-    hilo = (entrega.get("hilos") or {}).get(d.get("cat"))
-    extra = {"hilo": hilo} if hilo else {}
+    # Pestaña "✅ Para publicar" (18/11/2026, comando `temas`); entrega.hilos (tema por categoría) si se rellena.
+    hilo = (entrega.get("hilos") or {}).get(d.get("cat")) or "publicar"
+    extra = {"hilo": hilo}
     ok, enviados = True, 0
     if foto:
         ok = enviar_telegram(token, chat, "", foto, **extra)
@@ -5917,7 +5970,7 @@ def vigilar_sesiones(con, cfg, lecturas):
             log(texto.replace("\n", " "))
             token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
             if token and chat:
-                enviar_telegram(token, chat, texto)
+                enviar_telegram(token, chat, texto, hilo="sistema")
     con.commit()
 
 
@@ -6868,6 +6921,8 @@ if __name__ == "__main__":
         seguir_precarga(args[1] if len(args) > 1 else None)
     elif args[:1] == ["sesion_cm"]:
         sesion_cm()
+    elif args == ["temas"]:
+        crear_temas()
     elif args[:1] == ["destinos"]:
         destinos_cm(int(args[1]) if len(args) > 1 else 1000)
     elif args[:1] == ["catalogo"]:
