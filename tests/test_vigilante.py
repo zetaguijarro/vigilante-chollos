@@ -1923,9 +1923,9 @@ class Rondas(Base):
             self.assertNotIn(t, apartadas, t)
         for t in ("runningemotion.com", "amazon.es", "mediamarkt.es"):
             self.assertIn(t, siempre)
-        # Repaso del 18/11/2026 con Zeta: de 183 tiendas a 63. Se apartan las que no se pueden leer (antibot, Worten
+        # Repaso del 18/11/2026 con Zeta: de 183 tiendas a 63 (62 desde que PrecioReal dejó de leerse como tienda, 18/11). Se apartan las que no se pueden leer (antibot, Worten
         # sin venta online) y las que no tienen demanda; quedan en "apartadas" con su motivo.
-        self.assertEqual(len(leidas), 63)
+        self.assertEqual(len(leidas), 62)
         for t in ("fnac.es", "adidas.es", "worten.es", "www.aeg.com.es"):
             self.assertIn(t, apartadas)
             self.assertNotIn(t, siempre)

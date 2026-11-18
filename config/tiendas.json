@@ -142,7 +142,6 @@
    "humblebundle.com",
    "privalia.com",
    "privatesportshop.es",
-   "precioreal.com",
    "bricoking.es",
    "westwing.es",
    "sony.es",
@@ -924,14 +923,13 @@
   },
   "radar": {
    "cada_min": 10,
-   "tiendas": [
-    "precioreal.com"
-   ],
+   "tiendas": [],
    "navegador": [],
    "canales_telegram": [],
    "descuento_min": 0.3,
    "_nota": "Páginas de bajadas de precio de los comparadores (cubren miles de tiendas) y canales públicos de chollos. Añade en canales_telegram el nombre de canales públicos (lo que va detrás de t.me/).",
    "apartadas": {
+    "precioreal.com": "No se leen sus ofertas (Zeta, 18/11/2026): PrecioReal es solo el buscador comparador de precios (precioreal_red), no una tienda ni una fuente de ofertas.",
     "idealo.es": "Antibot Akamai: 403 a todo acceso automático, hasta en robots.txt."
    }
   }
