@@ -305,6 +305,7 @@
   "descarga": 5,
   "navegador": 3
  },
+ "vigilancia_amazon": {"por_ronda": 0, "_nota": "18/11/2026: apagada por Zeta (rondas normales). Para encenderla, por_ronda 20 (o con Keepa)."},
  "catalogo_por_tienda": {
   "privalia.com": {
    "cada_min": 30,
