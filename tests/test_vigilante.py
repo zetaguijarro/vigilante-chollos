@@ -4460,6 +4460,9 @@ class PestanasTelegram(unittest.TestCase):
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 2, "-60 % y -30 % de una familia que se calienta")
             self.assertEqual([h for _, h in enviados], ["cat:radar", "cat:radar"])
             self.assertIn("Freidora A", enviados[0][0])
+            self.assertIn("🕒 Detectado ? · descartado ", enviados[0][0])
+            self.assertIn("🕒 Detectado 18/11 11:05 · avisado ",
+                          v.mensaje_candidato(1, {"tienda": "t.es", "nombre": "x", "precio": 5, "_detectado": "18/11 11:05"}))
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 0, "el mismo producto, una vez por semana")
             con.close()
         finally:

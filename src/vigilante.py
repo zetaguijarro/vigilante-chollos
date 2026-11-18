@@ -4618,6 +4618,8 @@ def mensaje_candidato(n, p):
         resenas += f"\nPosible cupón: {p['cupon_posible']}"
     if p.get("tallas_aviso"):
         resenas += "\n⚠️ Tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
+    if p.get("_detectado"):
+        resenas += f"\n🕒 Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}"
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
             f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'])}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
@@ -4731,6 +4733,7 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
         texto = (f"🔎 Casi chollo · {p['tienda']}\n{p['nombre']}\n{p['precio']:g} € (antes {p['precio_antes']:g} €, "
                  f"-{d:.0%} según la tienda)\nRechazado solo por no tener contraste: sin precio de mercado ni "
                  f"histórico. El \"antes\" no está comprobado: míralo tú.\n"
+                 f"🕒 Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
                  f"Búsqueda en Chollometro: {enlace_busqueda_chollometro(p['nombre'])}\n{enlace_limpio(p.get('url')) or ''}")
         if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
@@ -6292,6 +6295,7 @@ def ronda(categoria, solo=None):
                     normalizar_nota(p["valoracion"]) < r["min_valoracion"]:
                 continue
             previos.append({**p, "tienda": tienda, "estado": estado, "d": d,
+                            "_detectado": datetime.now().strftime("%d/%m %H:%M"),  # al procesar la lectura de la tienda
                             "socio": bool(cfg.get("reglas_tienda", {}).get(tienda, {}).get("socio"))})
         if not sembrada and productos:
             con.execute("INSERT OR IGNORE INTO sembradas VALUES (?)", (pagina,))
