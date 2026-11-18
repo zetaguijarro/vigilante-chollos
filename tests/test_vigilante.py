@@ -4434,14 +4434,36 @@ class PestanasTelegram(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self._orig = v.DATOS, v._post
+        self._orig = v.DATOS, v._post, v.DB
         v.DATOS = self.tmp
         self.enviados = []
         v._post = lambda url, datos, timeout=20: self.enviados.append(datos) or {"ok": True}
 
     def tearDown(self):
-        v.DATOS, v._post = self._orig
+        v.DATOS, v._post, v.DB = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_casi_chollos_al_radar(self):
+        v.DB = self.tmp / "vistos.db"
+        orig = v.token_telegram, v.enviar_telegram
+        enviados = []
+        v.token_telegram = lambda: "t"
+        v.enviar_telegram = lambda token, chat, texto, foto=None, *a, **k: enviados.append((texto, k.get("hilo"))) or True
+        try:
+            con = v.bd()
+            cfg = {"entrega": {"modo": "telegram", "chat_id": "1"}}
+            casi = [{"tienda": "t.es", "nombre": "Freidora A", "precio": 40, "precio_antes": 100, "url": "https://t.es/a"},
+                    {"tienda": "t.es", "nombre": "Freidora B", "precio": 70, "precio_antes": 100, "url": "https://t.es/b"},
+                    {"tienda": "t.es", "nombre": "Consola C", "precio": 70, "precio_antes": 100, "peso": 2.0,
+                     "url": "https://t.es/c"},
+                    {"tienda": "t.es", "nombre": "Sin antes", "precio": 10, "precio_antes": None, "url": "https://t.es/d"}]
+            self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 2, "-60 % y -30 % de una familia que se calienta")
+            self.assertEqual([h for _, h in enviados], ["cat:radar", "cat:radar"])
+            self.assertIn("Freidora A", enviados[0][0])
+            self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 0, "el mismo producto, una vez por semana")
+            con.close()
+        finally:
+            v.token_telegram, v.enviar_telegram = orig
 
     def test_cada_mensaje_a_su_pestana(self):
         (self.tmp / v.TEMAS).write_text(json.dumps({"sistema": 7, "cat:moda": 9}), encoding="utf-8")

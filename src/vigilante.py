@@ -4695,6 +4695,50 @@ def crear_temas():
     return temas
 
 
+CASI_POR_RONDA = 3      # casi chollos por ronda y categoría en la pestaña Radar
+CASI_DTO_MIN = 0.40     # descuento visible mínimo de un casi chollo...
+CASI_DTO_FAMILIA = 0.25  # ...o este, si su familia se calienta mucho en esa tienda (peso 1,5 o más)
+CASI_REPETIR_DIAS = 7
+
+
+def modo_telegram_cfg(cfg):
+    return (cfg or {}).get("entrega", {}).get("modo") == "telegram"
+
+
+def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
+    """Pestaña 🔔 Radar (Zeta, 18/11/2026): productos con buena pinta que se rechazan SOLO por no tener contraste
+    (ni mercado ni histórico). Mucho descuento visible, o bastante en una familia que se calienta en esa tienda.
+    Los decide Zeta a mano: el "antes" de la tienda no está comprobado. Como mucho `maximo` por ronda, los de
+    más descuento, y el mismo producto una vez por semana."""
+    token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
+    if not (token and chat):
+        return 0
+    buenos = []
+    for p in casi:
+        d = (1 - p["precio"] / p["precio_antes"]) if p.get("precio_antes") else None
+        if d is None or not (d >= CASI_DTO_MIN or (d >= CASI_DTO_FAMILIA and p.get("peso", 1) >= 1.5)):
+            continue
+        buenos.append((d, p))
+    hace = (datetime.now() - timedelta(days=CASI_REPETIR_DIAS)).isoformat(timespec="minutes")
+    enviados = 0
+    for d, p in sorted(buenos, key=lambda x: -x[0]):
+        if enviados >= maximo:
+            break
+        clave = f"casi:{clave_vista(p['tienda'], p)}"
+        fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+        if fila and fila[0] >= hace:
+            continue
+        texto = (f"🔎 Casi chollo · {p['tienda']}\n{p['nombre']}\n{p['precio']:g} € (antes {p['precio_antes']:g} €, "
+                 f"-{d:.0%} según la tienda)\nRechazado solo por no tener contraste: sin precio de mercado ni "
+                 f"histórico. El \"antes\" no está comprobado: míralo tú.\n"
+                 f"Búsqueda en Chollometro: {enlace_busqueda_chollometro(p['nombre'])}\n{enlace_limpio(p.get('url')) or ''}")
+        if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
+            enviados += 1
+    con.commit()
+    return enviados
+
+
 def enviar_telegram(token, chat_id, texto, foto=None, teclado=None, html=False, hilo=None):
     """html: el texto ya viene en HTML de Telegram (negrita real). hilo: message_thread_id del tema, o el nombre de
     una pestaña ("publicar", "sistema", "cat:<categoría>"; ver `temas`). Sin esa pestaña, al chat general."""
@@ -6337,7 +6381,7 @@ def ronda(categoria, solo=None):
                 con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
             precios_idealo[i] = mejor or None
-    finales = []
+    finales, casi = [], []  # casi: buena pinta pero sin contraste (pestaña Radar, 18/11/2026)
     if lote and copia is None:  # copia local al día (ya cargada en el paso 2b si había productos)
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
@@ -6410,6 +6454,7 @@ def ronda(categoria, solo=None):
             # "antes 199 €" con el mercado a 71,95 €). Regla de Zeta: sin contraste claro, no se envía.
             # El histórico propio sí es contraste: baja de lo más barato visto en semanas.
             ok = bool(dias_hist) and historial_propio_ok(p, dias_hist, bajada_hist)
+            p["_sin_contraste"] = not ok
         else:
             # Categorías sin comparador (moda, hogar, belleza...): sin precio de mercado, solo con mucho
             # descuento visible ("descuento_min_sin_mercado" de la categoría; si no, el global).
@@ -6417,6 +6462,7 @@ def ronda(categoria, solo=None):
                 ok = p.get("error_precio") or historial_propio_ok(p, dias_hist, bajada_hist)
             else:
                 ok = d is not None and d >= cat_cfg.get("descuento_min_sin_mercado", desc_sin_idealo)
+            p["_sin_contraste"] = not ok
         if not ok and p.get("_mercado_propio") and p.get("_hp") and p["_hp"]["habitual"]:
             # La otra tienda también ha bajado (promoción de marca, Black Friday): lo que cuenta es el habitual.
             hp = p["_hp"]
@@ -6458,7 +6504,14 @@ def ronda(categoria, solo=None):
                           + (1 if p.get("error_precio") else 0) + min(hot, 3000) / 3000
                           + max(-0.35, min(1.0, (p["peso"] - 1) * 0.5)))
             finales.append(p)
+        elif p.get("_sin_contraste") and not p.get("gratis") and not es_accesorio(p["nombre"]):
+            if p["tienda"] not in pesos_t:
+                pesos_t[p["tienda"]] = pesos_volumen(con, cfg, p["tienda"])
+            p["peso"] = peso_de(pesos_t[p["tienda"]], p["nombre"])
+            casi.append(p)
     con.commit()
+    if modo_telegram_cfg(cfg) and casi:
+        avisar_casi_chollos(con, cfg, casi, f.get("casi_por_ronda", CASI_POR_RONDA))
 
     # 4) Memoria (modelos ya juzgados o ya enviados) y Chollometro, todo por código.
     entrega = cfg.get("entrega", {})
