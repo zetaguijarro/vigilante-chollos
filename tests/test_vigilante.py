@@ -1934,7 +1934,7 @@ class Rondas(Base):
         self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
         # 17/11/2026: NBA Store dio 0 productos en todas sus lecturas con navegador: apartada.
         self.assertIn("nbastore.eu", cats["deporte"]["apartadas"])
-        self.assertIn("precioreal.com", siempre)
+        self.assertNotIn("precioreal.com", siempre, "PrecioReal es solo el buscador comparador (Zeta, 18/11/2026)")
         # Portátil de Zeta (17/11/2026): 16 GB de RAM, i5-8265U de 4 núcleos, dedicado solo al vigilante.
         self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 3))
         # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
