@@ -2829,11 +2829,78 @@ def misma_serie_tv(a, b):
     return a == b or (abs(len(a) - len(b)) == 1 and (a.startswith(b) or b.startswith(a)) and a[-1:].isdigit() != b[-1:].isdigit())
 
 
+# Códigos de televisor por marca -> (pulgadas, serie). 18/11/2026 (Zeta: "para todos"):
+# LG OLED65C54LA (C5), 65QNED85A6A (QNED85), 55UT73006LA (UT73); Sony K-65XR80 (XR80), KD-55X85L (X85L);
+# Philips 65OLED809/12 (OLED809), 55PUS8909/12 (PUS8909); TCL 65C855 (C855); Hisense 65U8NQ (U8NQ);
+# Panasonic TX-65MZ1500E (MZ1500).
+CODIGOS_TV = [("samsung", RE_TV_SAMSUNG),
+              ("lg", re.compile(r"\bOLED(\d{2,3})([A-Z]\d)\d?[A-Z0-9]*\b")),
+              ("lg", re.compile(r"\b(\d{2,3})((?:QNED|NANO)\d{2}|U[TRQA]\d{2})[A-Z0-9]*\b")),
+              ("sony", re.compile(r"\b(?:K|KD|XR|KE)-?(\d{2,3})((?:XR|X|A)\d{2}[A-Z]?)\b")),
+              ("philips", re.compile(r"\b(\d{2,3})((?:OLED|PUS|PML)\d{3,4})(?:/\d{2})?\b")),
+              ("tcl", re.compile(r"\b(\d{2,3})((?:C|P|T)\d{3}|QM\d[A-Z]?)[A-Z]?\b")),
+              ("hisense", re.compile(r"\b(\d{2,3})((?:U|A|E)\d[A-Z]{1,2})\b")),
+              ("panasonic", re.compile(r"\bTX-?(\d{2,3})([A-Z]{1,3}\d{3,4})[A-Z]?\b"))]
+PULGADAS_TV = {24, 27, 32, 40, 42, 43, 48, 50, 55, 58, 60, 65, 70, 75, 77, 83, 85, 86, 97, 98, 100, 115}
+
+
+def codigo_tv(texto):
+    """(marca, pulgadas, serie) del código de televisor que lleve el texto, o None. Salvo Samsung (su prefijo de
+    región ya es inconfundible), la marca tiene que estar escrita: "65C855" suelto no se sabe qué es."""
+    t = texto or ""
+    up, bajo = t.upper(), t.lower()
+    for marca, rx in CODIGOS_TV:
+        if marca != "samsung" and not re.search(rf"\b{marca}\b", bajo):
+            continue
+        for m in rx.finditer(up):
+            if int(m.group(1)) in PULGADAS_TV:
+                # Hisense 85E7S y 85E7S PRO son modelos distintos: la coletilla pegada al código es parte de la serie.
+                coletilla = re.match(r"\s*(PRO|ULTRA|MAX)\b", up[m.end():])
+                return marca, int(m.group(1)), m.group(2) + (" " + coletilla.group(1) if coletilla else "")
+    return None
+
+
+def serie_en_texto(serie, texto):
+    """¿El texto nombra esta serie, con o sin espacio ("QNED 85", "OLED evo C5", "UT7300" para UT73)?"""
+    m = re.match(r"([A-Z]+)(\d+)(.*)", serie)
+    if not m:
+        return False
+    rx = rf"(?<![A-Z0-9]){m.group(1)}[\s-]?{m.group(2)}{re.escape(m.group(3))}[A-Z0-9]{{0,2}}(?![A-Z0-9])"
+    return bool(re.search(rx, (texto or "").upper()))
+
+
+def tv_igual(nombre, titulo):
+    """¿Mismo televisor? True/False, o None si no se puede decidir por aquí (sigue la comparación normal).
+    Con código en los dos: misma marca, serie y pulgadas. Con código en uno: el otro tiene que nombrar la serie y
+    decir las pulgadas. Sin código (Samsung): serie y pulgadas del título."""
+    ca, cb = codigo_tv(nombre), codigo_tv(titulo)
+    if ca and cb:
+        return ca[0] == cb[0] and ca[1] == cb[1] and misma_serie_tv(ca[2], cb[2])
+    if ca or cb:
+        (marca, pulgadas, serie), otro = (ca, titulo) if ca else (cb, nombre)
+        if not re.search(rf"\b{marca}\b", (otro or "").lower()):
+            return None
+        tv_otro = modelo_tv(otro) if marca == "samsung" else None
+        if tv_otro and not misma_serie_tv(serie, tv_otro[1]):
+            return False  # Samsung: el otro nombra otra serie (S90H frente a S93H)
+        if not serie_en_texto(serie, otro):
+            return None
+        tamanos = {int(x) for x in RE_PULGADAS.findall(otro or "") if int(x) in PULGADAS_TV}
+        return (pulgadas in tamanos) if tamanos else None
+    tv_a, tv_b = modelo_tv(nombre), modelo_tv(titulo)
+    if tv_a and tv_b:
+        if not misma_serie_tv(tv_a[1], tv_b[1]):
+            return False
+        if tv_a[0] and tv_b[0]:
+            return bool(tv_a[0] & tv_b[0])
+    return None
+
+
 def _expandir_tv(texto):
-    """Al código de un televisor Samsung le añade su serie y pulgadas ("TQ77S93HATXXC S93H 77"") para que el
-    índice y el modelo encuentren los hilos que no ponen el código."""
-    m = RE_TV_SAMSUNG.search((texto or "").upper())
-    return f"{texto} {m.group(2)} {m.group(1)}\"" if m else texto
+    """Al código de un televisor le añade su serie y pulgadas ("TQ77S93HATXXC S93H 77"") para que el índice y el
+    modelo encuentren los hilos que no ponen el código."""
+    c = codigo_tv(texto)
+    return f"{texto} {c[2]} {c[1]}\"" if c else texto
 
 
 def _limpiar_titulo(texto):
@@ -2879,12 +2946,9 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
         return False  # una recopilación ("50" a 341 € / 65" a 549 €") no es un producto
     if bool(RE_REACONDICIONADO.search(nombre)) != bool(RE_REACONDICIONADO.search(titulo)):
         return False  # un reacondicionado no es el producto nuevo (ni su precio sirve de referencia)
-    tv_a, tv_b = modelo_tv(nombre), modelo_tv(titulo)
-    if tv_a and tv_b:  # televisores Samsung: serie y pulgadas, no el código entero (TQ77S93HATXXC = 77" S93H)
-        if not misma_serie_tv(tv_a[1], tv_b[1]):
-            return False
-        if tv_a[0] and tv_b[0]:
-            return bool(tv_a[0] & tv_b[0])
+    tv = tv_igual(nombre, titulo)  # televisores: serie y pulgadas, no el código entero (TQ77S93HATXXC = 77" S93H)
+    if tv is not None:
+        return tv
     (mm_a, acc_a, ga_, fa, juego_a, tok_a, _) = _rasgos(nombre)
     ma, mo_a, ca, ta = marca_y_modelo(nombre, marca) if marca else mm_a
     mb, mo_b, cb, tb = mm_b
@@ -3109,9 +3173,9 @@ CM_BUSCAR_CACHE_H = 6
 
 def _consulta_busqueda(p):
     """Marca + código de modelo si lo hay; si no, el principio del nombre."""
-    tv = modelo_tv(p.get("nombre") or p.get("n", ""))
-    if tv and len(tv[0]) == 1:  # "samsung QN80H 100": con el código entero solo salían los QN80F del año anterior
-        return f"samsung {tv[1]} {next(iter(tv[0]))}"
+    tv = codigo_tv(p.get("nombre") or p.get("n", ""))
+    if tv:  # "samsung QN80H 100": con el código entero solo salían los QN80F del año anterior
+        return f"{tv[0]} {tv[2]} {tv[1]}"
     return consulta_comparador({"nombre": p.get("nombre") or p.get("n", ""), "marca": p.get("marca") or "",
                                 "tienda": p.get("tienda") or p.get("t")})
 

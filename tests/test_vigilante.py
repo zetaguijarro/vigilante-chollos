@@ -4602,6 +4602,19 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertEqual(v._consulta_busqueda({"nombre": qn}), "samsung QN80H 100")
         self.assertEqual(v.modelo_tv("Samsung UE43DU7100KXXC"), (frozenset({43}), "DU7100"))
         self.assertIsNone(v.modelo_tv("Samsung Galaxy S25 Ultra 256 GB"))
+        # Las demás marcas (Zeta: "para todos")
+        self.assertTrue(v.mismo_producto('TV OLED 65" - LG OLED65C65LA, OLED evo 4K',
+                                         'Smart TV LG OLED evo AI C6 65 pulgadas 4K 2026'))
+        self.assertFalse(v.mismo_producto('LG OLED65C65LA', 'LG OLED evo C6 55" 4K'), "otras pulgadas")
+        self.assertFalse(v.mismo_producto('LG OLED65C65LA 65"', 'LG OLED65G64LW 65"'), "C6 no es G6")
+        self.assertTrue(v.mismo_producto('LG 65QNED81B6A 65 pulgadas', 'TV QNED Mini LED 65" - LG 65QNED81B6A, UHD 4K'))
+        self.assertTrue(v.mismo_producto('Sony Bravia 8 K-65XR80 OLED', 'Sony XR80 Bravia 8 OLED 65"'))
+        self.assertTrue(v.mismo_producto('Philips 65OLED801/12 65"', 'TV Philips 65 OLED 65OLED801 4K Ultra HD'))
+        self.assertFalse(v.mismo_producto('TV QLED 85" - Hisense 85E7S, QLED 4K', 'TV QLED 85" - Hisense 85E7S PRO, 144Hz'),
+                         "el PRO es otro modelo")
+        self.assertEqual(v.codigo_tv("Panasonic TX-65MZ1500E OLED"), ("panasonic", 65, "MZ1500"))
+        self.assertEqual(v._consulta_busqueda({"nombre": "LG OLED65C65LA"}), "lg C6 65")
+        self.assertIsNone(v.codigo_tv("Funda 65C855 para móvil"), "sin la marca no es un televisor")
 
     def test_ficha_amazon_precio_del_bloque_de_compra(self):
         """18/11/2026: la ficha del LEGO 75433 daba 55,99 € (un LEGO del carrusel); Zeta lo veía a 49,99 €."""
