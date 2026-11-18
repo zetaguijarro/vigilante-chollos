@@ -2801,9 +2801,44 @@ def _rasgos(texto):
             bool(RE_JUEGO.search(texto)), frozenset(tokens(texto)), bool(RE_RECOPILACION.search(texto)))
 
 
+# Televisores Samsung (18/11/2026, Zeta): la tienda pone el código (TQ77S93HATXXC = 77" + serie S93H; prefijo de
+# región TQ/QE/GQ/UE..., sufijo AT/AU/AE/XXC...) y el hilo "77" OLED S93H" o "TQ77S93H". Se comparan pulgadas y serie.
+RE_TV_SAMSUNG = re.compile(r"\b(?:QE|GQ|TQ|UE|GU|TU)(\d{2,3})((?:DU|U)\d{4}[A-H]?|[A-Z]{1,3}\d{1,3}[A-Z])[A-Z0-9]*\b")
+RE_SERIE_TV = re.compile(r"\b((?:DU|U)\d{4}[A-H]?|(?:QN|S|Q|LS|LST)\d{1,3}[A-H])\b")
+RE_PULGADAS = re.compile(r"(?<![\d.,])(\d{2,3})\s*(?:\"|”|″|''|pulgadas\b|pulg\b|inch\b|-inch\b)", re.I)
+RE_CONTEXTO_TV = re.compile(r"\b(?:tv|televisor|televisi[oó]n|smart\s?tv|qled|oled|neo\s?qled|pulgadas)\b", re.I)
+
+
+def modelo_tv(texto):
+    """Televisor Samsung -> (pulgadas, serie) o None. Del código si lo hay; si no, de la serie y las pulgadas del
+    título (pueden ser varias: "50", 55" y 65""; sin pulgadas, conjunto vacío)."""
+    t = texto or ""
+    m = RE_TV_SAMSUNG.search(t.upper())
+    if m:
+        return frozenset({int(m.group(1))}), m.group(2)
+    if "samsung" not in t.lower() or not RE_CONTEXTO_TV.search(t):
+        return None
+    serie = RE_SERIE_TV.search(t.upper())
+    if not serie:
+        return None
+    return frozenset(int(x) for x in RE_PULGADAS.findall(t) if 24 <= int(x) <= 115), serie.group(1)
+
+
+def misma_serie_tv(a, b):
+    """QN80H = QN80H; DU7100 = DU7100K (letra de sufijo); QN80H ≠ QN80F (otro año), S93H ≠ S90H."""
+    return a == b or (abs(len(a) - len(b)) == 1 and (a.startswith(b) or b.startswith(a)) and a[-1:].isdigit() != b[-1:].isdigit())
+
+
+def _expandir_tv(texto):
+    """Al código de un televisor Samsung le añade su serie y pulgadas ("TQ77S93HATXXC S93H 77"") para que el
+    índice y el modelo encuentren los hilos que no ponen el código."""
+    m = RE_TV_SAMSUNG.search((texto or "").upper())
+    return f"{texto} {m.group(2)} {m.group(1)}\"" if m else texto
+
+
 def _limpiar_titulo(texto):
     """El título sin ruido (precios, tallas, edades, años) y con las medidas pegadas a su número."""
-    limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", texto or ""))
+    limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", _expandir_tv(texto or "")))
     # "256 GB" -> "256gb"; "6+128" y "6/128" (RAM + almacenamiento de un móvil) -> "6gb 128gb"
     limpio = re.sub(r"\b(\d{1,2})\s*(?:gb)?\s*[+/]\s*(\d{2,4})(?:\s*gb)?\b(?!\s*(?:€|%))", r"\1gb \2gb", limpio,
                     flags=re.I)
@@ -2844,6 +2879,12 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
         return False  # una recopilación ("50" a 341 € / 65" a 549 €") no es un producto
     if bool(RE_REACONDICIONADO.search(nombre)) != bool(RE_REACONDICIONADO.search(titulo)):
         return False  # un reacondicionado no es el producto nuevo (ni su precio sirve de referencia)
+    tv_a, tv_b = modelo_tv(nombre), modelo_tv(titulo)
+    if tv_a and tv_b:  # televisores Samsung: serie y pulgadas, no el código entero (TQ77S93HATXXC = 77" S93H)
+        if not misma_serie_tv(tv_a[1], tv_b[1]):
+            return False
+        if tv_a[0] and tv_b[0]:
+            return bool(tv_a[0] & tv_b[0])
     (mm_a, acc_a, ga_, fa, juego_a, tok_a, _) = _rasgos(nombre)
     ma, mo_a, ca, ta = marca_y_modelo(nombre, marca) if marca else mm_a
     mb, mo_b, cb, tb = mm_b
@@ -3068,6 +3109,9 @@ CM_BUSCAR_CACHE_H = 6
 
 def _consulta_busqueda(p):
     """Marca + código de modelo si lo hay; si no, el principio del nombre."""
+    tv = modelo_tv(p.get("nombre") or p.get("n", ""))
+    if tv and len(tv[0]) == 1:  # "samsung QN80H 100": con el código entero solo salían los QN80F del año anterior
+        return f"samsung {tv[1]} {next(iter(tv[0]))}"
     return consulta_comparador({"nombre": p.get("nombre") or p.get("n", ""), "marca": p.get("marca") or "",
                                 "tienda": p.get("tienda") or p.get("t")})
 

@@ -1592,7 +1592,7 @@ class Rondas(Base):
         con = v.bd()
         p = {"nombre": "Samsung TQ55Q7F5AU 55 pulgadas 4K QLED", "tienda": "amazon.es"}
         self.assertEqual(v.buscar_en_chollometro(con, p), 1)
-        self.assertIn("search?q=samsung+TQ55Q7F5AU", pedidas[-1])
+        self.assertIn("search?q=samsung+Q7F+55", pedidas[-1], "televisor Samsung: serie y pulgadas (18/11/2026)")
         self.assertEqual(con.execute("SELECT precio, temp FROM cm WHERE id=?", (viejo["threadId"],)).fetchone(), (389.0, 162.0))
         self.assertEqual(v.buscar_en_chollometro(con, p), 1)
         self.assertEqual(len(pedidas), 1, "caché de 6 h: no se repite la búsqueda")
@@ -4588,6 +4588,20 @@ class EmparejamientoPorTipo(unittest.TestCase):
         pesos = {"televisores": 2.5, "ropa": 0.3}
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/moda-hombre/ropa/"), 0.3)
+
+    def test_televisores_samsung_por_serie_y_pulgadas(self):
+        """18/11/2026 (Zeta): TQ77S93HATXXC y TQ100QN80HAUXXC ya estaban en Chollometro con otro título."""
+        eci = 'TV OLED 195cm (77") Samsung TQ77S93HATXXC 4K Smart TV SIN reflejos con Vision AI. 165Hz Ultimate Gaming Pack'
+        self.assertTrue(v.mismo_producto(eci, 'TV 77" OLED S93H 4K Sin reflejos 165Hz Samsung Vision Al Smart TV (2026) 77"'))
+        self.assertTrue(v.mismo_producto(eci, 'Smart TV Samsung 77" OLED TQ77S93H (4K UHD, 144Hz, NQ4 AI)'))
+        self.assertFalse(v.mismo_producto(eci, 'TV Samsung OLED 65" S93H 4K Sin reflejos 165Hz'), "otras pulgadas")
+        self.assertFalse(v.mismo_producto(eci, 'TV Samsung OLED 77" S90H 4K'), "otra serie")
+        qn = 'TV Neo QLED Mini LED 254cm (100") Samsung TQ100QN80HAUXXC 4K Smart TV con Vision AI'
+        self.assertTrue(v.mismo_producto(qn, 'TV 100" Neo QLED QN80H 4K Samsung Vision AI Smart TV (2026)'))
+        self.assertFalse(v.mismo_producto(qn, 'Samsung TV 100 Pulgadas Neo QLED QN80F 4K [TQ100QN80FUXXC]'), "QN80F es de 2025")
+        self.assertEqual(v._consulta_busqueda({"nombre": qn}), "samsung QN80H 100")
+        self.assertEqual(v.modelo_tv("Samsung UE43DU7100KXXC"), (frozenset({43}), "DU7100"))
+        self.assertIsNone(v.modelo_tv("Samsung Galaxy S25 Ultra 256 GB"))
 
     def test_ficha_amazon_precio_del_bloque_de_compra(self):
         """18/11/2026: la ficha del LEGO 75433 daba 55,99 € (un LEGO del carrusel); Zeta lo veía a 49,99 €."""
