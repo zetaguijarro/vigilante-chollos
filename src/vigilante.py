@@ -2751,6 +2751,18 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     return len(comunes) >= (1 if misma_marca else 2) and len(comunes) / base >= cobertura
 
 
+def coincidencia(nombre, titulo, marca=None):
+    """Porcentaje de las palabras del modelo (sin marca, relleno, medidas ni palabras comunes) que comparten el
+    producto y el hilo, sobre el más corto de los dos. Para enseñarlo en el aviso (Zeta, 18/11/2026)."""
+    ma, mo_a, _, _ = marca_y_modelo(nombre, marca) if marca else _rasgos(nombre or "")[0]
+    mo_b = _rasgos(titulo or "")[0][1]
+    limpiar = lambda m: {t for t in m if not es_palabra_comun(t) and not RE_UNIDAD.match(t)}
+    mo_a, mo_b = limpiar(mo_a), limpiar(mo_b)
+    if not mo_a or not mo_b:
+        return 0
+    return round(100 * len(mo_a & mo_b) / min(len(mo_a), len(mo_b)))
+
+
 def mismo_post(nombre, titulo, marca=None):
     """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto)."""
     return mismo_producto(nombre, titulo, marca)
@@ -2830,7 +2842,10 @@ def estado_chollometro(p, copia=None):
     # Los hilos de este mismo producto, para el aviso (Zeta, 18/11/2026: los enlaces con su precio, no una búsqueda).
     p["_iguales"] = [{"fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "precio": h["precio"],
                       "temp": round(h["temp"] or 0), "tienda": h["tienda"], "agotado": bool(h["caducado"]),
-                      "url": enlace_hilo(h)} for h in sorted(iguales, key=lambda h: -(h["publicado"] or 0))[:4]]
+                      "url": enlace_hilo(h),
+                      "coincide": "mismo enlace" if h["id"] in por_enlace
+                      else f"coincide {coincidencia(p['nombre'], h['titulo'], p.get('marca'))} %"}
+                     for h in sorted(iguales, key=lambda h: -(h["publicado"] or 0))[:4]]
     if hot:
         p["_cm_hot"] = {"temp": round(hot["temp"]), "precio": hot["precio"], "titulo": hot["titulo"][:80],
                         "dias": int((datetime.now().timestamp() - hot["publicado"]) // 86400),
@@ -3183,9 +3198,11 @@ def lineas_iguales(p):
     iguales = p.get("_iguales")
     if not iguales:
         return "Hilos en Chollometro: ninguno de este producto en la copia"
-    return "\n".join(f"Hilo: {h['fecha']} · {h['precio']:g} € · {h['temp']}° · {h['tienda']}"
-                     f"{' · agotado' if h['agotado'] else ''}\n{h['url']}" if h.get("precio") else
-                     f"Hilo: {h['fecha']} · {h['temp']}° · {h['tienda']}\n{h['url']}" for h in iguales)
+    def linea(h):
+        precio = f" · {h['precio']:g} €" if h.get("precio") else ""
+        extra = (" · agotado" if h.get("agotado") else "") + (f" · {h['coincide']}" if h.get("coincide") else "")
+        return f"Hilo: {h['fecha']}{precio} · {h['temp']}° · {h['tienda']}{extra}\n{h['url']}"
+    return "\n".join(linea(h) for h in iguales)
 
 
 def enlace_busqueda_chollometro(nombre, marca=None):

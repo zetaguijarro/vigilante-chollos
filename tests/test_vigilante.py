@@ -1731,6 +1731,9 @@ class Rondas(Base):
         self.assertIn("Hilo: 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
                       texto)
         self.assertNotIn("search?q=", texto)
+        p["_iguales"][0]["coincide"] = "coincide 92 %"
+        self.assertIn("Amazon · agotado · coincide 92 %", v.mensaje_candidato(7, p))
+        self.assertEqual(v.coincidencia("Sony WH-CH720N Azul Auriculares", "Sony WH-CH720N Auriculares Bluetooth"), 100)
         self.assertIn("referencia de la tienda: 179 €", texto)
         self.assertIn("Descuento real: -34 % sobre mercado", texto)
 
