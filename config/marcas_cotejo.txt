@@ -1,0 +1,81 @@
+# Marcas solo para cotejar títulos con Chollometro (18/11/2026). No cuentan para el filtro de marca conocida (marcas.txt).
+funko
+casio
+citizen
+joma
+seiko
+stanley
+timex
+fila
+haier
+durex
+crocs
+wmf
+merrell
+quiksilver
+clarks
+brita
+orient
+jack & jones
+tommy jeans
+calvin klein jeans
+pepe jeans
+helly hansen
+mellerware
+monix
+vevor
+iniu
+songmics
+vasagle
+educa
+arcos
+bic
+mahou
+haribo
+fairy
+finish
+dodot
+star wars
+disney
+marvel
+pokémon
+ralph lauren
+guess
+diesel
+hugo boss
+boss
+emporio armani
+michael kors
+geox
+timberland
+dr. martens
+birkenstock
+havaianas
+ecco
+camper
+superdry
+napapijri
+champion
+kappa
+umbro
+mizuno
+saucony
+brooks
+salewa
+jordan
+new era
+ray-ban
+oakley
+hawkers
+fossil
+swatch
+festina
+lotus
+tissot
+g-shock
+beko
+candy
+hoover
+ecovacs
+shark
+tineco

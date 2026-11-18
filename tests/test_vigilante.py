@@ -4489,6 +4489,24 @@ class EmparejamientoPorTipo(unittest.TestCase):
     def test_titulo_vago_no_es_demanda_probada(self):
         self.assertFalse(v.mismo_producto_hot(self.NOMBRE, "Calvin Klein jeans mujer"))
 
+    def test_marca_y_modelo(self):
+        """18/11/2026 (Zeta: "comparar por marca y por modelo"): casos reales de la revisión de 400 productos."""
+        mp = v.mismo_producto
+        a = "Smartphone Xiaomi POCO M7 6GB 128GB"
+        self.assertTrue(mp(a, "Xiaomi POCO M7 - 6/128GB, Pantalla de 6'9\" con 144Hz, Snapdragon 685, 7000mAh"))
+        self.assertTrue(mp(a, "POCO M7 (6GB/128GB) con Batería de 7000mAh y 144Hz"), "gama implica marca; 'con' no es accesorio")
+        self.assertFalse(mp(a, "Xiaomi POCO M7 Pro 5G 8+256GB"), "variante Pro")
+        self.assertFalse(mp("Xiaomi Redmi 15C 4GB 256GB", "Xiaomi POCO C85 6GB+128GB"), "otra gama")
+        self.assertFalse(mp("Móvil Xiaomi Redmi Note 17 5G 256GB + 6GB RAM", "Xiaomi Redmi Note 17 - 6/128GB"), "otro almacenamiento")
+        self.assertFalse(mp("Silla de oficina ergonómica con reposabrazos", "Silla Oficina MITSAI Ergonómica Tokyo"), "sin marca")
+        self.assertFalse(mp("Vidrio Templado Sunnylife para Mando DJI RC Pro", "DJI Mini 4K con mando RC-N1C"), "accesorio")
+        self.assertFalse(mp("Nothing Ear (3a) TWS ANC Auriculares", "Nothing Phone 3a 5G 8GB 128GB"), "otra familia")
+        self.assertFalse(mp('TV 65" OLED S93H Samsung', 'Samsung TV 55" QLED QEF1 ( 50" a 341€ / 65" a 549€ )'), "recopilación")
+        self.assertFalse(mp("Joma Camiseta Manga Corta Hombre", "Joma Camiseta Manga Corta Mujer"), "género")
+        self.assertFalse(mp("Converse Chuck Taylor All Star Lift Clean OX", "Converse Chuck Taylor All Star High"), "corte")
+        self.assertTrue(mp("Sony WH-CH720N Azul Auriculares inalámbricos", "Sony WH-CH720N Auriculares Bluetooth"))
+        self.assertTrue(mp("Zapatos Botas Dr. Martens 1460 Cherry Red", "Botas DR. Martens 1460"))
+
     def test_configuracion_sin_concretar(self):
         """#214 (18/11/2026): ThinkPad sin RAM ni disco en el nombre contra el precio de Idealo de otra configuración."""
         self.assertTrue(v.configuracion_ambigua("ThinkPad P14s Gen 7 14 inch AMD"))

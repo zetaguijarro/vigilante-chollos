@@ -1352,6 +1352,15 @@ TIENDAS_MARCA = {"mi": "xiaomi", "nike": "nike", "puma": "puma", "newbalance": "
 
 # ------------------------------------------------------------------ estado
 
+def _columna_nueva(con, sql):
+    """ALTER TABLE ... ADD COLUMN que no falla si otra ronda (otra categoría a la vez) ya la ha añadido."""
+    try:
+        con.execute(sql)
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e):
+            raise
+
+
 def bd():
     DATOS.mkdir(exist_ok=True)
     con = sqlite3.connect(DB, timeout=30)  # varias categorías pueden coincidir
@@ -1413,10 +1422,10 @@ def bd():
         con.commit()
     columnas = {c[1] for c in con.execute("PRAGMA table_info(lista)")}
     if "enviado" not in columnas:  # bases de versiones anteriores
-        con.execute("ALTER TABLE lista ADD COLUMN enviado INTEGER DEFAULT 1")
+        _columna_nueva(con, "ALTER TABLE lista ADD COLUMN enviado INTEGER DEFAULT 1")
     if "extra" not in {c[1] for c in con.execute("PRAGMA table_info(cm)")}:
         # 18/11/2026: datos del hilo para analizar categorías y productos (grupo, enlace, cupón...).
-        con.execute("ALTER TABLE cm ADD COLUMN extra TEXT")
+        _columna_nueva(con, "ALTER TABLE cm ADD COLUMN extra TEXT")
         con.commit()
     # Una fila por producto: cuántos hilos, el último, y el precio más bajo y más alto con que llegó a 200°.
     # La lista de vigilancia de Amazon (encargo 9) es WHERE clave LIKE 'amazon:%'. Después de la columna extra.
@@ -1428,7 +1437,7 @@ def bd():
     if "desde" not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
         # Desde cuándo se sigue el precio de cada producto (histórico propio). Las filas viejas
         # empiezan a contar ahora: no se sabe cuándo se vieron por primera vez.
-        con.execute("ALTER TABLE vistos ADD COLUMN desde TEXT")
+        _columna_nueva(con, "ALTER TABLE vistos ADD COLUMN desde TEXT")
         con.execute("UPDATE vistos SET desde=?", (datetime.now().isoformat(timespec="minutes"),))
         con.commit()
     return con
@@ -2385,8 +2394,9 @@ _INDICE = {"firma": None, "idx": None}
 
 
 def _palabras_post(texto):
-    """Las palabras que cuenta mismo_post (sin colores, genéricas ni números sueltos)."""
-    return {t for t in tokens(texto) - COLORES - GENERICAS_POST if not t.isdigit()}
+    """Palabras para el índice de la copia: sin colores ni genéricas; los números de 2 cifras o más cuentan
+    (LEGO 42171, Pegasus 41)."""
+    return {t for t in tokens(texto) - COLORES - GENERICAS_POST if not (t.isdigit() and len(t) < 2)}
 
 
 def _indice_copia(hilos):
@@ -2438,7 +2448,12 @@ TIPOS_PRODUCTO = [(t, re.compile(r, re.I)) for t, r in (
     ("camiseta", r"\bcamisetas?\b|\bt-?shirts?\b|\btank\s+tops?\b|\btops?\b"), ("camisa", r"\bcamisas?\b"),
     ("polo", r"\bpolos?\b"), ("sudadera", r"\bsudaderas?\b|\bhoodies?\b"), ("jersey", r"\bjerseys?\b|\bcardigans?\b"),
     ("pantalon", r"\bpantal[oó]n(?:es)?\b|\bjoggers?\b|\bleggings?\b|\bmallas\b|\bshorts?\b|\bbermudas?\b"),
-    ("vaquero", r"\bvaqueros?\b"), ("chaqueta", r"\bchaquetas?\b|\bcazadoras?\b|\babrigos?\b|\bparkas?\b|\bplum[ií]feros?\b"),
+    ("vaquero", r"\bvaqueros?\b"), ("chaqueta", r"\bchaquetas?\b|\bcazadoras?\b|\babrigos?\b|\bparkas?\b|\bplum[ií]feros?\b|"
+                                               r"\bjackets?\b|\bcoats?\b"),
+    ("auriculares", r"\bauriculares\b|\bcascos inal|\bheadphones\b|\bearbuds\b"),
+    ("gorra", r"\bgorras?\b|\bgorros?\b|\bcaps?\b"), ("champu", r"\bchamp[uú]s?\b|\bshampoo\b"),
+    ("acondicionador", r"\bacondicionador\w*"), ("serum", r"\bs[eé]r[uú]m\w*"), ("crema", r"\bcremas?\b"),
+    ("gel", r"\bgel\b|\bgeles\b"), ("mascarilla", r"\bmascarillas?\b"), ("desodorante", r"\bdesodorantes?\b"),
     ("vestido", r"\bvestidos?\b|\bfaldas?\b"), ("calzado", r"\bzapatill\w*|\bzapatos?\b|\bsneakers?\b|\bbotas?\b|"
                                                           r"\bbotines?\b|\bsandalias?\b|\bchanclas?\b|\bdeportivas\b"),
     ("ropa_interior", r"\bcalzoncillos?\b|\bboxers?\b|\bbragas?\b|\bsujetadores?\b|\bcalcetines\b|\bpijamas?\b"),
@@ -2452,10 +2467,249 @@ def tipos_producto(texto):
     return {t for t, rx in TIPOS_PRODUCTO if rx.search(texto)}
 
 
-def mismo_post(nombre, titulo):
-    """¿El post de Chollometro es este producto? Los títulos de Chollometro son cortos ('Nike air force 1
-    07 camel') y los de las tiendas largos: se compara sobre el más corto, con el número de modelo igual.
-    Sin palabras genéricas ni números sueltos al contar coincidencias."""
+# Cotejo por marca y modelo (Zeta, 18/11/2026: "lo que tienes que comparar es por marca y por modelo, y quizá
+# alguna palabra suelta"). Lo que no es ni marca ni modelo no cuenta: tipo de producto, colores, precios, tallas,
+# porcentajes y palabras de anuncio.
+PALABRAS_ANUNCIO = {
+    "pack", "set", "kit", "lote", "oferta", "ofertas", "chollo", "envio", "gratis", "gratuito", "precio", "minimo",
+    "historico", "desde", "solo", "tallas", "talla", "varias", "colores", "unidades", "uds", "ud", "unidad", "nuevo",
+    "nueva", "original", "oficial", "version", "global", "edicion", "para", "con", "sin", "por", "del", "las", "los",
+    "una", "uno", "mas", "muy", "cupon", "codigo", "descuento", "rebaja", "rebajas", "black", "friday", "amazon",
+    "app", "web", "tienda", "hombre", "mujer", "mujeres", "hombres", "unisex", "adulto", "adultos", "tamano",
+    "disponible", "disponibles", "stock", "reacondicionado", "reaco", "garantia", "espana", "europa", "eu", "envios",
+    "aplicando", "aplicar", "socios", "prime", "hoy", "ahora", "nuevos", "modelo", "modelos",
+    "compatible", "incluye", "incluido", "incluidos", "regalo", "aniversario", "dia", "dias", "semana", "mes", "ano",
+    # descriptivas de ropa y calzado: no son el modelo
+    "manga", "corta", "larga", "cuello", "redondo", "capucha", "cremallera", "deportivo", "deportiva", "deportivos",
+    "deportivas", "running", "casual", "ligero", "ligera", "transpirable", "impermeable", "algodon", "poliester",
+    "ajustable", "comodo", "comoda", "bajas", "altas", "caña", "cana", "baja", "alta", "ninos", "nino", "nina",
+    "ninas", "kids", "junior", "bebe", "cascos", "cancelacion", "ruido", "activa", "inalambricos", "inalambrico",
+    "inalambricas", "inteligente", "pantalla", "pulgadas", "bateria", "carga", "rapida", "libre", "version",
+    # plataformas: dicen dónde se juega, no qué juego es
+    "ps5", "ps4", "playstation", "xbox", "series", "switch", "pc", "steam", "fisico", "juego", "videojuego",
+    "digital", "pal", "esp", "espana", "mi", "points", "puntos", "smartphone", "movil", "telefono"}
+RE_RUIDO_TITULO = re.compile(
+    r"\d+(?:[.,]\d+)?\s?(?:€|eur\b|euros?\b)|\d+\s?%|\b(?:tallas?|n[uú]meros?)\b[\s\d.,/a-zA-Z-]{0,30}?"
+    r"(?:\d+(?:[.,]5)?\s*(?:a|al|-|y|/)\s*(?:la\s+)?\d+(?:[.,]5)?)|\bde la \d+ a la \d+\b|\b20[12]\d\b|"
+    r"\b\d+\s*\+?\s*(?:a[ñn]os|meses)\b", re.I)
+_RX_MARCAS = {}
+
+
+def rx_marcas():
+    """Marcas para el cotejo: marcas.txt (las del filtro de marca conocida) + marcas_cotejo.txt (moda, hogar,
+    supermercado...: solo para comparar títulos, no relajan ese filtro)."""
+    extra = MARCAS.parent / "marcas_cotejo.txt"
+    clave = tuple(f.stat().st_mtime if f.exists() else 0 for f in (MARCAS, extra))
+    if clave not in _RX_MARCAS:
+        _RX_MARCAS.clear()
+        marcas = [m.strip().lower() for f in (MARCAS, extra) if f.exists()
+                  for m in f.read_text(encoding="utf-8").splitlines() if m.strip() and not m.lstrip().startswith("#")]
+        marcas = sorted(set(marcas), key=len, reverse=True)
+        _RX_MARCAS[clave] = re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, marcas)) + r")(?!\w)") if marcas else None
+    return _RX_MARCAS[clave]
+
+
+MARCA_DE_GAMA = {"poco": "xiaomi", "redmi": "xiaomi", "galaxy": "samsung", "iphone": "apple", "ipad": "apple",
+                 "macbook": "apple", "airpods": "apple", "pixel": "google", "thinkpad": "lenovo", "ideapad": "lenovo",
+                 "legion": "lenovo", "vivobook": "asus", "zenbook": "asus", "rog": "asus", "omen": "hp",
+                 "victus": "hp", "pavilion": "hp", "aspire": "acer", "nitro": "acer", "predator": "acer",
+                 "surface": "microsoft", "playstation": "sony", "dualsense": "sony", "xbox": "microsoft"}
+RE_RECOPILACION = re.compile(r"recopilaci[oó]n|selecci[oó]n de|\ba\s+\d+(?:[.,]\d+)?\s?€\s*/|varios modelos|"
+                             r"varias? (?:referencias|figuras|juegos|marcas)", re.I)
+# Accesorio o pieza de otro producto: un accesorio y el producto no son lo mismo aunque compartan marca y modelo
+# (18/11/2026: "Vidrio templado para mando DJI RC Pro" = "DJI Mini 4K", "Nevox Galaxy S25 con tapa" = "Galaxy S25").
+# "Funda...", "Puntas Bosch" sí; "POCO M7 con Batería de 7000mAh" no ("con ..." es parte del producto).
+RE_ACCESORIO_INICIO = re.compile(r"^(?:(?!con\b|y\b|\+)\S+\s+){0,4}?(?:fundas?|carcasas?|protector\w*|vidrio|cristal|"
+                                 r"cargador\w*|cables?|soportes?|recambios?|repuestos?|bater[ií]as?|correas?|puntas|"
+                                 r"brocas|filtros?|cabezales|mochila|bolsa|estuche)(?!\w)", re.I)
+RE_ACCESORIO_FRASE = re.compile(r"\bcon tapa\b|vidrio templado|cristal templado|\bcompatible con\b|"
+                                r"\bpara (?:el |la )?(?:samsung|iphone|ipad|macbook|galaxy|pixel|xiaomi|apple|huawei|"
+                                r"dji|nintendo|switch|ps5|ps4|playstation|xbox|garmin|amazfit|huami|port[aá]til|mando|"
+                                r"coche|moto|bicicleta|tv|televisor|robot|aspirador\w*|cafetera|thermomix|dyson)\b|"
+                                r"\bapple pencil\b", re.I)
+
+
+def familias_de(texto):
+    """Todas las familias que encajan con el texto ("LEGO ... Figuras de Videojuego" es lego y videojuegos)."""
+    return {n for n, rx in _RE_FAMILIAS if rx.search(texto or "")}
+
+
+def es_accesorio_de(texto):
+    """¿Es un accesorio o pieza de otro producto? Por las primeras palabras ("Funda...", "Puntas Bosch") o por
+    frases como "para Samsung", "compatible con". "Taladro Bosch (... 32 puntas)" no lo es."""
+    texto = texto or ""
+    return bool(RE_ACCESORIO_INICIO.search(texto) or RE_ACCESORIO_FRASE.search(texto))
+
+
+RE_JUEGO = re.compile(r"\bjuego\b|\bvideojuego\b|\bedition\b|\bedici[oó]n\b|\bf[ií]sico\b|\bc[oó]digo de descarga\b",
+                      re.I)
+# Colores que distinguen producto (Chollometro: "enlace distinto con el mismo color suele ser el mismo producto").
+COLORES_EXTRA = {"noir", "rouge", "bleu", "blanc", "marron", "burdeos", "camel", "kaki", "caqui", "crema", "violeta",
+                 "turquesa"}
+RE_GENERO = {"hombre": re.compile(r"\bhombres?\b|\bmen\b|\bmasculin", re.I),
+             "mujer": re.compile(r"\bmujer(?:es)?\b|\bwomen\b|\bfemenin", re.I),
+             "infantil": re.compile(r"\bni[ñn][oa]s?\b|\bkids?\b|\bjunior\b|\binfantil\b|\bbeb[eé]s?\b|\bjuvenil\b", re.I)}
+CORTES = {"high", "hi", "low", "ox", "mid", "lift", "platform"}  # Chuck Taylor High ≠ OX ("plataforma móvil" no)
+
+
+def genero(texto):
+    return {g for g, rx in RE_GENERO.items() if rx.search(texto or "")}
+
+
+def numero_modelo(texto, de_marca=frozenset()):
+    """El primer número del modelo, sin medidas ni capacidades: "Xiaomi 18 Pro 12 GB" -> "18"; "Xiaomi 15t 12/256"
+    -> "15"; "Galaxy Tab A11+" -> "11". None si no hay."""
+    limpio = RE_RUIDO_TITULO.sub(" ", texto or "").lower()
+    for t in re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", limpio).encode("ascii", "ignore").decode()):
+        if t in de_marca or RE_UNIDAD.match(t) or not any(c.isdigit() for c in t):
+            continue
+        m = re.search(r"\d+", t)
+        return m.group(0) if m else None
+    return None
+# Gamas de una marca: tienen que coincidir (Redmi 15C ≠ POCO C85; Redmi Note 17 ≠ Xiaomi 17).
+GAMAS = {"redmi", "poco", "note", "galaxy", "pixel", "iphone", "ipad", "macbook", "thinkpad", "ideapad", "legion",
+         "vivobook", "zenbook", "rog", "tuf", "omen", "victus", "pavilion", "envy", "spectre", "aspire", "nitro",
+         "predator", "swift", "yoga", "surface"}
+RE_UNIDAD = re.compile(r"^\d+(?:hz|mhz|ghz|gb|tb|mm|cm|w|mah|kg|g|l|ml|m|mp|k|p|v|a|x|uds?|pcs|in|ft|cv|bar|ah|"
+                       r"min|h|s|ms|db|lm|rpm|ppm|bits?)$")
+PALABRA_COMUN = 1000  # títulos de la copia en los que sale una palabra para tratarla como descriptiva
+
+
+def codigo_suelto(t):
+    """Código de modelo dentro del nombre (s93h, qef1, wh1000xm5), no una medida (165hz, 256gb, 47mm)."""
+    return len(t) >= 3 and any(c.isdigit() for c in t) and any(c.isalpha() for c in t) and not RE_UNIDAD.match(t)
+
+
+def es_palabra_comun(t):
+    """¿Sale en más de PALABRA_COMUN títulos de la copia? Sin copia cargada (índice), nada es común."""
+    idx = _INDICE.get("idx")
+    return bool(idx) and not any(c.isdigit() for c in t) and len(idx.get(t, ())) > PALABRA_COMUN
+
+
+def marca_y_modelo(texto, marca=None):
+    """-> (palabras de la marca, palabras del modelo, códigos de modelo, tipos de producto)."""
+    limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", texto or ""))
+    # "256 GB" -> "256gb"; "6+128" y "6/128" (RAM + almacenamiento de un móvil) -> "6gb 128gb"
+    limpio = re.sub(r"\b(\d{1,2})\s*(?:gb)?\s*[+/]\s*(\d{2,4})(?:\s*gb)?\b(?!\s*(?:€|%))", r"\1gb \2gb", limpio,
+                    flags=re.I)
+    limpio = re.sub(r"(\d)\s+(gb|tb|mah|hz|mhz|mm|cm|w|ml|kg)\b", r"\1\2", limpio, flags=re.I)
+    limpio = re.sub(r"\b([a-z]+\d+)\+", r"\1 plus", limpio, flags=re.I)  # "Tab A11+" -> "Tab A11 plus" (no "7+ años")
+    rx = rx_marcas()
+    marcas = set(rx.findall(limpio.lower())) if rx else set()
+    if marca:
+        marcas.add(marca.lower())
+    for t in tokens(limpio) & set(MARCA_DE_GAMA):  # "POCO M7" es Xiaomi aunque el título no lo diga
+        marcas.add(MARCA_DE_GAMA[t])
+    de_marca = set().union(*(tokens(m) for m in marcas)) if marcas else set()
+    modelo = {t for t in tokens(limpio) if t not in de_marca and t not in COLORES and t not in GENERICAS_POST
+              and t not in GENERICAS and t not in PALABRAS_ANUNCIO and not tipos_producto(t)}
+    return de_marca, modelo, codigos_modelo(texto or ""), tipos_producto(texto or "")
+
+
+def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
+    """¿El hilo de Chollometro (titulo, corto) es este producto (nombre, de la tienda)? Por marca y modelo:
+    mismo tipo; mismo código si los dos lo tienen; misma marca si los dos la dicen; los números del modelo del hilo
+    están en el producto (S25 ≠ S24, 256 GB ≠ 128 GB); la misma variante (Pro, Max, Ultra...); y la mayor parte del
+    modelo del hilo coincide. Un hilo que solo dice marca y tipo ("Calvin Klein jeans mujer") no es un producto."""
+    if RE_RECOPILACION.search(titulo or ""):
+        return False  # una recopilación ("50" a 341 € / 65" a 549 €") no es un producto
+    ma, mo_a, ca, ta = marca_y_modelo(nombre, marca)
+    mb, mo_b, cb, tb = marca_y_modelo(titulo)
+    if ta and tb and not (ta & tb):
+        return False
+    if es_accesorio_de(nombre) != es_accesorio_de(titulo):
+        return False  # un accesorio y el producto
+    ga_, gb_ = genero(nombre), genero(titulo)
+    if ga_ and gb_ and not (ga_ & gb_):
+        return False  # la de hombre no es la de mujer
+    fa, fb = familias_de(nombre), familias_de(titulo)
+    if fa and fb and not (fa & fb):
+        return False  # auriculares frente a móvil, tablet frente a móvil, juego frente a consola
+    if RE_JUEGO.search(nombre or "") and not RE_JUEGO.search(titulo or "") and familia_de(titulo or "") == "consolas":
+        return False
+    colores = (COLORES - {"color"}) | COLORES_EXTRA
+    colores_a, colores_b = tokens(nombre or "") & colores, tokens(titulo or "") & colores
+    if colores_a and colores_b and not (colores_a & colores_b):
+        return False  # Seductive Noir ≠ Seductive Blue; el mismo producto en otro color es otra oferta
+    # Un "2X16GB" o un "DDR5" no es un código de modelo: son medidas o tipos (Lexar DDR5 = DDR4 por "2X16GB").
+    ca = {c for c in ca if not RE_UNIDAD.match(c.lower()) and not re.match(r"^(?:\d+X\d+\w*|DDR\d|USB\d?|WIFI\d|PCIE\d)$", c)}
+    cb = {c for c in cb if not RE_UNIDAD.match(c.lower()) and not re.match(r"^(?:\d+X\d+\w*|DDR\d|USB\d?|WIFI\d|PCIE\d)$", c)}
+    if ca & cb:
+        return True
+    if ca and cb:
+        return False  # los dos tienen código de modelo y no es el mismo
+    # Sin marca en los dos lados no se empareja por título (solo por enlace): "silla de oficina ergonómica" o
+    # "almohada de El Corte Inglés" casaban con cualquier hilo que dijera lo mismo (18/11/2026).
+    if not (ma and mb and ma & mb):
+        return False
+    misma_marca = True
+    if (mo_a & VARIANTES) != (mo_b & VARIANTES) or (mo_b & CORTES and (mo_a & CORTES) != (mo_b & CORTES)):
+        return False  # Buds 6 ≠ Buds 6 Pro; Find N5 ≠ Find X8 Pro; Chuck Taylor High ≠ OX
+    na, nb = numero_modelo(nombre, ma), numero_modelo(titulo, mb)
+    if na and nb and na != nb:
+        return False  # Xiaomi 18 Pro frente a Xiaomi 15T
+    # Lo que se repite en más de 1.000 títulos de la copia describe, no identifica ("switch", "acero", "ultra").
+    mo_a = {t for t in mo_a if not es_palabra_comun(t)}
+    mo_b = {t for t in mo_b if not es_palabra_comun(t)}
+    # Capacidades (GB, TB): si los dos las dicen, alguna tiene que coincidir (4+256 no es 6+128). Las medidas no
+    # cuentan como modelo al comparar ("70l" en "Horno 70l Candy").
+    for medida in (r"\d+(?:gb|tb)", r"\d+mm"):  # capacidad; tamaño de caja de un reloj (Watch 8 40 mm ≠ 44 mm)
+        cap_a = {t for t in mo_a if re.fullmatch(medida, t)}
+        cap_b = {t for t in mo_b if re.fullmatch(medida, t)}
+        if cap_a and cap_b and not (cap_a & cap_b):
+            return False
+    def almacenamiento(caps):  # la capacidad mayor es el almacenamiento (6+256: 256); la menor, la RAM
+        valores = [int(re.match(r"\d+", t).group()) * (1000 if t.endswith("tb") else 1) for t in caps]
+        return max(valores) if valores else None
+    sa = almacenamiento({t for t in mo_a if re.fullmatch(r"\d+(?:gb|tb)", t)})
+    sb = almacenamiento({t for t in mo_b if re.fullmatch(r"\d+(?:gb|tb)", t)})
+    if sa and sb and sa >= 32 and sb >= 32 and sa != sb:
+        return False  # Redmi Note 17 6+256 no es la 6+128
+    mo_a = {t for t in mo_a if not RE_UNIDAD.match(t)}
+    mo_b = {t for t in mo_b if not RE_UNIDAD.match(t)}
+    idx = _INDICE.get("idx") or {}
+    if idx and not any(c.isdigit() for t in mo_b for c in t) and all(len(idx.get(t, ())) > 100 for t in mo_b):
+        return False  # solo palabras corrientes ("adidas Originals bermuda", "Figuras Funko Pop"): no es un producto
+    if mo_b and all(any(c.isdigit() for c in t) for t in mo_b) and idx \
+            and familias_de(titulo) & {"consolas", "videojuegos"}:
+        # El modelo del hilo es solo un número ("Nintendo Switch 2"): el producto no puede traer un nombre propio
+        # que el hilo no tiene ("Bravely Default Flying Fairy ... Switch 2" es un juego, no la consola).
+        if any(len(idx.get(t, ())) < 300 for t in mo_a - mo_b if not any(c.isdigit() for c in t)):
+            return False
+    sueltos_a, sueltos_b = {t for t in mo_a if codigo_suelto(t)}, {t for t in mo_b if codigo_suelto(t)}
+    if sueltos_a and sueltos_b and not (sueltos_a & sueltos_b):
+        return False  # S93H frente a QEF1: otro modelo
+    if not mo_b:
+        return False  # solo marca y tipo: demasiado vago para saber qué producto es
+    if (mo_a & VARIANTES) != (mo_b & VARIANTES):
+        return False  # Buds 6 ≠ Buds 6 Pro
+    ga, gb = tokens(nombre or "") & GAMAS, tokens(titulo or "") & GAMAS
+    if gb and ga != gb or (ga - {"galaxy"} and not gb):
+        return False  # otra gama de la marca (Redmi frente a POCO; Redmi Note 17 frente a Xiaomi 17)
+    def forma(t):  # "s25" y "s24" tienen la misma forma (letra + 2 cifras); "256gb" y "128gb" también
+        return re.sub(r"\d", "0", t)
+    numeros_a = {t for t in mo_a if any(c.isdigit() for c in t)}
+    faltan = {t for t in mo_b if any(c.isdigit() for c in t)} - mo_a
+    if any(forma(n) == forma(x) for n in faltan for x in numeros_a - mo_b):
+        return False  # el producto dice otro número del mismo tipo: otro modelo o capacidad
+    comunes = mo_a & mo_b
+    # El porcentaje, sobre el más corto de los dos: un título de tienda corto ("POCO M7 6GB 128GB") frente a un hilo
+    # largo lleno de especificaciones ("Snapdragon 685, 144Hz, 7000mAh...") también es el mismo producto.
+    sin_numero = mo_b - faltan  # si la tienda no da el número del hilo (set de LEGO), cuenta el resto
+    if faltan:
+        base = max(1, min(len(sin_numero), len(mo_a)))
+        return len(comunes) >= 2 and len(comunes) / base >= max(cobertura, 0.75)
+    base = max(1, min(len(mo_b), len(mo_a)))
+    return len(comunes) >= (1 if misma_marca else 2) and len(comunes) / base >= cobertura
+
+
+def mismo_post(nombre, titulo, marca=None):
+    """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto)."""
+    return mismo_producto(nombre, titulo, marca)
+
+
+def _mismo_post_antiguo(nombre, titulo):
+    """Cotejo anterior al 18/11/2026 (palabras en común sobre el título más corto). Solo de referencia."""
     if codigos_modelo(nombre) & codigos_modelo(titulo):
         return True
     ta_tipo, tb_tipo = tipos_producto(nombre), tipos_producto(titulo)
@@ -2499,10 +2753,10 @@ def estado_chollometro(p, copia=None):
     grupo = ("elcorteingles", "hipercor")  # comparten stock: para Chollometro son la misma tienda (regla 6)
     for h in hilos_candidatos(p["nombre"], copia, por_enlace):
         enlace = h["id"] in por_enlace
-        if not enlace and not mismo_post(p["nombre"], h["titulo"]):
+        if not enlace and not mismo_post(p["nombre"], h["titulo"], p.get("marca")):
             continue
         if h["temp"] >= CM_HOT and (hot is None or h["temp"] > hot["temp"]) \
-                and (enlace or mismo_producto_hot(p["nombre"], h["titulo"])):
+                and (enlace or mismo_producto_hot(p["nombre"], h["titulo"], p.get("marca"))):
             hot = h
         if not h["precio"]:
             continue
@@ -3017,22 +3271,15 @@ def pcct_de(con, p, buscar=True):
     return url or None
 
 
-def mismo_producto_hot(nombre, titulo):
+def mismo_producto_hot(nombre, titulo, marca=None):
     """Para "ya fue chollo" no basta con parecerse (mismo_post): ese hilo deja pasar un producto sin
     comparador. Casos reales (15-16/11/2026): monitor Philips a 41 € emparejado con un hilo de 599 €,
     AirPods Max a 130 € con otro de 378,99 €, zapatillas Puma de niña con otro modelo.
     Hace falta el mismo código de modelo o el mismo modelo con la regla estricta del comparador.
     18/11/2026 (#213): un título vago, de 3 palabras o menos sin código ("Calvin Klein jeans mujer", una
-    recopilación), no identifica un producto: no sirve de demanda probada. Ni un hilo de otro tipo de producto."""
-    if codigos_modelo(nombre) & codigos_modelo(titulo):
-        return True
-    ta_tipo, tb_tipo = tipos_producto(nombre), tipos_producto(titulo)
-    if ta_tipo and tb_tipo and not (ta_tipo & tb_tipo):
-        return False
-    palabras = tokens(titulo) - COLORES - GENERICAS_POST
-    if len(palabras) <= 3 and not any(any(c.isdigit() for c in w) for w in palabras):
-        return False  # vago y sin número de modelo ("JBL Charge 5" sí identifica el producto)
-    return mismo_modelo(nombre, titulo)
+    recopilación), no identifica un producto: no sirve de demanda probada. Ni un hilo de otro tipo de producto.
+    Desde el 18/11/2026, por marca y modelo (mismo_producto) y más exigente: el 80 % del modelo del hilo."""
+    return mismo_producto(nombre, titulo, marca, cobertura=0.8)
 
 
 # Accesorios y recambios "para" otro producto: heredan la familia del producto principal (una carcasa de
