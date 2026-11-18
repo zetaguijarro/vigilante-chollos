@@ -731,6 +731,51 @@ def productos_pss(extra_json):
     return salida
 
 
+def productos_game(html):
+    """GAME (18/11/2026): web en Next.js; el precio va antes del nombre en la tarjeta y el lector general lo
+    asignaba mal (4 productos de 24). Por tarjeta <article class="ProductListCard...">: nombre en <h3>, precio
+    anterior y actual en dos <span>, y "Mín. últimos 30 días" (el mínimo legal de 30 días) en "min30"."""
+    salida = []
+    for b in re.split(r'<article class="ProductListCard', html)[1:]:
+        b = b.split("</article>")[0]
+        nombre = re.search(r"<h3[^>]*>(.*?)</h3>", b, re.S)
+        url = re.search(r'href="(/[^"]+/\d{4,})"', b)
+        precios = [a_numero(x) for x in re.findall(r"<span[^>]*>\s*(\d{1,3}(?:\.\d{3})*,\d{2})\s*€\s*</span>", b)]
+        if not (nombre and url and precios):
+            continue
+        min30 = re.search(r"M[ií]n\. últimos 30 d[ií]as:.*?(\d{1,3}(?:\.\d{3})*,\d{2})\s*€", b, re.S)
+        precio = precios[-1]
+        antes = precios[0] if len(precios) > 1 and precios[0] > precio else None
+        salida.append({"nombre": " ".join(unescape(re.sub(r"<[^>]+>", " ", nombre.group(1))).split()),
+                       "precio": precio, "precio_antes": antes, "marca": None, "ean": None,
+                       "url": "https://www.game.es" + url.group(1), "imagen_url": None, "valoracion": None,
+                       "resenas": None, "min30": a_numero(min30.group(1)) if min30 else None})
+    return salida
+
+
+def productos_jysk(html):
+    """JYSK (18/11/2026): el lector general sacaba 1 producto de 69 (HTML escapado dentro de la página). Cada tarjeta
+    trae el nombre en aria-label="Ver producto ...", el precio en aria-label="Precio del artículo - 40,00 € /u", el
+    normal en "Precio normal: 65,00 €" y el mínimo legal de 30 días en "Precio más bajo últimos 30 días: ..."."""
+    num = r"(\d{1,3}(?:\.\d{3})*,\d{2})\s*€"
+    salida, vistos = [], set()
+    for b in re.split(r'(?=<a[^>]*aria-label="Ver producto )', html)[1:]:
+        nombre = re.search(r'aria-label="Ver producto ([^"]+)"', b)
+        url = re.search(r'href="(/[^"]+)"', b)
+        precio = re.search(r'aria-label="Precio del art[ií]culo - ' + num, b)
+        if not (nombre and url and precio) or url.group(1) in vistos:
+            continue
+        vistos.add(url.group(1))
+        normal = re.search(r"Precio normal:\s*" + num, b)
+        min30 = re.search(r"Precio m[aá]s bajo [uú]ltimos 30 d[ií]as:\s*" + num, b)
+        p, antes = a_numero(precio.group(1)), a_numero(normal.group(1)) if normal else None
+        salida.append({"nombre": " ".join(unescape(nombre.group(1)).split()), "precio": p,
+                       "precio_antes": antes if antes and antes > p else None, "marca": None, "ean": None,
+                       "url": "https://jysk.es" + url.group(1), "imagen_url": None, "valoracion": None, "resenas": None,
+                       "min30": a_numero(min30.group(1)) if min30 else None})
+    return salida
+
+
 RE_PRIVALIA_CAMPANA = re.compile(r'(?:https://es\.privalia\.com)?/gr/catalog/(\d+)(?=["/?#])')
 
 
@@ -1066,7 +1111,9 @@ def _extraer(html, base_url, extra_json=()):
     especifico = (tarjetas_miravia(html) if host.endswith("miravia.es")
                   else productos_aliexpress(html) if "aliexpress." in host
                   else productos_pss(extra_json) if host.endswith("privatesportshop.es")
-                  else productos_privalia(html) if "privalia." in host else [])
+                  else productos_privalia(html) if "privalia." in host
+                  else productos_game(html) if host.endswith("game.es")
+                  else productos_jysk(html) if host.endswith("jysk.es") else [])
     if especifico:
         return especifico
     objetos = objetos_producto(html)
@@ -1132,7 +1179,11 @@ RE_VALORACION = re.compile(r"\d(?:[.,]\d)?\s+(?:de|out of)\s+5\s+estrellas|\d(?:
 RE_TEXTO_GENERICO =re.compile(r"^(?:ver|comprar|añadir|acceder|más|mas|detalles|ficha)\b", re.I)
 
 
-RE_ETIQUETA_DESCUENTO = re.compile(r'<(\w+)[^>]*class="[^"]*(?:discount|descuento|ahorro|saving|you-save|'
+# Etiqueta HTML respetando las comillas: Jysk (Tailwind) lleva ">" dentro de los atributos ("[&>svg]:...") y
+# "<[^>]+>" cortaba ahí, dejaba restos de HTML en el texto y no llegaba al precio (1 producto de 69, 18/11/2026).
+RE_ETIQUETA_HTML = re.compile(r"<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>")
+# Sin tocar lo que sea un precio: en Jysk el precio rebajado es "theme-product-price-discount".
+RE_ETIQUETA_DESCUENTO = re.compile(r'<(\w+)[^>]*class="(?![^"]*price)[^"]*(?:discount|descuento|ahorro|saving|you-save|'
                                    r'product-flag)[^"]*"[^>]*>[^<]{0,40}</\1>', re.I)
 
 
@@ -1155,7 +1206,7 @@ def tarjetas_html(html, base_url, tope=6000):
             continue
         if RE_ENLACE_OPINIONES.search(partes.path):
             continue  # Amazon: el enlace a las opiniones partía la tarjeta y se quedaba con su precio
-        texto = " ".join(unescape(re.sub(r"<[^>]+>", " ", m.group(2))).split())
+        texto = " ".join(RE_ETIQUETA_HTML.sub(" ", unescape(RE_ETIQUETA_HTML.sub(" ", m.group(2)))).split())
         f = fichas.setdefault(url, [m.start(), []])
         if texto:
             f[1].append(texto)
@@ -1170,7 +1221,7 @@ def tarjetas_html(html, base_url, tope=6000):
         fin = min(ini + tope, orden[n + 1][1][0] if n + 1 < len(orden) else len(plano))
         # La etiqueta de descuento ("-200,10 €" en Neobyte, 18/11/2026) no es el precio: fuera antes de buscarlo.
         trozo = RE_ETIQUETA_DESCUENTO.sub(" ", plano[ini:fin])
-        visible = unescape(re.sub(r"<[^>]+>", " ", RE_TACHADO.sub(" ", trozo)))
+        visible = RE_ETIQUETA_HTML.sub(" ", unescape(RE_ETIQUETA_HTML.sub(" ", RE_TACHADO.sub(" ", trozo))))
         visible = RE_PRECIO_PARTIDO.sub(r"\1\2\3", visible)  # Back Market: '684 ,23 €' -> '684,23 €'
         visible = RE_PARTIDO_DELANTE.sub(r"\1\2\3", visible)  # Expert: '€58 ,90' -> '€58,90'
         precio = None

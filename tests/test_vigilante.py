@@ -1923,7 +1923,7 @@ class Rondas(Base):
         con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)",
                         [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
         con.commit()
-        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["runningemotion.com", "footlocker.es", "prenatal.es"]),
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["runningemotion.com", "footlocker.es", "jdsports.es"]),
                          ["runningemotion.com", "footlocker.es"])
         con.close()
 
@@ -4521,6 +4521,21 @@ class EmparejamientoPorTipo(unittest.TestCase):
             self.assertTrue(v.RE_REACONDICIONADO.search(n), n)
         self.assertFalse(v.RE_REACONDICIONADO.search("Lavadora Bosch 8 kg nueva"))
         self.assertTrue(v.RE_REACONDICIONADO.search("https://x.com/samsung-galaxy-s23-ultra-renovado-estado-excelente"))
+
+    def test_lectores_game_y_jysk(self):
+        """18/11/2026: GAME daba 4 productos de 24 y Jysk 1 de 36; ahora sus tarjetas, con el mínimo de 30 días."""
+        game = ('<article class="ProductListCard-x"><a href="/game-hh-st-rgb-negro-auriculares-gaming/232337"><h3>GAME '
+                'HH-ST RGB Negro - Auriculares Gaming</h3></a><p>Precio recomendado</p><span>24,99€</span>'
+                '<span>17,99€</span><span>-28%</span><p>-10% <!-- -->Mín. últimos 30 días: <!-- -->19,99€</p></article>')
+        ps = v.extraer(game, "https://www.game.es/ofertas")
+        self.assertEqual([(p["precio"], p["precio_antes"], p["min30"]) for p in ps], [(17.99, 24.99, 19.99)])
+        self.assertEqual(ps[0]["url"], "https://www.game.es/game-hh-st-rgb-negro-auriculares-gaming/232337")
+        jysk = ('<a aria-label="Ver producto Toldo lateral PEJELT A3xA1,4m gris" href="/jardin/toldo-lateral-pejelt">'
+                '<img alt="x"></a><div aria-label="Precio del artículo - 40,00 € /u"></div>'
+                '<div>Precio más bajo últimos 30 días: 65,00 € /u (-38%)</div><div>Precio normal: 65,00 € /u</div>')
+        ps = v.extraer(jysk, "https://jysk.es/ofertas")
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"], p["min30"]) for p in ps],
+                         [("Toldo lateral PEJELT A3xA1,4m gris", 40.0, 65.0, 65.0)])
 
     def test_marca_y_precio_de_la_tarjeta(self):
         """18/11/2026: Toys R Us pone la marca encima del nombre; Forumsport la deja en la dirección ("CLUB" eran
