@@ -4863,7 +4863,7 @@ def mapa(*tiendas, probar=45, guardar=20, minimo=8):
                         c["tiendas"].remove(tienda)
                         c.setdefault("navegador", []).append(tienda)
                 CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        buenas = sorted((x for x in resultado["pruebas"] if x[1] >= minimo), key=lambda x: (-x[2], -x[1]))
+        buenas = ordenar_por_demanda(tienda, [x for x in resultado["pruebas"] if x[1] >= minimo], cfg)
         if len(buenas) >= 2:
             cat = urls_catalogo()
             cat[tienda] = [u for u, _, _ in buenas[:guardar]]
@@ -4886,9 +4886,47 @@ def mapa(*tiendas, probar=45, guardar=20, minimo=8):
     return resumen
 
 
+def _peso_pagina(pesos, url):
+    """Peso de demanda de una página por las palabras de su dirección (/black-friday/electronica/tv/ -> televisores)."""
+    ruta = re.sub(r"[-_/]+", " ", unquote(urlparse(url).path))
+    return peso_de(pesos, ruta) if pesos else 1.0
+
+
+def ordenar_por_demanda(tienda, pruebas, cfg=None):
+    """Las páginas del mapa, de más a menos interesantes: productos con precio anterior por el peso de su familia
+    en Chollometro para esa tienda (Zeta, 18/11/2026: "las categorías más frecuentes en Chollometro"). Una página
+    sin familia reconocible pesa 1."""
+    con = bd()
+    try:
+        pesos = pesos_volumen(con, cfg or cargar_config(), tienda)
+    finally:
+        con.close()
+    return sorted(pruebas, key=lambda x: (-(x[2] + 0.2 * x[1]) * _peso_pagina(pesos, x[0]), -x[1]))
+
+
+def reordenar_mapas(guardar=20, minimo=8):
+    """`mapa reordenar`: vuelve a elegir el catálogo de cada tienda con su mapa guardado (data/mapas), ya ordenado
+    por demanda, sin leer nada otra vez."""
+    cfg = cargar_config()
+    cat = urls_catalogo()
+    for f in sorted((DATOS / MAPAS).glob("*.json")):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        buenas = ordenar_por_demanda(d["tienda"], [x for x in d["pruebas"] if x[1] >= minimo], cfg)
+        if len(buenas) >= 2:
+            cat[d["tienda"]] = [u for u, _, _ in buenas[:guardar]]
+            print(f"{d['tienda']:28} {len(buenas):3} buenas -> {len(cat[d['tienda']])} en el catálogo; primera: "
+                  f"{cat[d['tienda']][0][:70]}")
+    guardar_catalogo(cat)
+
+
 def _mapa_tienda(cfg, tienda, modo, urls, catalogo_actual, probar, minimo):
     """Las pruebas de `mapa` para una tienda en un modo. -> {"pruebas": [(url, productos, con_antes)], "error"}"""
     pruebas, error = [], None
+    con = bd()
+    try:
+        pesos = pesos_volumen(con, cfg, tienda)
+    finally:
+        con.close()
     bases = [u for u in [url_tienda(tienda), url_de(tienda, urls, None)] if u]
     if modo == "descarga":
         nav_ctx = None
@@ -4919,9 +4957,11 @@ def _mapa_tienda(cfg, tienda, modo, urls, catalogo_actual, probar, minimo):
             pruebas.append((u, len(productos), sum(1 for p in productos if p.get("precio_antes"))))
             if nivel == 0 or (nivel == 1 and RE_ENLACE_OFERTA.search(unquote(u))):
                 hijos = enlaces_de_mapa(html, final)
-                # los de ofertas primero, para que entren aunque se llegue al tope de páginas
-                cola = [(h, nivel + 1) for h in hijos if RE_ENLACE_OFERTA.search(unquote(h))] + cola + \
-                       [(h, nivel + 1) for h in hijos if not RE_ENLACE_OFERTA.search(unquote(h))]
+                # Primero los de ofertas, y dentro de cada grupo los de las familias que más se calientan en
+                # Chollometro en esta tienda, para que entren aunque se llegue al tope de páginas.
+                por_peso = lambda hs: sorted(hs, key=lambda h: -_peso_pagina(pesos, h))
+                cola = [(h, nivel + 1) for h in por_peso([h for h in hijos if RE_ENLACE_OFERTA.search(unquote(h))])] \
+                    + cola + [(h, nivel + 1) for h in por_peso([h for h in hijos if not RE_ENLACE_OFERTA.search(unquote(h))])]
             if not nav:
                 time.sleep(1.5)
     finally:
@@ -7679,6 +7719,8 @@ if __name__ == "__main__":
         sesion_cm()
     elif args == ["temas"]:
         crear_temas()
+    elif args == ["mapa", "reordenar"]:
+        reordenar_mapas()
     elif args[:1] == ["mapa"]:
         mapa(*args[1:])
     elif args[:1] == ["destinos"]:

@@ -4537,6 +4537,10 @@ class EmparejamientoPorTipo(unittest.TestCase):
         enlaces = v.enlaces_de_mapa(portada, "https://www.elcorteingles.es/")
         self.assertEqual(enlaces[:2], ["https://www.elcorteingles.es/black-friday/", "https://www.elcorteingles.es/rebajas/"])
         self.assertNotIn("https://www.elcorteingles.es/mi-cuenta/", enlaces)
+        # Zeta: "las categorías más frecuentes en Chollometro": la página de una familia caliente pesa más
+        pesos = {"televisores": 2.5, "ropa": 0.3}
+        self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
+        self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/moda-hombre/ropa/"), 0.3)
 
     def test_lectores_game_y_jysk(self):
         """18/11/2026: GAME daba 4 productos de 24 y Jysk 1 de 36; ahora sus tarjetas, con el mínimo de 30 días."""
