@@ -1889,9 +1889,12 @@ class Rondas(Base):
         for t in ("zalando-prive.es", "showroomprive.es"):
             self.assertIn(t, cats["moda"]["apartadas"])
         self.assertIn("privatesportshop.es", cats["deporte"]["navegador"])
-        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com", "privatesportshop.es"):
+        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com"):
             self.assertIn(t, cfg["requiere_login"])
             self.assertIn(t, cfg["logins"])
+        # 18/11/2026: Private Sport Shop enseña productos y precios sin sesión con el Chrome normal.
+        self.assertNotIn("privatesportshop.es", cfg["requiere_login"])
+        self.assertIn("privatesportshop.es", cfg["navegador_normal"]["tiendas"])
         for t in ("privalia.com", "privatesportshop.es"):
             self.assertIn(t, siempre)
         self.assertIn("veepee.es", cats["moda"]["apartadas"], "Veepee sigue apartada: 11 % de éxito")
@@ -4161,6 +4164,17 @@ class MiraviaAliExpress(Base):
         self.assertEqual([t for t, _, _ in perfil], ["coolmod.com"])
         self.assertEqual([(t, p) for t, _, p in normal], [("miravia.es", 1)])
         self.assertEqual(sorted(r[0] for r in res), ["coolmod.com", "miravia.es"])
+
+    def test_private_sport_shop(self):
+        """18/11/2026: productos y precios llegan en respuestas distintas; se juntan por id."""
+        datos = [{"data": [{"productId": 5207575, "productName": "Zapatillas de running Alphafly 3", "brandName": "Nike"},
+                           {"productId": 1, "productName": "Sin precio", "brandName": "X"}]},
+                 [{"id": 5207575, "current": "139,99 €", "specialPrice": 139.99, "retailPrice": 309.99}],
+                 [{"id": 9, "specialPrice": 5, "retailPrice": 10}]]
+        ps = v.extraer("<html></html>", "https://www.privatesportshop.es/", datos)
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"], p["url"]) for p in ps],
+                         [("Nike Zapatillas de running Alphafly 3", 139.99, 309.99,
+                           "https://www.privatesportshop.es/catalog/product/view/id/5207575/")])
 
     def test_busqueda_de_aliexpress(self):
         html = ('{"productId":"1005011741324622","title":{"displayTitle":"Consola PS5 Chassis E Digital"},'

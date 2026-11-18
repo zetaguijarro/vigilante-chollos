@@ -276,10 +276,10 @@
   }
  },
  "navegador_normal": {
-  "tiendas": ["miravia.es", "aliexpress.com"],
+  "tiendas": ["miravia.es", "aliexpress.com", "neobyte.es", "tradeinn.com", "privatesportshop.es"],
   "paginas": 1,
   "pausa_min": 30,
-  "_nota": "Autorizado por Zeta el 17/11/2026, como Idealo: Chrome visible normal, sin perfil, sin cambiar el agente ni ocultar la automatización. Si sale reto o captcha no se resuelve: pausa fija de pausa_min, sin doblar."
+  "_nota": "Autorizado por Zeta el 17/11/2026 (Miravia, AliExpress) y el 18/11 (\"todas que se lean con chrome visible y mi permiso\": Neobyte, Tradeinn, Private Sport Shop; Fnac y Adidas dan 403 también así, AEG corta la conexión y Worten y Privalia salen vacías), como Idealo: Chrome visible normal, sin perfil, sin cambiar el agente ni ocultar la automatización. Si sale reto o captcha no se resuelve: pausa fija de pausa_min, sin doblar."
  },
  "navegador": {
   "visible": true,
@@ -728,7 +728,6 @@
     "camper.com/es_ES",
     "forumsport.com",
     "padelnuestro.com",
-    "tradeinn.com",
     "sportisgood.com",
     "atmosferasport.es",
     "bstn.com",
@@ -743,7 +742,8 @@
     "sprinter.es",
     "motocard.com",
     "sportsdirect.com",
-    "privatesportshop.es"
+    "privatesportshop.es",
+    "tradeinn.com"
    ],
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
@@ -861,8 +861,7 @@
   "zalando-prive.es",
   "showroomprive.es",
   "privalia.com",
-  "veepee.es",
-  "privatesportshop.es"
+  "veepee.es"
  ],
  "logins": {
   "zalando-prive.es": "https://www.zalando-prive.es/",

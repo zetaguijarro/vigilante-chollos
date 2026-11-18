@@ -697,6 +697,39 @@ def tarjetas_miravia(html):
     return salida
 
 
+def productos_pss(extra_json):
+    """Private Sport Shop (18/11/2026, Chrome normal autorizado por Zeta): las respuestas de su web traen por un lado
+    los productos (productId, productName, brandName) y por otro los precios ({id, specialPrice, retailPrice}).
+    Se juntan por id. Enlace: /catalog/product/view/id/<id>/."""
+    nombres, precios = {}, {}
+
+    def mirar(x):
+        if isinstance(x, dict):
+            if x.get("productId") and x.get("productName"):
+                nombres[x["productId"]] = (x["productName"], x.get("brandName"))
+            elif x.get("id") and isinstance(x.get("specialPrice"), (int, float)):
+                precios[x["id"]] = (x["specialPrice"], x.get("retailPrice"))
+            for y in x.values():
+                mirar(y)
+        elif isinstance(x, list):
+            for y in x:
+                mirar(y)
+    for bloque in extra_json:
+        mirar(bloque)
+    salida = []
+    for pid, (nombre, marca) in nombres.items():
+        if pid not in precios or not precios[pid][0]:
+            continue
+        precio, antes = precios[pid]
+        if marca and not nombre.lower().startswith(marca.lower()):
+            nombre = f"{marca} {nombre}"
+        salida.append({"nombre": " ".join(nombre.split()), "precio": round(float(precio), 2),
+                       "precio_antes": float(antes) if antes and float(antes) > precio else None, "marca": marca,
+                       "ean": None, "url": f"https://www.privatesportshop.es/catalog/product/view/id/{pid}/",
+                       "imagen_url": None, "valoracion": None, "resenas": None})
+    return salida
+
+
 RE_ALI_ITEM_JSON = re.compile(r'"title":"((?:[^"\\]|\\.)*)"(.{0,8000}?)"detailUrl":"(?:https?:)?//[^"]*?/item/(\d+)\.html',
                               re.S)
 
@@ -915,7 +948,8 @@ def extraer(html, base_url, extra_json=()):
 def _extraer(html, base_url, extra_json=()):
     host = urlparse(base_url).netloc.lower()
     especifico = (tarjetas_miravia(html) if host.endswith("miravia.es")
-                  else productos_aliexpress(html) if "aliexpress." in host else [])
+                  else productos_aliexpress(html) if "aliexpress." in host
+                  else productos_pss(extra_json) if host.endswith("privatesportshop.es") else [])
     if especifico:
         return especifico
     objetos = objetos_producto(html)
