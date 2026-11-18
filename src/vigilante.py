@@ -5868,6 +5868,17 @@ def ficha_se_intenta(cfg, tienda):
     return not any(d == h or d.endswith("." + h) for h in cfg.get("filtros_codigo", {}).get("ficha_no_leer", []))
 
 
+def amazon_vende_o_envia(ficha):
+    """Amazon solo vale si vende Amazon o si envía Amazon (una de las dos). -> (True|False|None, motivo); None si la
+    ficha no es de Amazon o no tiene bloque de compra legible."""
+    o = (ficha or {}).get("amazon_oferta")
+    if not o:
+        return None, ""
+    if o["vende"] or o["envia"]:
+        return True, "vende o envía Amazon"
+    return False, "ni vende ni envía Amazon (vendedor y envío de terceros)"
+
+
 def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
     """Antes de avisar, el código abre la ficha del producto y comprueba que es ese producto y a ese
     precio. Caso real (16/11/2026): Hermes descartaba al verificar lo que el listado leía mal (mochila
@@ -5894,6 +5905,9 @@ def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
         return False, f"la ficha marca {ficha['precio_ahora']} € y el listado {p['precio']} €"
     if ficha.get("stock") == "no":
         return False, "la ficha lo da por agotado"
+    ok_amz, motivo_amz = amazon_vende_o_envia(ficha)
+    if ok_amz is False:
+        return False, motivo_amz
     # Reglas de publicación de Chollometro (docs/REGLAS_CHOLLOMETRO.md): las rechazan sin discusión.
     if ficha.get("una_unidad"):
         return False, "solo queda una unidad (Chollometro no la acepta)"
@@ -5971,6 +5985,34 @@ def rebaja_del_producto(reb, precio, antes):
     return reb
 
 
+AMAZON_ES_ID = "A1AT7YVPFBWXBL"  # identificador de vendedor de Amazon.es (el "smid" de sus enlaces)
+RE_AMZ_VENDEDOR_ID = re.compile(r'id="merchantID"[^>]*value="([A-Z0-9]{8,16})"|"merchantId"\s*:\s*"([A-Z0-9]{8,16})"')
+RE_AMZ_REMITENTE = re.compile(r"(?:Remitente|Env[ií]a|Enviado por|Env[ií]os? desde)(?:\s*/\s*Vendedor)?\s*:?\s*(Amazon)(?![\w.])", re.I)
+RE_AMZ_VENDEDOR = re.compile(r"(?:Vendedor|Vendido por)\s*:?\s*(?:/\s*)?(Amazon)(?![\w.])", re.I)
+
+
+def oferta_amazon(html, plano_compra=None):
+    """Quién vende y quién envía en la ficha de Amazon (Zeta, 19/11/2026: "que no envíes cosas que no las envíe o
+    venda Amazon, una de las dos cosas tiene que ocurrir"). -> {"vende": bool, "envia": bool} o None si la página no
+    tiene bloque de compra (no se puede saber). El vendedor es el "merchantID" de la oferta (Amazon.es =
+    A1AT7YVPFBWXBL); el remitente, el texto "Remitente / Vendedor Amazon" del bloque de compra."""
+    i = html.find('id="merchantInfoFeature_feature_div"')
+    if i < 0:
+        i = html.find('id="fulfillerInfoFeature_feature_div"')
+    m = RE_AMZ_VENDEDOR_ID.search(html)
+    if i < 0 and not m:
+        return None
+    bloque = ""
+    if i >= 0:
+        trozo = html[i:i + 6000]
+        trozo = trozo[trozo.find(">") + 1:]
+        bloque = " ".join(re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<[^>]+>", " ", trozo, flags=re.S | re.I).split())[:400]
+    vendedor = next((g for g in (m.groups() if m else ()) if g), None)
+    vende = vendedor == AMAZON_ES_ID or bool(RE_AMZ_VENDEDOR.search(bloque))
+    envia = bool(RE_AMZ_REMITENTE.search(bloque))
+    return {"vende": vende, "envia": envia, "vendedor_id": vendedor}
+
+
 def analizar_ficha(html, final, datos=()):
     plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I)
     plano = " ".join(plano.split())
@@ -5994,6 +6036,10 @@ def analizar_ficha(html, final, datos=()):
     m = RE_SELLER.search(html)
     if m:
         f["vendedor"] = m.group(1)
+    if "amazon." in urlparse(final or "").netloc:
+        o = oferta_amazon(html)
+        if o is not None:
+            f["amazon_oferta"] = o
     if RE_UNA_UNIDAD.search(plano):
         f["una_unidad"] = True
     if RE_NO_ENVIA_ES.search(plano):
@@ -6570,6 +6616,9 @@ def decidir_item(item, cfg=None):
     if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, precio):
         return fin("descartado", f"ya está en Chollometro ({ch}) y ahora cuesta {precio:g} €: misma tienda solo si "
                                  f"baja más de un 5 % y más de 1 €; otra tienda, si ahora es más barato", memoria="dudosa")
+    ok_amz, motivo_amz = amazon_vende_o_envia(ficha)
+    if ok_amz is False:
+        return fin("descartado", motivo_amz, memoria="dudosa")
     clase, u = umbrales_clasico(cfg, item.get("t"), item.get("n", ""))
     fam = familia_de(item.get("n", ""))
     tallas = [v for v in ficha.get("variantes") or [] if not v.endswith("agotada")]
@@ -7809,7 +7858,7 @@ def ronda(categoria, solo=None):
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
             continue  # 'vuelve' (oferta caducada que regresa) se reenvía a propósito
         if por_tienda[p["tienda"]] < max_tienda and len(enviar) < hueco:
-            if p.get("_precio_comparador") and not p.get("gratis"):
+            if (p.get("_precio_comparador") or p["tienda"] == "amazon.es") and not p.get("gratis"):
                 # Precio de comparador: solo vale si la propia tienda lo confirma, con Chrome normal. Si la tienda no se
                 # deja leer (reto, sin precio), no se avisa.
                 if nav_tiendas is None:

@@ -4742,6 +4742,48 @@ class EmparejamientoPorTipo(unittest.TestCase):
             v.descargar, v.time.sleep = orig
         self.assertEqual(len(pedidas), 3)
 
+    def test_amazon_solo_si_vende_o_envia_amazon(self):
+        """19/11/2026 (Zeta): "que no envíes cosas que no las envíe o venda Amazon, una de las dos cosas"."""
+        def bloque(texto, vendedor):
+            return (f'<input type="hidden" id="merchantID" name="merchantID" value="{vendedor}">'
+                    f'<div id="merchantInfoFeature_feature_div" class="celwidget"><div>{texto}</div></div>')
+        amazon = v.oferta_amazon(bloque("Remitente / Vendedor Amazon Amazon Devoluciones", "A1AT7YVPFBWXBL"))
+        self.assertEqual((amazon["vende"], amazon["envia"]), (True, True))
+        fba = v.oferta_amazon(bloque("Remitente Amazon Vendedor Tienda X Devoluciones", "A8MYVM6X8B3P5"))
+        self.assertEqual((fba["vende"], fba["envia"]), (False, True), "envía Amazon, vende un tercero: vale")
+        self.assertEqual(v.oferta_amazon(bloque("Envíos desde Amazon Vendido por Tienda X", "A8MYVM6X8B3P5"))["envia"], True)
+        propio = v.oferta_amazon(bloque("Vendido por Crocs Europe Devoluciones", "A67XBZBNB50HT"))
+        self.assertEqual((propio["vende"], propio["envia"]), (False, False), "tercero que vende y envía: no vale")
+        self.assertEqual(v.oferta_amazon(bloque("Remitente / Vendedor CompraSinMoverte CompraSinMoverte", "A26UU6OK679MEC"))["envia"], False)
+        self.assertIsNone(v.oferta_amazon("<html>sin bloque de compra</html>"))
+        self.assertEqual(v.amazon_vende_o_envia({"amazon_oferta": fba})[0], True)
+        ok, motivo = v.amazon_vende_o_envia({"amazon_oferta": propio})
+        self.assertFalse(ok)
+        self.assertIn("ni vende ni envía Amazon", motivo)
+        self.assertEqual(v.amazon_vende_o_envia({})[0], None, "otra tienda: no aplica")
+        # En la ficha de una tienda que no es Amazon no se mira
+        self.assertNotIn("amazon_oferta", v.analizar_ficha(bloque("Vendido por X", "A1"), "https://www.otra.es/p/1"))
+        # Botón Verificar y aviso de la ronda
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        item = {"num": 7, "n": "Maleta American Tourister", "t": "amazon.es", "u": "https://www.amazon.es/dp/B0B35CYFW8",
+                "p": 30.0, "id": 80.0, "a": 120.0, "validada": True, "validacion": "ficha real con título y precio",
+                "ficha": {"precio_ahora": 30.0, "titulo": "Maleta American Tourister", "stock": "sí",
+                          "amazon_oferta": propio}}
+        d = v.decidir_item(item, cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("ni vende ni envía Amazon", d["motivo"])
+        item["ficha"]["amazon_oferta"] = fba
+        self.assertEqual(v.decidir_item(item, cfg)["veredicto"], "pasa")
+        orig = v.leer_ficha
+        try:
+            v.leer_ficha = lambda url, nav=None: {"precio_ahora": 30.0, "titulo": "Maleta American Tourister",
+                                                  "amazon_oferta": propio}
+            p = {"nombre": "Maleta American Tourister", "precio": 30.0, "tienda": "amazon.es",
+                 "url": "https://www.amazon.es/dp/B0B35CYFW8"}
+            self.assertEqual(v.confirmar_en_ficha(p)[0], False)
+        finally:
+            v.leer_ficha = orig
+
     def test_pccomtracker_sin_precio_oficial(self):
         """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""
         html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><a href="/goto/amazon?url='
