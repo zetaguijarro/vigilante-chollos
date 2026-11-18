@@ -4379,8 +4379,56 @@ class DestinoDeHilos(unittest.TestCase):
         self.assertEqual(p["_cm_hot"]["temp"], 500)
         self.assertEqual(v.chollo_previo(p)["id"], 1, "sin código de modelo, pero por el enlace (el más caliente)")
         self.assertIsNone(v.ya_salio_mas_barato(p))
-        self.assertEqual(v.ya_salio_mas_barato({**p, "precio": 12.0}), 10.0, "más caro que cuando triunfó")
+        self.assertEqual(v.ya_salio_mas_barato({**p, "precio": 12.0}), 10.0, "más de un 10 % más caro que cuando triunfó")
+        self.assertIsNone(v.ya_salio_mas_barato({**p, "precio": 10.9}), "Zeta: hasta un 10 % más caro todavía vale")
         self.assertIsNone(v.ya_salio_mas_barato({**p, "url": "https://www.amazon.es/dp/B000000002", "precio": 99}))
+
+
+class ReglasDuplicadosChollometro(unittest.TestCase):
+    """Reglas de publicación de Chollometro (chollometro.com/reglas, leídas el 18/11/2026)."""
+
+    def copia(self, *hilos, indice=True):
+        hs = [{"id": i + 1, "titulo": t, "precio": pr, "tienda": ti, "host": ti.lower().replace(" ", "") + ".es",
+               "temp": 100, "publicado": int(time.time() - d * 86400), "caducado": c}
+              for i, (t, pr, ti, d, c) in enumerate(hilos)]
+        return {"hilos": hs, "fresca": True, "por_clave": {}, "idx": v._indice_copia(hs) if indice else None}
+
+    def setUp(self):
+        v._INDICE.update(firma=None, idx=None)
+
+    def p(self, tienda="amazon.es", precio=50.0):
+        return {"nombre": "Auriculares Sony WH-1000XM5 inalámbricos", "tienda": tienda, "precio": precio}
+
+    def test_anterior_de_mas_de_un_mes(self):
+        t = "Sony WH-1000XM5 auriculares"
+        # Precio distinto: se mantiene el nuevo. Mismo precio y agotado: el nuevo. Mismo precio sin agotar: el antiguo.
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 60.0, "Amazon", 40, 0))), "no")
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 50.0, "Amazon", 40, 1))), "no")
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 50.0, "Amazon", 40, 0))), "misma")
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 50.0, "MediaMarkt", 40, 0))), "no",
+                         "un hilo viejo de otra tienda no cuenta")
+
+    def test_anterior_de_menos_de_un_mes(self):
+        t = "Sony WH-1000XM5 auriculares"
+        c = self.copia((t, 52.0, "Amazon", 5, 1))
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato(v.estado_chollometro(self.p(), c), 50.0),
+                        "baja menos de un 5 %: se mantiene el antiguo")
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato(v.estado_chollometro(self.p(precio=45.0), c), 45.0))
+
+    def test_otra_tienda_y_grupo_corte_ingles(self):
+        t = "Sony WH-1000XM5 auriculares"
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 45.0, "MediaMarkt", 5, 1))), "no",
+                         "regla 6: la misma oferta en otra tienda se permite; una ya agotada no la empeora")
+        self.assertEqual(v.estado_chollometro(self.p(), self.copia((t, 45.0, "MediaMarkt", 5, 0))), "otra:45")
+        self.assertEqual(v.estado_chollometro(self.p("hipercor.es"), self.copia((t, 50.0, "El Corte Ingles", 5, 0))),
+                         "misma", "El Corte Inglés e Hipercor comparten stock")
+
+    def test_indice_da_lo_mismo(self):
+        hilos = [("Sony WH-1000XM5 auriculares", 50.0, "Amazon", 3, 0), ("Bose QC45", 50.0, "Amazon", 3, 0),
+                 ("Auriculares Sony inalámbricos negros", 49.0, "Amazon", 2, 0)]
+        con_idx, sin_idx = self.copia(*hilos), self.copia(*hilos, indice=False)
+        for p in (self.p(), {**self.p(), "nombre": "Bose QuietComfort 45"}, {**self.p(), "nombre": "Tostadora"}):
+            self.assertEqual(v.estado_chollometro(dict(p), con_idx), v.estado_chollometro(dict(p), sin_idx), p["nombre"])
 
 
 if __name__ == "__main__":

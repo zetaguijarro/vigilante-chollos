@@ -2356,7 +2356,51 @@ def cargar_chollometro(con):
     por_clave = {}  # clave de producto -> ids de hilos que llevan a él (cm_destino, 18/11/2026)
     for clave, hilo in con.execute("SELECT clave, hilo FROM cm_destino WHERE clave IS NOT NULL"):
         por_clave.setdefault(clave, set()).add(hilo)
-    return {"hilos": [dict(zip(claves, f)) for f in filas], "fresca": chollometro_fresca(con), "por_clave": por_clave}
+    hilos = [dict(zip(claves, f)) for f in filas]
+    return {"hilos": hilos, "fresca": chollometro_fresca(con), "por_clave": por_clave, "idx": _indice_copia(hilos)}
+
+
+_INDICE = {"firma": None, "idx": None}
+
+
+def _palabras_post(texto):
+    """Las palabras que cuenta mismo_post (sin colores, genéricas ni números sueltos)."""
+    return {t for t in tokens(texto) - COLORES - GENERICAS_POST if not t.isdigit()}
+
+
+def _indice_copia(hilos):
+    """Índice palabra -> posiciones de los hilos (y "#código" -> posiciones). 18/11/2026: con 92.000 hilos,
+    estado_chollometro recorría la copia entera con mismo_post y tardaba 3 s por producto. mismo_post exige 2
+    palabras en común o el mismo código de modelo: con el índice solo se miran esos hilos. Se rehace solo si la
+    copia cambia (mismo número de hilos y mismo último id = la misma)."""
+    firma = (len(hilos), max((h["id"] for h in hilos), default=0), sum(h["id"] for h in hilos[-50:]))
+    if _INDICE["firma"] == firma:
+        return _INDICE["idx"]
+    idx = {}
+    for i, h in enumerate(hilos):
+        for t in _palabras_post(h["titulo"]):
+            idx.setdefault(t, []).append(i)
+        for c in codigos_modelo(h["titulo"]):
+            idx.setdefault("#" + c, []).append(i)
+    _INDICE.update(firma=firma, idx=idx)
+    return idx
+
+
+def hilos_candidatos(nombre, copia, ids_extra=()):
+    """Los hilos de la copia que pueden ser este producto (los que mismo_post podría aceptar) y los de ids_extra.
+    Sin índice, todos."""
+    idx = copia.get("idx")
+    if idx is None:
+        return copia["hilos"]
+    cuenta = Counter()
+    for t in _palabras_post(nombre):
+        cuenta.update(idx.get(t, ()))
+    sel = {i for i, n in cuenta.items() if n >= 2}
+    for c in codigos_modelo(nombre):
+        sel.update(idx.get("#" + c, ()))
+    if ids_extra:
+        sel.update(i for i, h in enumerate(copia["hilos"]) if h["id"] in ids_extra)
+    return [copia["hilos"][i] for i in sorted(sel)]
 
 
 # Palabras que comparten productos distintos: no cuentan para decir que un hilo es el mismo producto
@@ -2407,17 +2451,26 @@ def estado_chollometro(p, copia=None):
     # Mismo enlace de producto que el hilo (cm_destino, 18/11/2026): es el mismo producto y la misma tienda
     # aunque los títulos no se parezcan.
     por_enlace = (copia.get("por_clave") or {}).get(clave_producto(p.get("url"))) or set()
-    for h in copia["hilos"]:
+    grupo = ("elcorteingles", "hipercor")  # comparten stock: para Chollometro son la misma tienda (regla 6)
+    for h in hilos_candidatos(p["nombre"], copia, por_enlace):
         enlace = h["id"] in por_enlace
         if not enlace and not mismo_post(p["nombre"], h["titulo"]):
             continue
         if h["temp"] >= CM_HOT and (hot is None or h["temp"] > hot["temp"]) \
                 and (enlace or mismo_producto_hot(p["nombre"], h["titulo"])):
             hot = h
-        if not h["precio"] or (h["publicado"] < limite and h["caducado"]):
+        if not h["precio"]:
             continue
-        es_misma = enlace or (len(tienda) >= 4 and (tienda in h["host"].lower()
-                                                    or tienda in h["tienda"].lower().replace(" ", "")))
+        donde = (h["host"] + " " + h["tienda"]).lower().replace(" ", "")
+        es_misma = enlace or (len(tienda) >= 4 and tienda in donde) or (tienda in grupo and any(g in donde for g in grupo))
+        if h["publicado"] < limite:
+            # Reglas de publicación de Chollometro (regla 1, 18/11/2026): con el anterior de hace más de 1 mes, se
+            # mantiene el nuevo si el precio es distinto o el anterior está agotado. Solo es duplicado al mismo
+            # precio y sin agotar. Un hilo viejo de otra tienda no cuenta.
+            if not es_misma or h["caducado"] or abs(h["precio"] - p["precio"]) > p["precio"] * 0.02:
+                continue
+        elif not es_misma and h["caducado"]:
+            continue  # misma oferta en otra tienda: permitida (regla 6); una ya agotada no la empeora
         if es_misma:
             if abs(h["precio"] - p["precio"]) <= p["precio"] * 0.02:
                 misma.append(None)
@@ -2797,7 +2850,8 @@ def ya_salio_mas_barato(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS)
     precios = [h["precio"] for h in hilos_por_enlace(p.get("url")) if h["precio"] and (h["temp"] or 0) >= grados
                and (h["publicado"] or 0) >= desde]
     techo = max(precios, default=None)
-    return techo if techo and p["precio"] > techo * 1.02 else None
+    # Zeta (18/11/2026): hasta un 10 % más caro que un chollo que se calentó todavía puede ir bien; más, no.
+    return techo if techo and p["precio"] > techo * 1.10 else None
 
 
 def chollo_previo(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
@@ -6076,6 +6130,29 @@ def ronda(categoria, solo=None):
             unicos[k] = p
     previos = sorted(unicos.values(), key=lambda x: -(x["d"] or 0))
 
+    # 2b) Chollometro antes que los comparadores (Zeta, 18/11/2026): la copia es local y no gasta consultas. Lo que
+    # ya está publicado (reglas de duplicados de Chollometro) o se calentó siempre más de un 10 % más barato no
+    # ocupa sitio en el lote de Idealo, PrecioReal, PCComTracker ni CamelCamelCamel.
+    copia = None
+    if previos:
+        actualizar_chollometro(con)
+        copia = cargar_chollometro(con)
+        quedan, fuera = [], Counter()
+        for p in previos:
+            p["ch"] = estado_chollometro(p, copia)  # también deja _cm_hot (demanda probada)
+            if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
+                fuera["ya publicado"] += 1
+            elif not p.get("error_precio") and not p.get("gratis") and (techo := ya_salio_mas_barato(p)):
+                fuera["ya salió más barato"] += 1
+                log(f"ya salió más barato en Chollometro (200°+ a {techo:g} € como mucho), no se envía: "
+                    f"{p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
+            else:
+                quedan.append(p)
+        if rec and fuera:
+            recorrido(f"    Chollometro antes de comparar: {len(previos)} -> {len(quedan)} "
+                      f"({', '.join(f'{k} {n}' for k, n in fuera.items())})")
+        previos = quedan
+
     # 3) Idealo (con caché) solo para los mejores. Las consultas que faltan van 3 a la vez.
     cat_cfg = cfg["categorias"][categoria]
     sin_idealo = cat_cfg.get("sin_idealo", False)  # viajes y juegos digitales: Idealo no aplica
@@ -6117,8 +6194,7 @@ def ronda(categoria, solo=None):
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
             precios_idealo[i] = mejor or None
     finales = []
-    copia = None
-    if lote:  # copia local al día (como mucho una lectura cada 4 min, compartida por todas las categorías)
+    if lote and copia is None:  # copia local al día (ya cargada en el paso 2b si había productos)
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
     pesos_t = {}  # 18/11/2026: orden de candidatos por volumen de calientes de la familia en su tienda (pesos_volumen)
@@ -6151,7 +6227,8 @@ def ronda(categoria, solo=None):
             # en una promoción de marca, compararlas entre sí descartaría las dos; eso lo decide el habitual).
             mejor, p["_mercado_propio"] = mp["precio"], mp
         d = p["d"]
-        p["ch"] = estado_chollometro(p, copia)  # también deja _cm_hot (demanda probada)
+        if "ch" not in p:  # ya mirado en el paso 2b
+            p["ch"] = estado_chollometro(p, copia)  # también deja _cm_hot (demanda probada)
         dias_hist = cat_cfg.get("historial_propio_dias", f.get("historial_propio_dias", 0))
         bajada_hist = cat_cfg.get("bajada_min_propia", f.get("bajada_min_propia", 0.10))
         if p.get("gratis"):
@@ -6211,10 +6288,6 @@ def ronda(categoria, solo=None):
                             "caducado": bool(cp["caducado"])}
             p["_chollo_previo"] = True
             ok = True
-        if ok and not p.get("error_precio") and not p.get("gratis") and (techo := ya_salio_mas_barato(p)):
-            log(f"ya salió más barato en Chollometro (200°+ a {techo:g} € como mucho), no se envía: "
-                f"{p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
-            ok = False
         if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
             log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
             ok = False
