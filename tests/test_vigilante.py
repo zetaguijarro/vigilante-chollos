@@ -1889,9 +1889,13 @@ class Rondas(Base):
         for t in ("zalando-prive.es", "showroomprive.es"):
             self.assertIn(t, cats["moda"]["apartadas"])
         self.assertIn("privatesportshop.es", cats["deporte"]["navegador"])
-        for t in ("zalando-prive.es", "showroomprive.es", "privalia.com"):
+        for t in ("zalando-prive.es", "showroomprive.es"):
             self.assertIn(t, cfg["requiere_login"])
             self.assertIn(t, cfg["logins"])
+        # 18/11/2026: Privalia se lee por campañas; la portada da 0 productos a propósito (no es sesión caducada).
+        self.assertNotIn("privalia.com", cfg["requiere_login"])
+        self.assertIn("privalia.com", cfg["logins"])
+        self.assertIn("privalia.com", cfg["catalogo_por_tienda"])
         # 18/11/2026: Private Sport Shop enseña productos y precios sin sesión con el Chrome normal.
         self.assertNotIn("privatesportshop.es", cfg["requiere_login"])
         self.assertIn("privatesportshop.es", cfg["navegador_normal"]["tiendas"])
@@ -4175,6 +4179,25 @@ class MiraviaAliExpress(Base):
         self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"], p["url"]) for p in ps],
                          [("Nike Zapatillas de running Alphafly 3", 139.99, 309.99,
                            "https://www.privatesportshop.es/catalog/product/view/id/5207575/")])
+
+    def test_privalia_campanas_y_productos(self):
+        """18/11/2026: la portada da campañas; cada campaña, productos. El tachado es el recomendado: no es precio_antes."""
+        portada = ('<a href="https://es.privalia.com/gr/catalog/910371">x</a><a href="/gr/catalog/897331">y</a>'
+                   '<a href="https://es.privalia.com/gr/catalog/910371">x</a>')
+        self.assertEqual(v.campanas_privalia(portada), ["https://es.privalia.com/gr/catalog/910371",
+                                                        "https://es.privalia.com/gr/catalog/897331"])
+        item = ('{"pricing":{"currency":{"symbol":"€"},"price":{"value":19.99},"retailPrice":{"tooltip":{"description":'
+                '"no indica una reducción"},"value":49.9},"discount":59},"isLocked":false,"saleId":"910371",'
+                '"catalogId":"25858289","name":"Camiseta - algodón - verde","medias":[{"url":"m"}],"id":"104028267"}')
+        bloqueado = item.replace('"isLocked":false', '"isLocked":true').replace("104028267", "1")
+        html = f'<script>{{"brandSlug":"tommy-hilfiger","items":[{item},{bloqueado}]}}</script>'
+        ps = v.extraer(html, "https://es.privalia.com/gr/catalog/910371/25858289")
+        self.assertEqual([(p["nombre"], p["precio"], p["precio_antes"], p["pvpr"], p["url"]) for p in ps],
+                         [("Tommy Hilfiger Camiseta - algodón - verde", 19.99, None, 49.9,
+                           "https://es.privalia.com/gr/catalog/910371/25858289?producto=104028267")])
+        self.assertEqual(v.clave_producto(ps[0]["url"]), "privalia:104028267")
+        self.assertIsNone(v.clave_producto("https://es.privalia.com/gr/catalog/910371"), "una campaña no es un producto")
+        self.assertEqual(v.confirmar_en_ficha(ps[0])[0], None, "sin ficha propia: ni confirma ni descarta")
 
     def test_busqueda_de_aliexpress(self):
         html = ('{"productId":"1005011741324622","title":{"displayTitle":"Consola PS5 Chassis E Digital"},'

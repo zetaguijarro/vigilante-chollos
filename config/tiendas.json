@@ -301,6 +301,11 @@
   "navegador": 3
  },
  "catalogo_por_tienda": {
+  "privalia.com": {
+   "cada_min": 30,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: la portada solo trae campañas; la ronda las guarda como catálogo (guardar_campanas) y lee 3 por turno. El tachado es el precio recomendado del fabricante: no cuenta como precio anterior."
+  },
   "mediamarkt.es": {
    "cada_min": 10,
    "por_ronda": 4,
@@ -860,7 +865,6 @@
  "requiere_login": [
   "zalando-prive.es",
   "showroomprive.es",
-  "privalia.com",
   "veepee.es"
  ],
  "logins": {

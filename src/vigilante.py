@@ -730,6 +730,55 @@ def productos_pss(extra_json):
     return salida
 
 
+RE_PRIVALIA_CAMPANA = re.compile(r'(?:https://es\.privalia\.com)?/gr/catalog/(\d+)(?=["/?#])')
+
+
+def campanas_privalia(html):
+    """Campañas de la portada de Privalia (18/11/2026): /gr/catalog/<id>. Los productos están dentro de cada una."""
+    ids = list(dict.fromkeys(RE_PRIVALIA_CAMPANA.findall(html)))
+    return [f"https://es.privalia.com/gr/catalog/{i}" for i in ids]
+
+
+def productos_privalia(html):
+    """Productos de una campaña de Privalia (18/11/2026, con la sesión de Zeta en el perfil). Vienen en los datos
+    de la página: {"pricing": {"price": {"value"}, "retailPrice": {"value"}}, "saleId", "catalogId", "name", "id"}.
+    El tachado NO es un precio anterior: su letra pequeña dice que es el recomendado por el fabricante y que "no
+    indica una reducción". Por eso va en "pvpr" y no en precio_antes (contraste real: mercado o Chollometro).
+    El producto no tiene página propia (se abre encima de la campaña): el enlace es la campaña con ?producto=<id>."""
+    dec = json.JSONDecoder()
+    m = re.search(r'"brandSlug":"([^"]+)"', html)
+    marca = m.group(1).replace("-", " ").title() if m else None
+    salida, vistos = [], set()
+    for m in re.finditer(r'\{"pricing":\{', html):
+        try:
+            obj, _ = dec.raw_decode(html, m.start())
+        except ValueError:
+            continue
+        pid, venta, cat, nombre = obj.get("id"), obj.get("saleId"), obj.get("catalogId"), obj.get("name")
+        precio = ((obj.get("pricing") or {}).get("price") or {}).get("value")
+        pvpr = ((obj.get("pricing") or {}).get("retailPrice") or {}).get("value")
+        if not (pid and venta and nombre and isinstance(precio, (int, float))) or obj.get("isLocked") or pid in vistos:
+            continue
+        vistos.add(pid)
+        nombre = " ".join(nombre.split())
+        if marca and marca.lower() not in nombre.lower():
+            nombre = f"{marca} {nombre}"
+        salida.append({"nombre": nombre, "precio": round(float(precio), 2), "precio_antes": None,
+                       "pvpr": float(pvpr) if isinstance(pvpr, (int, float)) and pvpr > precio else None,
+                       "marca": marca, "ean": None, "imagen_url": None, "valoracion": None, "resenas": None,
+                       "url": f"https://es.privalia.com/gr/catalog/{venta}/{cat or ''}".rstrip("/") + f"?producto={pid}"})
+    return salida
+
+
+def guardar_campanas(tienda, campanas):
+    """Las campañas de la portada pasan a ser el catálogo de la tienda (se leen por turnos, catalogo_por_tienda).
+    Cambian cada pocos días: se sustituye la lista entera."""
+    cat = urls_catalogo()
+    if cat.get(tienda) != campanas:
+        cat[tienda] = campanas
+        guardar_catalogo(cat)
+
+
 RE_ALI_ITEM_JSON = re.compile(r'"title":"((?:[^"\\]|\\.)*)"(.{0,8000}?)"detailUrl":"(?:https?:)?//[^"]*?/item/(\d+)\.html',
                               re.S)
 
@@ -949,7 +998,8 @@ def _extraer(html, base_url, extra_json=()):
     host = urlparse(base_url).netloc.lower()
     especifico = (tarjetas_miravia(html) if host.endswith("miravia.es")
                   else productos_aliexpress(html) if "aliexpress." in host
-                  else productos_pss(extra_json) if host.endswith("privatesportshop.es") else [])
+                  else productos_pss(extra_json) if host.endswith("privatesportshop.es")
+                  else productos_privalia(html) if "privalia." in host else [])
     if especifico:
         return especifico
     objetos = objetos_producto(html)
@@ -1439,6 +1489,9 @@ def clave_producto(url):
     if "miravia." in host:
         m = RE_MIRAVIA_ITEM.search(u.path)
         return f"miravia:{m.group(1)}" if m else None
+    if "privalia." in host:  # el producto no tiene página propia: va en ?producto=; una campaña no es un producto
+        pid = parse_qs(u.query).get("producto", [None])[0]
+        return f"privalia:{pid}" if pid else None
     ruta = unquote(u.path).rstrip("/").lower()
     if len(ruta) < 8:
         return None
@@ -3511,6 +3564,11 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                 if nav is not None:
                     html, final, datos = nav.leer(actual)
                     nuevos = extraer(html, final, datos)
+                    if n == 0 and not nuevos and "privalia." in urlparse(final).netloc \
+                            and (campanas := campanas_privalia(html)):
+                        # Portada de Privalia: solo campañas. Pasan al catálogo y se leen por turnos (18/11/2026).
+                        guardar_campanas(tienda, campanas)
+                        return tienda, url, [], None
                     if n == 0 and not nuevos:
                         comprobar_muro(html)
                         html, final, datos = nav.leer(actual, completo=True)  # paso 1d: otra configuración
@@ -4566,6 +4624,10 @@ def confirmar_en_ficha(p, tolerancia=0.02):
     adidas a 36 € en el listado de Spartoo y a 73,51 € en su ficha, con datos de otra marca; robot
     Cecotec a 81 € en el listado y a 229 € en la ficha). -> (True | False | None, motivo).
     None = la ficha no se pudo leer (antibot, error, sin precio): no confirma ni desmiente."""
+    if (clave_producto(p.get("url")) or "").startswith("privalia:"):
+        # El producto de Privalia no tiene página propia: la "ficha" sería la campaña entera (otro título, otro
+        # precio) y lo descartaría. El precio ya viene de los datos de la propia campaña.
+        return None, "Privalia: el producto no tiene ficha propia"
     try:
         ficha = leer_ficha(p["url"])
     except Exception as e:
