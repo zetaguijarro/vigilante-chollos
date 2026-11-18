@@ -1983,7 +1983,7 @@ def idealo_red(p, precioreal=True):
     reserva = precioreal_red if precioreal else (lambda p: None)
     if _IDEALO_BLOQUEADO[0] or idealo_en_pausa():
         return reserva(p)  # dio 403 hace poco: no insistir producto por producto ni ronda por ronda
-    q = quote_plus(p["ean"] or p["nombre"])
+    q = quote_plus(p["ean"] or consulta_comparador(p))  # 18/11/2026 (Zeta): sin EAN, marca + modelo, no el nombre entero
     rutas = sorted(IDEALO_BUSQUEDAS, key=lambda r: r != _IDEALO_BUENA[0])  # primero la que ya funcionó
     resultados, fallo = [], None
     for ruta in rutas:
@@ -7219,6 +7219,18 @@ def ronda(categoria, solo=None):
             precios_idealo[i] = precio
         else:
             pendientes.append(i)
+    # Moda y deporte: PrecioReal da el precio del modelo, no el del color o lavado (17/11: unas Levi's 726
+    # "clean getaway" a 44,95 € contra 63 € de una ficha que ya no existía). No es contraste real.
+    usar_pr = not cat_cfg.get("sin_precioreal", False)
+    if pendientes and usar_pr:
+        # 18/11/2026 (Zeta): primero PrecioReal (rápido y permitido) para todos; Idealo solo para lo que no encuentre.
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            for i, mejor in zip(pendientes, ex.map(lambda i: precioreal_red(lote[i]), pendientes)):
+                if mejor:
+                    con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
+                                (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
+                    precios_idealo[i] = mejor
+        pendientes = [i for i in pendientes if i not in precios_idealo]
     if pendientes and (_IDEALO_BLOQUEADO[0] or idealo_en_pausa()) and f.get("idealo_navegador", True):
         # La descarga de Idealo está bloqueada: los mejores, con navegador visible. Lo que no encuentre
         # (o no le dé tiempo) sigue por PrecioReal.
@@ -7230,10 +7242,8 @@ def ronda(categoria, solo=None):
                 precios_idealo[i] = mejor
         pendientes = [i for i in pendientes if i not in precios_idealo]
     with ThreadPoolExecutor(max_workers=3) as ex:
-        # Moda y deporte: PrecioReal da el precio del modelo, no el del color o lavado (17/11: unas Levi's 726
-        # "clean getaway" a 44,95 € contra 63 € de una ficha que ya no existía). No es contraste real.
-        usar_pr = not cat_cfg.get("sin_precioreal", False)
-        for i, mejor in zip(pendientes, ex.map(lambda i: idealo_red(lote[i], usar_pr), pendientes)):
+        # PrecioReal ya se miró arriba: aquí solo Idealo (sin repetir PrecioReal de reserva).
+        for i, mejor in zip(pendientes, ex.map(lambda i: idealo_red(lote[i], False), pendientes)):
             if mejor is not False:
                 con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))

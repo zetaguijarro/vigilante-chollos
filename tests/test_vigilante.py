@@ -1244,6 +1244,20 @@ class Rondas(Base):
         self.red.idealo["6925281993145"] = "79,00"
         self.assertEqual(self.ronda(), [])
 
+    def test_precioreal_antes_que_idealo(self):
+        # 18/11/2026 (Zeta): primero PrecioReal; Idealo solo para lo que PrecioReal no encuentre.
+        self._exigir_mercado()
+        self.preparar()
+        self.ronda()
+        self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0})
+        self.red.tiendas["precioreal"] = [{"n": "JBL Flip 6", "m": "JBL", "p": 95.0, "a": 139.0}]
+        self.red.idealo["6925281993145"] = "85,00"
+        antes = self.red.llamadas["idealo"]
+        c = self.ronda()
+        self.assertEqual([x["n"] for x in c], ["JBL Flip 6"])
+        self.assertEqual(c[0]["id"], 95.0, "el precio de mercado es el de PrecioReal")
+        self.assertEqual(self.red.llamadas["idealo"], antes, "con PrecioReal no se consulta Idealo")
+
     def test_sin_precio_de_mercado_no_se_envia(self):
         # Sony WF-C710N "antes 199 €" a 89 €: sin comparador no se sabe si el 'antes' es real.
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
