@@ -131,21 +131,15 @@
    "carrefour.es",
    "elcorteingles.es",
    "lidl.es",
-   "adidas.es",
-   "www.aeg.com.es",
    "footlocker.es",
    "pccomponentes.com",
    "coolmod.com",
    "toysrus.es",
-   "fnac.es",
    "runningemotion.com",
    "samsung.com/es",
    "game.es",
-   "sportsdirect.com",
    "store.playstation.com/es-es",
    "humblebundle.com",
-   "sprinter.es",
-   "nike.com/es",
    "privalia.com",
    "privatesportshop.es",
    "precioreal.com"
@@ -276,7 +270,13 @@
   }
  },
  "navegador_normal": {
-  "tiendas": ["miravia.es", "aliexpress.com", "neobyte.es", "tradeinn.com", "privatesportshop.es"],
+  "tiendas": [
+   "miravia.es",
+   "aliexpress.com",
+   "neobyte.es",
+   "tradeinn.com",
+   "privatesportshop.es"
+  ],
   "paginas": 1,
   "pausa_min": 30,
   "_nota": "Autorizado por Zeta el 17/11/2026 (Miravia, AliExpress) y el 18/11 (\"todas que se lean con chrome visible y mi permiso\": Neobyte, Tradeinn, Private Sport Shop; Fnac y Adidas dan 403 también así, AEG corta la conexión y Worten y Privalia salen vacías), como Idealo: Chrome visible normal, sin perfil, sin cambiar el agente ni ocultar la automatización. Si sale reto o captcha no se resuelve: pausa fija de pausa_min, sin doblar."
@@ -443,25 +443,10 @@
     "mediamarkt.es",
     "mi.com/es",
     "euronics.es",
-    "tien21.es",
     "powerplanetonline.com",
-    "alternate.es",
     "pcbox.com",
     "lenovo.com/es",
-    "hp.com/es-es",
-    "backmarket.es",
-    "expert.es",
-    "milar.es",
-    "electrocosto.com",
-    "beep.es",
-    "k-tuin.com",
-    "apple.com/es",
-    "dell.com/es-es",
-    "garmin.com/es-ES",
-    "logitech.com/es-es",
-    "store.acer.com/es-es",
     "ldlc.com/es-es",
-    "rebuy.es",
     "pccomponentes.com"
    ],
    "_nota_pccomponentes": "Su antibot no deja entrar a navegadores automáticos: se lee por PCComTracker (urls_ofertas.json), que enlaza directamente a PcComponentes con su precio.",
@@ -470,72 +455,88 @@
     "samsung.com/es",
     "mielectro.es",
     "neobyte.es",
-    "electrodepot.es",
-    "fnac.es",
-    "worten.es",
     "lg.com/es",
     "sony.es",
     "huawei.com/es"
    ],
-   "descuento_min": 0.2
+   "descuento_min": 0.2,
+   "apartadas": {
+    "tien21.es": "Sin demanda: 19 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "alternate.es": "Sin demanda: 8 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "hp.com/es-es": "Sin demanda: 9 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "backmarket.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "expert.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "milar.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "electrocosto.com": "Sin demanda: 14 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "beep.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "k-tuin.com": "Sin demanda: 7 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "apple.com/es": "Sin demanda: 5 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "dell.com/es-es": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "garmin.com/es-ES": "Sin demanda: 7 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "logitech.com/es-es": "Sin demanda: 11 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "store.acer.com/es-es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "rebuy.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "electrodepot.es": "Sin demanda: 12 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "fnac.es": "Antibot: bloquea al navegador automático también con Chrome normal (403, 18/11/2026). Zeta entra con su Chrome. Vía legítima posible: feed de afiliados (Awin).",
+    "worten.es": "Worten ha cerrado la venta online en la Península (18/11/2026)."
+   }
   },
   "moviles": {
    "cada_min": 15,
-   "tiendas": [
-    "movistar.es",
-    "simyo.es",
-    "orange.es",
-    "vodafone.es"
-   ],
-   "navegador": [
-    "phonehouse.es"
-   ],
-   "descuento_min": 0.2
+   "tiendas": [],
+   "navegador": [],
+   "descuento_min": 0.2,
+   "apartadas": {
+    "movistar.es": "Sin demanda: 12 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "simyo.es": "Sin demanda: 19 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "orange.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "vodafone.es": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "phonehouse.es": "Sin demanda: 6 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
+   }
   },
   "generalistas": {
    "cada_min": 10,
    "tiendas": [
-    "tiendasmgi.es",
-    "casadellibro.com",
-    "emp.es"
+    "tiendasmgi.es"
    ],
    "navegador": [
     "amazon.es",
     "aliexpress.com",
     "miravia.es",
     "carrefour.es",
-    "elcorteingles.es",
-    "ebay.es"
+    "elcorteingles.es"
    ],
    "apartadas": {
     "groupon.es": "Lee bien con navegador (18 ofertas), pero son servicios sin marca ni precio de mercado: con las reglas actuales nunca pasa nada. Necesitaría reglas propias.",
     "flyingtiger.com/es-es": "Lee bien con navegador (120 productos, 48 rebajados), pero es marca propia: el filtro de marca lo descarta todo.",
-    "action.com/es-es": "0 productos en todas sus lecturas del 17/11/2026 (111); apartada para no gastar tiempo de ronda."
+    "action.com/es-es": "0 productos en todas sus lecturas del 17/11/2026 (111); apartada para no gastar tiempo de ronda.",
+    "casadellibro.com": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "emp.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "ebay.es": "Sin demanda: 17 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    }
   },
   "electro_marcas": {
    "cada_min": 15,
    "tiendas": [
-    "www.aeg.com.es",
     "dyson.es",
-    "philips.es",
-    "delonghi.com/es-es",
-    "rowenta.es",
-    "moulinex.es",
-    "tefal.es",
-    "krups.es",
-    "es.roborock.com",
-    "ecovacs.com/es",
-    "bosch-home.es",
-    "balay.es"
+    "delonghi.com/es-es"
    ],
-   "navegador": [
-    "cecotec.es"
-   ],
+   "navegador": [],
    "descuento_min": 0.2,
    "apartadas": {
     "ninjakitchen.es": "0 productos en todas sus lecturas del 17/11/2026 (27); apartada para no gastar tiempo de ronda.",
-    "sharkclean.es": "0 productos en todas sus lecturas del 17/11/2026 (27); apartada para no gastar tiempo de ronda."
+    "sharkclean.es": "0 productos en todas sus lecturas del 17/11/2026 (27); apartada para no gastar tiempo de ronda.",
+    "www.aeg.com.es": "Carga con Chrome normal (18/11/2026) pero los precios no salen en la página: falta un lector propio. Pendiente.",
+    "philips.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "rowenta.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "moulinex.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "tefal.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "krups.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "es.roborock.com": "Sin demanda: 9 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "ecovacs.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bosch-home.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "balay.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "cecotec.es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    }
   },
   "videojuegos": {
@@ -543,10 +544,7 @@
    "tiendas": [
     "game.es",
     "xtralife.com",
-    "versusgamers.com",
-    "instant-gaming.com/es",
-    "gamesplanet.com",
-    "store.ubisoft.com/es"
+    "instant-gaming.com/es"
    ],
    "navegador": [
     "store.playstation.com/es-es",
@@ -569,22 +567,17 @@
     "driffle.com": "Revende claves: sus páginas son tarjetas regalo o fichas sueltas, sin precio anterior; con exigir_descuento nunca pasaría nada.",
     "gog.com/es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
     "nintendo.com/es-es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
-    "fanatical.com": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador."
+    "fanatical.com": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
+    "versusgamers.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "gamesplanet.com": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "store.ubisoft.com/es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "antes_min_eur": 10
   },
   "supermercado": {
    "cada_min": 30,
    "tiendas": [
-    "alcampo.es",
-    "tienda.mercadona.es",
-    "eroski.es",
-    "tienda.consum.es",
-    "capraboacasa.com",
-    "gadisline.com",
-    "ahorramas.com",
-    "condisline.com",
-    "bonpreuesclat.cat"
+    "alcampo.es"
    ],
    "navegador": [
     "lidl.es",
@@ -599,7 +592,15 @@
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15,
    "apartadas": {
-    "aldi.es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador."
+    "aldi.es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
+    "tienda.mercadona.es": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "eroski.es": "Sin demanda: 8 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "tienda.consum.es": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "capraboacasa.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "gadisline.com": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "ahorramas.com": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "condisline.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bonpreuesclat.cat": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    }
   },
   "hogar": {
@@ -608,21 +609,13 @@
     "ikea.com/es",
     "jysk.es",
     "conforama.es",
-    "bricomart.es",
-    "kavehome.com/es",
     "sklum.com/es",
     "westwing.es",
-    "zarahome.com/es",
-    "lampara.es",
-    "kenayhome.com",
-    "banak.com",
-    "manomano.es",
     "bricoking.es"
    ],
    "navegador": [
     "bricodepot.es",
-    "bauhaus.es",
-    "laredoute.es"
+    "bauhaus.es"
    ],
    "exigir_marca": false,
    "exigir_precio_mercado": false,
@@ -630,7 +623,15 @@
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
    "apartadas": {
     "leroymerlin.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
-    "aki.es": "Redirige a Leroy Merlin (fusionadas), que bloquea con antibot."
+    "aki.es": "Redirige a Leroy Merlin (fusionadas), que bloquea con antibot.",
+    "bricomart.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "kavehome.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "zarahome.com/es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "lampara.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "kenayhome.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "banak.com": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "manomano.es": "Errores en todas sus lecturas (stats 7-18/11/2026).",
+    "laredoute.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15
@@ -639,24 +640,11 @@
    "cada_min": 15,
    "tiendas": [
     "primor.eu",
-    "hsnstore.com",
-    "perfumerias.com",
-    "druni.es",
-    "arenal.com",
-    "maquillalia.com",
-    "perfumesclub.com",
-    "lookfantastic.es",
-    "perfumeriasaromas.com",
-    "farma2go.com",
-    "perfumeriasjulia.es",
-    "kikocosmetics.com/es-es",
-    "rituals.com/es-es"
+    "druni.es"
    ],
    "navegador": [
     "douglas.es",
-    "notino.es",
-    "yves-rocher.es",
-    "es.iherb.com"
+    "notino.es"
    ],
    "exigir_marca": false,
    "exigir_precio_mercado": false,
@@ -664,7 +652,20 @@
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
    "apartadas": {
     "mifarma.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
-    "dosfarma.com": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar."
+    "dosfarma.com": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
+    "hsnstore.com": "Sin demanda: 15 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "perfumerias.com": "Sin demanda: 10 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "arenal.com": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "maquillalia.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "perfumesclub.com": "Sin demanda: 7 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "lookfantastic.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "perfumeriasaromas.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "farma2go.com": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "perfumeriasjulia.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "kikocosmetics.com/es-es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "rituals.com/es-es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "yves-rocher.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "es.iherb.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15
@@ -672,28 +673,11 @@
   "moda": {
    "cada_min": 30,
    "tiendas": [
-    "elganso.com/es",
-    "scalpers.com",
-    "calzedonia.com/es",
-    "intimissimi.com/es",
-    "tezenis.com/es",
-    "yesstyle.com",
-    "cortefiel.com/es",
-    "womensecret.com/es",
-    "desigual.com/es_ES",
-    "pepejeans.com/es_es",
-    "bimbaylola.com"
+    "womensecret.com/es"
    ],
    "navegador": [
     "zalando.es",
-    "zara.com/es",
-    "hm.com/es_es",
-    "pullandbear.com/es",
-    "bershka.com/es",
-    "stradivarius.com/es",
     "lefties.com/es",
-    "massimodutti.com/es",
-    "oysho.com/es",
     "outlet-pc.es",
     "esdemarca.com",
     "asos.com/es",
@@ -706,7 +690,24 @@
     "springfield.com/es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante.",
     "mangooutlet.com": "0 productos en todas sus lecturas del 17/11/2026 (10); apartada para no gastar tiempo de navegador.",
     "zalando-prive.es": "0 productos en todas sus lecturas del 17/11/2026 (20); apartada para no gastar tiempo de navegador. TEMPORAL: tiene mucha demanda (289 hilos); vuelve cuando se lean las campañas de dentro en vez de la portada (CLAUDE.md, punto 4).",
-    "showroomprive.es": "0 productos en todas sus lecturas del 17/11/2026 (20); apartada para no gastar tiempo de navegador. TEMPORAL: tiene mucha demanda (242 hilos); vuelve cuando se lean las campañas de dentro en vez de la portada (CLAUDE.md, punto 4)."
+    "showroomprive.es": "0 productos en todas sus lecturas del 17/11/2026 (20); apartada para no gastar tiempo de navegador. TEMPORAL: tiene mucha demanda (242 hilos); vuelve cuando se lean las campañas de dentro en vez de la portada (CLAUDE.md, punto 4).",
+    "elganso.com/es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "scalpers.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "calzedonia.com/es": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "intimissimi.com/es": "Sin demanda: 7 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "tezenis.com/es": "Sin demanda: 11 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "yesstyle.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "cortefiel.com/es": "Sin demanda: 8 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "desigual.com/es_ES": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "pepejeans.com/es_es": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bimbaylola.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "zara.com/es": "0 productos en todas sus lecturas (stats 7-18/11/2026).",
+    "hm.com/es_es": "Errores en todas sus lecturas (stats 7-18/11/2026).",
+    "pullandbear.com/es": "Sin demanda: 10 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bershka.com/es": "Sin demanda: 5 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "stradivarius.com/es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "massimodutti.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "oysho.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "exigir_marca": false,
    "exigir_precio_mercado": false,
@@ -722,31 +723,12 @@
    "tiendas": [
     "deporte-outlet.es",
     "spartoo.es",
-    "eu.puma.com/es",
-    "nike.com/es",
     "jdsports.es",
-    "intersport.es",
-    "skechers.es",
-    "crocs.es",
-    "converse.com/es",
-    "underarmour.es",
-    "camper.com/es_ES",
     "forumsport.com",
-    "padelnuestro.com",
-    "sportisgood.com",
-    "atmosferasport.es",
-    "bstn.com",
-    "decimas.es",
-    "futbolemotion.com",
-    "basketballemotion.com",
     "runningemotion.com"
    ],
    "navegador": [
-    "adidas.es",
     "footlocker.es",
-    "sprinter.es",
-    "motocard.com",
-    "sportsdirect.com",
     "privatesportshop.es",
     "tradeinn.com"
    ],
@@ -761,7 +743,26 @@
     "timberland.es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "asics.com/es/es-es": "Antibot: 403 también con navegador (7/11/2026). No se intenta saltar.",
     "reebok.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante.",
-    "nbastore.eu": "0 productos en todas sus lecturas del 17/11/2026 (11); apartada para no gastar tiempo de navegador."
+    "nbastore.eu": "0 productos en todas sus lecturas del 17/11/2026 (11); apartada para no gastar tiempo de navegador.",
+    "eu.puma.com/es": "Errores en todas sus lecturas (stats 7-18/11/2026).",
+    "nike.com/es": "Sin demanda: 12 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "intersport.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "skechers.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "crocs.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "converse.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "underarmour.es": "Sin demanda: 7 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "camper.com/es_ES": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "padelnuestro.com": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "sportisgood.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "atmosferasport.es": "Sin demanda: 11 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bstn.com": "Sin demanda: 6 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "decimas.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "futbolemotion.com": "Sin demanda: 15 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "basketballemotion.com": "Sin demanda: 10 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "adidas.es": "Antibot: bloquea al navegador automático, también /outlet con Chrome normal (18/11/2026). Reintentar en unos días.",
+    "sprinter.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "motocard.com": "Sin demanda: 13 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "sportsdirect.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15,
@@ -772,43 +773,43 @@
    "cada_min": 60,
    "tiendas": [
     "toysrus.es",
-    "eurekakids.es",
-    "juguettos.com",
-    "imaginarium.es",
-    "smythstoys.com/es",
-    "playmobil.es",
-    "bebitus.com",
-    "prenatal.es",
-    "chicco.es",
-    "juguetilandia.com"
-   ],
-   "navegador": [
-    "lego.com/es-es"
-   ],
-   "exigir_marca": false,
-   "exigir_precio_mercado": false,
-   "descuento_min_sin_mercado": 0.7,
-   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
-   "ahorro_min_eur": 15,
-   "min_bajo_mercado": 0.15
-  },
-  "mascotas": {
-   "cada_min": 60,
-   "tiendas": [
-    "kiwoko.com",
-    "tiendanimal.es",
-    "zooplus.es",
-    "miscota.es",
-    "bitiba.es",
-    "piensoymascotas.com"
+    "prenatal.es"
    ],
    "navegador": [],
    "exigir_marca": false,
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "ahorro_min_eur": 15,
+   "min_bajo_mercado": 0.15,
    "apartadas": {
-    "maxizoo.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante."
+    "eurekakids.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "juguettos.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "imaginarium.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "smythstoys.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "playmobil.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bebitus.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "chicco.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "juguetilandia.com": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "lego.com/es-es": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
+   }
+  },
+  "mascotas": {
+   "cada_min": 60,
+   "tiendas": [],
+   "navegador": [],
+   "exigir_marca": false,
+   "exigir_precio_mercado": false,
+   "descuento_min_sin_mercado": 0.7,
+   "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
+   "apartadas": {
+    "maxizoo.es": "No responde (tiempo agotado con descarga y con navegador, 7/11/2026). Reintentar más adelante.",
+    "kiwoko.com": "Sin demanda: 1 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "tiendanimal.es": "Sin demanda: 5 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "zooplus.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "miscota.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "bitiba.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "piensoymascotas.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
    "ahorro_min_eur": 15,
    "min_bajo_mercado": 0.15

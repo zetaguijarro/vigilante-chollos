@@ -1868,8 +1868,14 @@ class Rondas(Base):
         for t in siempre:
             self.assertIn(t, leidas, t)
             self.assertNotIn(t, apartadas, t)
-        for t in ("www.aeg.com.es", "runningemotion.com", "amazon.es", "mediamarkt.es"):
+        for t in ("runningemotion.com", "amazon.es", "mediamarkt.es"):
             self.assertIn(t, siempre)
+        # Repaso del 18/11/2026 con Zeta: de 183 tiendas a 63. Se apartan las que no se pueden leer (antibot, Worten
+        # sin venta online) y las que no tienen demanda; quedan en "apartadas" con su motivo.
+        self.assertEqual(len(leidas), 63)
+        for t in ("fnac.es", "adidas.es", "worten.es", "www.aeg.com.es"):
+            self.assertIn(t, apartadas)
+            self.assertNotIn(t, siempre)
         # Primera ronda real (16/11/2026): aeg.com.es sin www no responde; NBA Store da 403 por descarga;
         # y el radar (PrecioReal no es una tienda de Chollometro) se quedaba fuera por "sin demanda".
         self.assertEqual(v.url_tienda("www.aeg.com.es"), "https://www.aeg.com.es/")
@@ -1908,8 +1914,8 @@ class Rondas(Base):
         con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)",
                         [(i, "x", 10.0, "MediaMarkt", "www.mediamarkt.es", 500.0, hace(i % 90), 1, "") for i in range(600)])
         con.commit()
-        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["www.aeg.com.es", "footlocker.es", "prenatal.es"]),
-                         ["www.aeg.com.es", "footlocker.es"])
+        self.assertEqual(v.filtrar_por_demanda(con, cfg, ["runningemotion.com", "footlocker.es", "prenatal.es"]),
+                         ["runningemotion.com", "footlocker.es"])
         con.close()
 
     def test_demanda_probada(self):
