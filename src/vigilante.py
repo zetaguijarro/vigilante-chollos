@@ -4316,6 +4316,10 @@ def historico_comparador(url):
         a = RE_HABITUAL_DATOS.search(html)
         habitual = float(a.group(1)) if a else None
     salida = {"minimo": minimo, "habitual": habitual, "url": final}
+    if RE_SIN_PRECIO_TIENDA.search(texto):
+        # 18/11/2026 (Zeta: "las últimas televisiones no coincide el precio"): PcComponentes no lo vende ahora; el
+        # precio del listado era el de Amazon (Philips 48OLED770 a 609 €), un vendedor externo o el último visto.
+        salida["sin_precio_tienda"] = True
     # Fecha del mínimo (17/11/2026): viene en sus datos ("minPriceDate":"$D2026-11-16T06:06:39.000Z").
     f = RE_FECHA_MINIMO.search(html)
     if f:
@@ -4329,6 +4333,8 @@ def historico_comparador(url):
     return salida
 
 
+RE_SIN_PRECIO_TIENDA = re.compile(r"sin precio oficial de pccomponentes|no disponible ahora en pccomponentes|"
+                                  r"precio no disponible", re.I)
 RE_GOTO = re.compile(r'href="([^"]*/goto/pccomponentes\?[^"]+)"', re.I)
 
 
@@ -4376,6 +4382,7 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                 comparador = raiz(tienda) not in urlparse(final).netloc and bool(
                     via_comparador(html, nuevos, tienda, final, estricto=True))
             nuevos = via_comparador(html, nuevos, tienda, final, estricto=comparador)
+            nuevos = [p for p in nuevos if not RE_SIN_PRECIO_TIENDA.search(p["nombre"])]  # sin precio de la tienda
             for p in nuevos:
                 # Listado del comparador sin enlace a la tienda (subcategorías de PCComTracker): la ficha
                 # del comparador es el histórico; el enlace a la tienda se saca de ella si es candidato.
@@ -7493,6 +7500,9 @@ def ronda(categoria, solo=None):
             # Sin precio de mercado pero con el historial de la propia tienda (PcComponentes por PCComTracker):
             # cerca de su mínimo, o claramente por debajo de lo que suele costar.
             p["_hist"] = ref
+            if ref.get("sin_precio_tienda") and not p.get("_pcct_otra"):
+                log(f"PcComponentes no tiene precio oficial ahora, no se envía: {p['nombre'][:60]} a {p['precio']} €")
+                continue
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
             ok = historico_clasico_ok(p["precio"], ref.get("habitual"), ref.get("minimo"), u_c)

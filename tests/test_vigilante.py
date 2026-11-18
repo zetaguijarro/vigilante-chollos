@@ -4625,6 +4625,19 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/moda-hombre/ropa/"), 0.3)
 
+    def test_pccomtracker_sin_precio_oficial(self):
+        """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""
+        html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><p>Comprar en Amazon por '
+                '609,00 €</p><p>Precio habitual de 919,00 €</p><p>Precio mínimo 766,66 €</p>')
+        orig = v.descargar
+        try:
+            v.descargar = lambda url, *a, **k: (html, url)
+            h = v.historico_comparador("https://pccomtracker.com/producto/philips-oled-48oled770-60968")
+        finally:
+            v.descargar = orig
+        self.assertTrue(h and h.get("sin_precio_tienda"))
+        self.assertTrue(v.RE_SIN_PRECIO_TIENDA.search("Hisense 55A6N 55\" Smart TV Precio no disponible"))
+
     def test_televisores_samsung_por_serie_y_pulgadas(self):
         """18/11/2026 (Zeta): TQ77S93HATXXC y TQ100QN80HAUXXC ya estaban en Chollometro con otro título."""
         eci = 'TV OLED 195cm (77") Samsung TQ77S93HATXXC 4K Smart TV SIN reflejos con Vision AI. 165Hz Ultimate Gaming Pack'
