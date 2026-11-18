@@ -753,6 +753,39 @@ def productos_game(html):
     return salida
 
 
+def productos_eci(html):
+    """El Corte Inglés / Hipercor (18/11/2026): los precios no están en las tarjetas (6 importes para 44 productos);
+    van en el bloque de datos del listado, "products":[{brand, name, gtin, code_a, price:{f_price, o_price}}]. El
+    enlace se busca en la página por el código (A200835701). Con EAN: sirve para el mercado propio."""
+    dec = json.JSONDecoder()
+    salida, vistos = [], set()
+    for m in re.finditer(r'"products"\s*:\s*\[', html):
+        try:
+            lista, _ = dec.raw_decode(html, m.end() - 1)
+        except ValueError:
+            continue
+        for o in lista if isinstance(lista, list) else []:
+            if not isinstance(o, dict):
+                continue
+            precio = (o.get("price") or {}) if isinstance(o.get("price"), dict) else {}
+            final, original, codigo = precio.get("f_price"), precio.get("o_price"), o.get("code_a")
+            if not (o.get("name") and isinstance(final, (int, float)) and codigo) or codigo in vistos:
+                continue
+            vistos.add(codigo)
+            enlace = re.search(r'href="((?:https://www\.(?:elcorteingles|hipercor)\.es)?/[^"]*' + re.escape(codigo) +
+                               r'[^"]*)"', html)
+            url = enlace.group(1) if enlace else None
+            if url and url.startswith("/"):
+                url = ("https://www.hipercor.es" if "hipercor" in html[:5000] else "https://www.elcorteingles.es") + url
+            marca = o.get("brand") if o.get("brand") not in (None, "Multi Brand") else None
+            nombre = " ".join(str(o["name"]).split())
+            salida.append({"nombre": nombre, "precio": float(final),
+                           "precio_antes": float(original) if isinstance(original, (int, float)) and original > final
+                           else None, "marca": marca, "ean": o.get("gtin"), "url": url, "imagen_url": None,
+                           "valoracion": None, "resenas": None})
+    return salida
+
+
 def productos_jysk(html):
     """JYSK (18/11/2026): el lector general sacaba 1 producto de 69 (HTML escapado dentro de la página). Cada tarjeta
     trae el nombre en aria-label="Ver producto ...", el precio en aria-label="Precio del artículo - 40,00 € /u", el
@@ -1113,7 +1146,8 @@ def _extraer(html, base_url, extra_json=()):
                   else productos_pss(extra_json) if host.endswith("privatesportshop.es")
                   else productos_privalia(html) if "privalia." in host
                   else productos_game(html) if host.endswith("game.es")
-                  else productos_jysk(html) if host.endswith("jysk.es") else [])
+                  else productos_jysk(html) if host.endswith("jysk.es")
+                  else productos_eci(html) if host.endswith(("elcorteingles.es", "hipercor.es")) else [])
     if especifico:
         return especifico
     objetos = objetos_producto(html)
@@ -4757,6 +4791,148 @@ def catalogo(*nombres):
     print(f"Guardado: {sum(len(x) for x in guardado.values())} categorías de {len(guardado)} tiendas")
 
 
+RE_ENLACE_OFERTA = re.compile(r"ofert|outlet|promo|black|rebaj|descuent|liquid|chollo|deals?\b|\bsale\b|saldo|"
+                              r"ahorr|flash|cyber|especial|campa[ñn]|precios?-(?:bajos|minimos)|sin-iva|mitad", re.I)
+MAPAS = "mapas"  # data/mapas/<tienda>.json: lo que dio cada página probada
+# Lo que no se prueba en el mapa. A diferencia del catálogo antiguo, las páginas de ofertas (black-friday, rebajas,
+# outlet) SÍ entran: son lo que se busca.
+RE_RUTA_NO_MAPA = re.compile(r"/(?:mi-?cuenta|cuenta|account|login|registro|carrito|cart|checkout|cesta|ayuda|help|"
+                             r"contacto|faq|tiendas|stores|tarjeta|legal|privacidad|cookies|condiciones|empleo|"
+                             r"blog|prensa|newsletter|app|seguros|financiacion|devoluciones|envios?|recompra|"
+                             r"tarifa-plana|servicios?|entradas|viajes)(?:/|$|\?)|\.(?:pdf|jpg|png)$|^mailto:|^tel:", re.I)
+
+
+def _modo_tienda(cfg, tienda):
+    if tienda in tiendas_navegador_normal(cfg):
+        return "normal"
+    if any(tienda in (c.get("navegador") or []) for c in cfg["categorias"].values()):
+        return "perfil"
+    return "descarga"
+
+
+def enlaces_de_mapa(html, base_url, maximo=80):
+    """Candidatas de una portada: primero las de ofertas (outlet, promo, black, rebajas...), luego categorías."""
+    host = urlparse(base_url).netloc.replace("www.", "")
+    ofertas, vistas = [], set()
+    for m in RE_A_COMPLETO.finditer(html):
+        h = RE_ATR_HREF.search(m.group(1))
+        if not h:
+            continue
+        url = urljoin(base_url, unescape(h.group(1))).split("#")[0]
+        p = urlparse(url)
+        ruta = unquote(p.path).rstrip("/").lower()
+        if p.scheme not in ("http", "https") or p.netloc.replace("www.", "") != host or not ruta or ruta in vistas:
+            continue
+        texto = " ".join(unescape(re.sub(r"<[^>]+>", " ", m.group(2))).split())[:60]
+        if RE_RUTA_NO_MAPA.search(url) or len([s for s in ruta.split("/") if s]) > 4:
+            continue
+        if RE_ENLACE_OFERTA.search(f"{ruta} {texto}") and not re.search(r"-pr-|/p/\w*\d{5,}|/dp/", ruta):
+            vistas.add(ruta)
+            ofertas.append(url)
+    categorias = [u for u in categorias_de_portada(html, base_url, maximo=40)
+                  if unquote(urlparse(u).path).rstrip("/").lower() not in vistas]
+    return (ofertas + categorias)[:maximo]
+
+
+def mapa(*tiendas, probar=45, guardar=20, minimo=8):
+    """`mapa <tienda> ...`: mapa de las páginas de ofertas y categorías de cada tienda, probándolas una a una
+    (Zeta, 18/11/2026: "recorre cada tienda que dé pocos resultados, haz un mapa de sus categorías y ofertas").
+    Lee la portada, la página de ofertas y el catálogo guardado; prueba hasta `probar` enlaces con el mismo modo que
+    la ronda (descarga, Chrome con perfil o Chrome normal) y guarda como catálogo las que den `minimo` productos o
+    más, ordenadas por productos con precio anterior. Si en descarga sale casi todo vacío, prueba con Chrome normal
+    (autorizado por Zeta para cualquier tienda) y, si rinde más, deja la tienda en Chrome normal. Con un reto o un
+    bloqueo para esa tienda: no se insiste."""
+    cfg = cargar_config()
+    urls = urls_ofertas()
+    catalogo_actual = urls_catalogo()
+    (DATOS / MAPAS).mkdir(parents=True, exist_ok=True)
+    resumen = {}
+    for tienda in tiendas:
+        modo = _modo_tienda(cfg, tienda)
+        resultado = _mapa_tienda(cfg, tienda, modo, urls, catalogo_actual, probar, minimo)
+        if modo == "descarga" and sum(n for _, n, _ in resultado["pruebas"]) < minimo * 2:
+            print(f"{tienda}: en descarga casi no salen productos; pruebo con Chrome normal")
+            normal = _mapa_tienda(cfg, tienda, "normal", urls, catalogo_actual, probar, minimo)
+            if sum(n for _, n, _ in normal["pruebas"]) > sum(n for _, n, _ in resultado["pruebas"]):
+                resultado, modo = normal, "normal"
+                nn = cfg.setdefault("navegador_normal", {}).setdefault("tiendas", [])
+                if tienda not in nn:
+                    nn.append(tienda)
+                for c in cfg["categorias"].values():  # el Chrome normal se reparte desde la lista de navegador
+                    if tienda in (c.get("tiendas") or []):
+                        c["tiendas"].remove(tienda)
+                        c.setdefault("navegador", []).append(tienda)
+                CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        buenas = sorted((x for x in resultado["pruebas"] if x[1] >= minimo), key=lambda x: (-x[2], -x[1]))
+        if len(buenas) >= 2:
+            cat = urls_catalogo()
+            cat[tienda] = [u for u, _, _ in buenas[:guardar]]
+            guardar_catalogo(cat)
+            por = cfg.setdefault("catalogo_por_tienda", {})
+            if tienda not in por:
+                por[tienda] = {"cada_min": 20, "por_ronda": 3,
+                               "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."}
+                CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        (DATOS / MAPAS / f"{re.sub(r'[^a-z0-9.]+', '_', tienda)}.json").write_text(
+            json.dumps({"tienda": tienda, "modo": modo, "fecha": datetime.now().isoformat(timespec="minutes"),
+                        "pruebas": resultado["pruebas"], "error": resultado.get("error")}, ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        resumen[tienda] = (modo, len(resultado["pruebas"]), len(buenas),
+                           sum(n for _, n, _ in buenas[:guardar]), sum(a for _, _, a in buenas[:guardar]),
+                           resultado.get("error"))
+        print(f"{tienda}: {modo}, {len(resultado['pruebas'])} páginas probadas, {len(buenas)} buenas "
+              f"({resumen[tienda][3]} productos, {resumen[tienda][4]} con precio anterior)"
+              + (f" | parado: {resultado['error']}" if resultado.get("error") else ""))
+    return resumen
+
+
+def _mapa_tienda(cfg, tienda, modo, urls, catalogo_actual, probar, minimo):
+    """Las pruebas de `mapa` para una tienda en un modo. -> {"pruebas": [(url, productos, con_antes)], "error"}"""
+    pruebas, error = [], None
+    bases = [u for u in [url_tienda(tienda), url_de(tienda, urls, None)] if u]
+    if modo == "descarga":
+        nav_ctx = None
+    else:
+        nav_ctx = NavegadorNormal(cfg) if modo == "normal" else Navegador(cfg)
+    try:
+        nav = nav_ctx.__enter__() if nav_ctx else None
+        # Cola: portada y página de ofertas (nivel 0); lo que enlazan (nivel 1); y lo que enlazan sus páginas de
+        # ofertas (nivel 2: El Corte Inglés enlaza los listados del Black Friday desde /black-friday/, no desde la
+        # portada). Cada página se lee una vez: da sus productos y sus enlaces.
+        cola = [(u, 0) for u in dict.fromkeys(bases)] + [(u, 1) for u in catalogo_actual.get(tienda) or []]
+        vistas = set()
+        while cola and len(pruebas) < probar:
+            u, nivel = cola.pop(0)
+            clave = unquote(urlparse(u).path).rstrip("/").lower() + "?" + urlparse(u).query
+            if clave in vistas or not permitido(u):
+                continue
+            vistas.add(clave)
+            try:
+                html, final, datos = nav.leer(u) if nav else (*descargar(u), [])
+            except Exception as e:
+                if re.search(r"reto|antibot|captcha|403|429", str(e), re.I):
+                    error = str(e)[:80]
+                    break
+                pruebas.append((u, 0, 0))
+                continue
+            productos = extraer(html, final, datos)
+            pruebas.append((u, len(productos), sum(1 for p in productos if p.get("precio_antes"))))
+            if nivel == 0 or (nivel == 1 and RE_ENLACE_OFERTA.search(unquote(u))):
+                hijos = enlaces_de_mapa(html, final)
+                # los de ofertas primero, para que entren aunque se llegue al tope de páginas
+                cola = [(h, nivel + 1) for h in hijos if RE_ENLACE_OFERTA.search(unquote(h))] + cola + \
+                       [(h, nivel + 1) for h in hijos if not RE_ENLACE_OFERTA.search(unquote(h))]
+            if not nav:
+                time.sleep(1.5)
+    finally:
+        if nav_ctx:
+            try:
+                nav_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+    return {"pruebas": pruebas, "error": error}
+
+
 def _seguro(funcion, *args):
     try:
         return funcion(*args)
@@ -7503,6 +7679,8 @@ if __name__ == "__main__":
         sesion_cm()
     elif args == ["temas"]:
         crear_temas()
+    elif args[:1] == ["mapa"]:
+        mapa(*args[1:])
     elif args[:1] == ["destinos"]:
         destinos_cm(int(args[1]) if len(args) > 1 else 1000)
     elif args[:1] == ["catalogo"]:

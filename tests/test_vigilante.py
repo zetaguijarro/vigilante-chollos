@@ -4522,6 +4522,22 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertFalse(v.RE_REACONDICIONADO.search("Lavadora Bosch 8 kg nueva"))
         self.assertTrue(v.RE_REACONDICIONADO.search("https://x.com/samsung-galaxy-s23-ultra-renovado-estado-excelente"))
 
+    def test_lector_corte_ingles_y_enlaces_del_mapa(self):
+        """18/11/2026: El Corte Inglés lleva los precios en el bloque de datos del listado; el mapa prueba primero las
+        páginas de ofertas (black-friday, rebajas), que el catálogo antiguo apartaba."""
+        html = ('<script>{"products":[{"brand":"LG","code_a":"A200840937","gtin":"8806096685648","name":"TV OLED LG '
+                'OLED65C66LB","price":{"f_price":1549,"o_price":2699}}]}</script>'
+                '<a href="/electronica/A200840937-8806096685648-pr-tv-oled-lg/">x</a>')
+        ps = v.extraer(html, "https://www.elcorteingles.es/black-friday/electronica/tv/")
+        self.assertEqual([(p["precio"], p["precio_antes"], p["ean"], p["marca"]) for p in ps],
+                         [(1549.0, 2699.0, "8806096685648", "LG")])
+        self.assertEqual(ps[0]["url"], "https://www.elcorteingles.es/electronica/A200840937-8806096685648-pr-tv-oled-lg/")
+        portada = ('<a href="/black-friday/">Black Friday</a><a href="/mi-cuenta/">Mi cuenta</a>'
+                   '<a href="/electrodomesticos/">Electrodomésticos</a><a href="/rebajas/">Rebajas</a>')
+        enlaces = v.enlaces_de_mapa(portada, "https://www.elcorteingles.es/")
+        self.assertEqual(enlaces[:2], ["https://www.elcorteingles.es/black-friday/", "https://www.elcorteingles.es/rebajas/"])
+        self.assertNotIn("https://www.elcorteingles.es/mi-cuenta/", enlaces)
+
     def test_lectores_game_y_jysk(self):
         """18/11/2026: GAME daba 4 productos de 24 y Jysk 1 de 36; ahora sus tarjetas, con el mínimo de 30 días."""
         game = ('<article class="ProductListCard-x"><a href="/game-hh-st-rgb-negro-auriculares-gaming/232337"><h3>GAME '
