@@ -4373,6 +4373,29 @@ class DestinoDeHilos(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(v.destinos_cm(), (0, 0), "ya mirados")
 
+    def test_vigilancia_amazon_por_grupos(self):
+        """18/11/2026 (Zeta): los ASIN que ya triunfaron, en grupos por categoría y tipo, mirados por turnos."""
+        con = v.bd()
+        con.execute("UPDATE cm SET extra='{\"mainGroup\":{\"threadGroupUrlName\":\"hogar\"}}' WHERE id IN (1,2)")
+        con.execute("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto, extra) VALUES "
+                    "(6, 'LEGO Star Wars 75433', 49.99, '', '', 1458, ?, 1, '', "
+                    "'{\"mainGroup\":{\"threadGroupUrlName\":\"familia-e-hijos\"}}')", (self.ahora - 86400,))
+        con.executemany("INSERT INTO cm_destino VALUES (?,?,?,'')",
+                        [(1, "u", "amazon:B000000001"), (2, "u", "amazon:B000000001"), (3, "u", "amazon:B000000003"),
+                         (6, "u", "amazon:B0DWDK2V4R"), (5, "u", "mediamarkt.es/x")])
+        con.commit()
+        self.assertEqual(v.actualizar_vigilancia(con), 2, "solo Amazon a 200° o más (el frío no)")
+        self.assertEqual(con.execute("SELECT grupo, exito, hilos, temp FROM vigilancia WHERE asin='B000000001'").fetchone(),
+                         ("hogar", 8.0, 2, 500), "el precio de éxito es el más bajo con que llegó a 200°")
+        cfg = {"vigilancia_amazon": {"por_ronda": 1}}
+        primero = v.vigilancia_turno(con, cfg, ["amazon.es"])
+        segundo = v.vigilancia_turno(con, cfg, ["amazon.es"])
+        self.assertEqual(len(primero), 1)
+        self.assertNotEqual(primero, segundo, "por turnos: el siguiente grupo")
+        self.assertEqual(set(primero.values()) | set(segundo.values()), {8.0, 49.99})
+        self.assertEqual(v.vigilancia_turno(con, cfg, ["miravia.es"]), {}, "sin Amazon en la ronda, nada")
+        con.close()
+
     def test_para_con_429_sin_marcar(self):
         def falla(h):
             raise v.HTTPError("u", 429, "Too Many", {}, None)

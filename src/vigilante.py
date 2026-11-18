@@ -1079,7 +1079,7 @@ def extraer(html, base_url, extra_json=()):
                 p["ref_tienda"] = e[0]
         principal = ficha_amazon(html, base_url)
         if principal:  # en una ficha, el producto de la página va primero (no el primero del carrusel)
-            productos = [principal] + [p for p in productos if asin_de(p.get("url")) != asin_de(base_url)]
+            productos = [principal]  # el carrusel de recomendados no es de esta página
         return productos
     productos = _extraer(html, base_url, extra_json)
     for p in productos:
@@ -1625,6 +1625,9 @@ def bd():
         MAX(CASE WHEN c.temp>=200 AND c.precio>0 THEN c.precio END) AS precio_max,
         MAX(c.temp) AS temp_max, MAX(c.extra LIKE '%"voucherCode":"_%') AS cupon
         FROM cm_destino d JOIN cm c ON c.id = d.hilo WHERE d.clave IS NOT NULL GROUP BY d.clave""")
+    # Vigilancia de Amazon (Zeta, 18/11/2026): los ASIN que ya llegaron a 200° en Chollometro, por grupo y tipo.
+    con.execute("""CREATE TABLE IF NOT EXISTS vigilancia (asin TEXT PRIMARY KEY, grupo TEXT, tipo TEXT, exito REAL,
+        temp REAL, hilos INTEGER, ultimo INTEGER, nombre TEXT, mirado TEXT)""")
     if "desde" not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
         # Desde cuándo se sigue el precio de cada producto (histórico propio). Las filas viejas
         # empiezan a contar ahora: no se sabe cuándo se vieron por primera vez.
@@ -4723,6 +4726,70 @@ def ofertas_extra_turno(con, cfg, urls, tiendas):
     return salida
 
 
+def actualizar_vigilancia(con, dias=400):
+    """Rellena `vigilancia` con los ASIN de Amazon que llegaron a 200° (de `cm_destino`): grupo de Chollometro
+    (mainGroup), tipo de producto (familia del título), precio con que triunfó (el más bajo a 200°), temperatura
+    máxima y número de hilos. Conserva cuándo se miró cada uno. -> cuántos hay."""
+    desde = int(time.time()) - dias * 86400
+    filas = con.execute("""SELECT d.clave, c.titulo, c.precio, c.temp, c.publicado, c.extra FROM cm_destino d
+        JOIN cm c ON c.id = d.hilo WHERE d.clave LIKE 'amazon:%' AND c.temp >= 200 AND c.publicado >= ?
+        ORDER BY c.publicado""", (desde,)).fetchall()
+    datos = {}
+    for clave, titulo, precio, temp, publicado, extra in filas:
+        asin = clave.split(":", 1)[1]
+        try:
+            grupo = ((json.loads(extra) if extra else {}).get("mainGroup") or {}).get("threadGroupUrlName")
+        except (ValueError, AttributeError):
+            grupo = None
+        d = datos.setdefault(asin, {"exito": None, "temp": 0, "hilos": 0})
+        d["hilos"] += 1
+        d["temp"] = max(d["temp"], temp or 0)
+        if precio and precio > 0:
+            d["exito"] = min(d["exito"] or precio, precio)
+        d.update(ultimo=publicado, nombre=titulo, grupo=grupo or d.get("grupo") or "otros",
+                 tipo=familia_de(titulo) or "otros")
+    for asin, d in datos.items():
+        if not d["exito"]:
+            continue
+        con.execute("""INSERT INTO vigilancia (asin, grupo, tipo, exito, temp, hilos, ultimo, nombre) VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(asin) DO UPDATE SET grupo=excluded.grupo, tipo=excluded.tipo, exito=excluded.exito,
+            temp=excluded.temp, hilos=excluded.hilos, ultimo=excluded.ultimo, nombre=excluded.nombre""",
+                    (asin, d["grupo"], d["tipo"], d["exito"], d["temp"], d["hilos"], d["ultimo"], d["nombre"][:200]))
+    con.commit()
+    return con.execute("SELECT COUNT(*) FROM vigilancia").fetchone()[0]
+
+
+def vigilancia_turno(con, cfg, tiendas):
+    """{url de la ficha: precio de éxito} de los ASIN vigilados que tocan en esta ronda (`vigilancia_amazon`:
+    {"por_ronda": 20}). Por turnos entre grupos (grupo de Chollometro + tipo), de los grupos más grandes a los
+    pequeños; dentro de cada grupo, primero los que hace más que no se miran y los más calientes. Cuando haya
+    Keepa, esto se lee de su API en vez de abrir las fichas."""
+    por_ronda = int(((cfg or {}).get("vigilancia_amazon") or {}).get("por_ronda", 20))
+    if "amazon.es" not in tiendas or por_ronda <= 0:
+        return {}
+    fila = con.execute("SELECT v FROM meta WHERE k='vigilancia_actualizada'").fetchone()
+    if not fila or datetime.fromisoformat(fila[0]) < datetime.now() - timedelta(hours=6):
+        actualizar_vigilancia(con)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('vigilancia_actualizada', ?)",
+                    (datetime.now().isoformat(timespec="minutes"),))
+    grupos = {}
+    for asin, grupo, tipo, exito in con.execute("""SELECT asin, grupo, tipo, exito FROM vigilancia
+            ORDER BY COALESCE(mirado, ''), temp DESC"""):
+        grupos.setdefault((grupo, tipo), []).append((asin, exito))
+    orden = sorted(grupos.values(), key=len, reverse=True)
+    elegidos, i = {}, 0
+    while len(elegidos) < por_ronda and any(orden):
+        g = orden[i % len(orden)]
+        if g:
+            asin, exito = g.pop(0)
+            elegidos[f"https://www.amazon.es/dp/{asin}"] = exito
+        i += 1
+    ahora = datetime.now().isoformat(timespec="minutes")
+    con.executemany("UPDATE vigilancia SET mirado=? WHERE asin=?", [(ahora, asin_de(u)) for u in elegidos])
+    con.commit()
+    return elegidos
+
+
 def busquedas_turno(con, cfg, tiendas):
     """[(tienda, url)] de las búsquedas por familia que tocan en esta ronda (Miravia y AliExpress, 17/11/2026:
     "por categorías que más grados dan en Chollometro", 4 por ronda). Cada tienda tiene en tiendas.json
@@ -6957,6 +7024,8 @@ def ronda(categoria, solo=None):
         urls = urls_ofertas()
     extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador) + busquedas_turno(con, cfg, navegador)
     turno = catalogo_turno(con, cfg, tiendas + navegador) + extras
+    vigilados = vigilancia_turno(con, cfg, navegador)
+    turno += [("amazon.es", u) for u in vigilados]
     todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
     if rec:
         recorrido(f"--- {categoria} ({solo or 'todo'}): {len(tiendas)} por descarga, {len(navegador)} con navegador, "
@@ -7003,6 +7072,7 @@ def ronda(categoria, solo=None):
             if firma and (not fila or fila[0] != firma):
                 cupones_nuevos.add(t)
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"cupones_firma:{t}", firma))
+    n_vig_leidos = n_vig_baratos = 0
     for tienda, url_leida, productos, error in lecturas:
         estadistica(con, tienda, leidos=len(productos), errores=1 if error else 0)
         modo = "navegador" if tienda in navegador else "descarga"
@@ -7015,7 +7085,8 @@ def ronda(categoria, solo=None):
         guardar_pcct(con, productos)
         # Se siembra por página leída: una URL nueva de la misma tienda no inunda de avisos.
         pagina = f"{tienda}|{url_leida}"
-        sembrada = con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
+        exito = vigilados.get(url_leida)
+        sembrada = exito or con.execute("SELECT 1 FROM sembradas WHERE tienda=?", (pagina,)).fetchone()
         for p in productos:
             p["url"] = url_canonica(p.get("url"))
             if p.get("precio_unidad"):
@@ -7027,6 +7098,8 @@ def ronda(categoria, solo=None):
             if tienda in cupones and aplicar_cupon(con, tienda, p, cupones[tienda]) and not estado \
                     and tienda in cupones_nuevos:
                 estado = "cupón"
+            if exito:  # vigilado: cuenta si está igual o más barato que cuando triunfó (+2 %), haya bajado o no
+                estado = "vigilado" if p["precio"] <= exito * 1.02 else None
             if not sembrada or not estado:
                 continue  # primera lectura de la tienda: solo memoriza
             n_cambios += 1
@@ -7079,12 +7152,18 @@ def ronda(categoria, solo=None):
                 f"terminado ({(url_leida or '')[:90]}). Vuelve a pasar: descubrir {categoria}")
             if rec:
                 recorrido(f"    OJO {tienda}: daba {caida} productos y ahora {len(productos)}; campaña terminada?")
+        if exito:
+            n_vig_leidos, n_vig_baratos = n_vig_leidos + bool(productos), n_vig_baratos + n_cambios
+            continue  # una línea para todos los vigilados, no una por ficha
         if rec:
             con_antes = sum(1 for x in productos if x.get("precio_antes"))
             nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
             recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> {len(productos)} productos, "
                       f"{con_antes} con precio anterior, {n_cambios} nuevos o más baratos, "
                       f"{len(previos) - n_previos} pasan los filtros de tienda{nota}")
+    if rec and vigilados:
+        recorrido(f"    amazon.es [vigilancia] {len(vigilados)} ASIN que ya triunfaron -> {n_vig_leidos} leídos, "
+                  f"{n_vig_baratos} igual o más baratos que cuando triunfaron")
     limpiar(con)
     con.commit()
 
