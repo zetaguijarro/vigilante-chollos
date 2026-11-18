@@ -121,6 +121,7 @@ class Base(unittest.TestCase):
         cfg["filtros_codigo"]["ofertas_refresco_dias"] = 0  # el refresco semanal de campañas tiene su prueba
         # Igual con el histórico propio (necesita días de seguimiento): tiene sus propias pruebas.
         cfg["filtros_codigo"].update({"historial_propio_dias": 0, "error_precio_dias_min": 0,
+                                      "error_precio_min_calientes": 0,  # tienda pequeña: tiene su prueba
                                       "solo_tiendas_con_demanda": False, "descuento_real_min": 0,
                                       "navegador_si_vacia": False,  # tienen su propia prueba
                                       "idealo_navegador": False,    # no abrir Chrome de verdad
@@ -3939,6 +3940,17 @@ class ErrorDePrecio(Base):
                                         "error_precio": True, "_min_previo": 199})
         self.assertIn("posible error de precio (antes 199 €)", texto)
 
+    def test_tienda_pequena_no_cuenta_como_error(self):
+        """Chollometro no acepta errores de precio de tiendas pequeñas (18/11/2026)."""
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["error_precio_min_calientes"] = 100
+        v.CONFIG.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        v._GRANDES.clear()
+        self.red.tiendas = {"mediamarkt": [{"n": "Philips Airfryer XXL", "m": "Philips", "p": 199}], "pccomponentes": []}
+        self.ronda()
+        self.red.tiendas["mediamarkt"][0]["p"] = 59
+        self.assertEqual(self.ronda(), [], "sin hilos calientes de la tienda en la copia: no es error de precio")
+
     def test_bajada_normal_no_es_error(self):
         self.red.tiendas = {"mediamarkt": [{"n": "Philips Airfryer XXL", "m": "Philips", "p": 199}], "pccomponentes": []}
         self.ronda()
@@ -4382,6 +4394,39 @@ class DestinoDeHilos(unittest.TestCase):
         self.assertEqual(v.ya_salio_mas_barato({**p, "precio": 12.0}), 10.0, "más de un 10 % más caro que cuando triunfó")
         self.assertIsNone(v.ya_salio_mas_barato({**p, "precio": 10.9}), "Zeta: hasta un 10 % más caro todavía vale")
         self.assertIsNone(v.ya_salio_mas_barato({**p, "url": "https://www.amazon.es/dp/B000000002", "precio": 99}))
+
+
+class ReglasPublicacionChollometro(unittest.TestCase):
+    """Tallas, una unidad, envío a España, códigos de un solo uso y enlace limpio (18/11/2026)."""
+
+    def test_tallas(self):
+        ropa, zapas = {"nombre": "Sudadera Nike Club con capucha"}, {"nombre": "Zapatillas adidas Samba OG"}
+        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["S: agotada", "M: hay stock", "L: agotada"]})[0], False)
+        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["M: hay stock", "L: seleccionable"]})[0], True)
+        self.assertEqual(v.regla_tallas(zapas, {"variantes": ["42: hay stock", "43: hay stock", "44: agotada"]})[0], False)
+        self.assertEqual(v.regla_tallas(zapas, {"variantes": ["40", "41", "42.5"]})[0], True)
+        self.assertEqual(v.regla_tallas(zapas, {}), (None, "calzado: tallas sin comprobar"))
+        self.assertEqual(v.regla_tallas({"nombre": "Freidora de aire Cosori"}, {}), (None, ""))
+        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["Talla única: hay stock"]})[0], True)
+
+    def test_ficha_una_unidad_y_envio(self):
+        f = v.analizar_ficha("<p>¡Solo queda 1 en stock!</p><p>Este artículo no se envía a España</p>",
+                             "https://t.es/p/1")
+        self.assertTrue(f.get("una_unidad"))
+        self.assertTrue(f.get("no_envia_es"))
+        self.assertFalse(v.analizar_ficha("<p>Quedan 12 unidades. Envío gratis a España</p>", "https://t.es/p/1")
+                         .get("una_unidad"))
+
+    def test_codigos_de_un_solo_uso(self):
+        self.assertTrue(v.RE_CUPON_NUEVOS.search("Código de un solo uso enviado por email"))
+        self.assertTrue(v.RE_CUPON_NUEVOS.search("Código personal e intransferible"))
+        self.assertFalse(v.RE_CUPON_NUEVOS.search("Válido un solo uso por cliente"))
+
+    def test_enlace_limpio(self):
+        self.assertEqual(v.enlace_limpio("https://www.t.es/p/x?utm_source=a&color=rojo&tag=yo-21&gclid=1"),
+                         "https://www.t.es/p/x?color=rojo")
+        self.assertEqual(v.enlace_limpio("https://es.privalia.com/gr/catalog/1/2?producto=3"),
+                         "https://es.privalia.com/gr/catalog/1/2?producto=3")
 
 
 class ReglasDuplicadosChollometro(unittest.TestCase):

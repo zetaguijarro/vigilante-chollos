@@ -30,4 +30,5 @@ Fuente: https://www.chollometro.com/reglas (leída el 18/11/2026). También exis
 ## En el vigilante (18/11/2026)
 
 - Hecho: duplicados (regla 1, en `estado_chollometro` y `ya_publicado_igual_o_mas_barato`), El Corte Inglés/Hipercor (regla 6), otra tienda con la oferta ya agotada no cuenta, enlaces limpios sin afiliado (`url_canonica`).
-- Pendiente: tallas mínimas (2 ropa / 3 calzado: `variantes_de` las lee, falta aplicar la regla), una sola unidad, no envía a España, códigos de un solo uso.
+- Hecho también (18/11): tallas mínimas (`regla_tallas`: 2 ropa / 3 calzado; si la ficha no las dice, el aviso lo marca), una sola unidad y no envía a España (`analizar_ficha` -> `confirmar_en_ficha` descarta), códigos de un solo uso (`RE_CUPON_NUEVOS`), errores de precio solo en tiendas con 100+ hilos calientes en 6 meses (`tienda_grande`, `error_precio_min_calientes`), enlace sin parámetros de afiliado ni seguimiento (`enlace_limpio`). Hermes (`verifica-chollo`) las comprueba al pulsar Verificar.
+- Sin código (las mira Hermes): tienda o vendedor no fiable más allá de reseñas, exclusivas de otra web, AliExpress antes de que empiece la oferta, regla 5 (producto ya en una recopilación).

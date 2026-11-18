@@ -95,6 +95,7 @@ Por tienda:
 - Amazon: solo si lo vende Amazon o un vendedor con buenas valoraciones y ventas.
 - Steam, Epic, Android e iOS: descuento del 80 % o más y juegos populares. Indica la valoración y el número de reseñas.
 - Ropa y calzado: regla de Chollometro, al menos 2 tallas con stock en ropa y 3 en calzado al precio de oferta. Con menos, descarta. Las tallas disponibles van en el título.
+- Reglas de publicación de Chollometro (docs/REGLAS_CHOLLOMETRO.md; las rechazan sin discusión, descarta): una sola unidad ("queda 1", "última unidad"); no se envía a España; códigos de descuento de un solo uso o personales; enlaces de afiliado, referido o cashback (el enlace va limpio, sin tag, utm ni ref); error de precio de una tienda pequeña o de una que suele cometerlos; vendedor o tienda poco fiable; ofertas exclusivas de otra web de chollos. AliExpress: solo si la oferta oficial ya está disponible, no anunciada.
 - Portes: se indican y se cuentan al comparar, pero no descartan por sí solos.
 - socio=1 (Costco, clubs): es precio para socios. Dilo claramente en "info" y explica qué hace falta para conseguirlo.
 - Viajes: solo si es un chollo de verdad (Europa 60–110 €, larga distancia 400–450 €). Título en MAYÚSCULAS con gancho, por ejemplo: "¡4 DÍAS en BUDAPEST! VUELOS + HOTEL + DESAYUNO por solo 85€". En la descripción: duración, vuelos directos o no, ciudades de salida, alojamiento y régimen (si es un hostal compartido, dilo) y fechas. Indica que es precio por persona y que el hotel es un ejemplo.

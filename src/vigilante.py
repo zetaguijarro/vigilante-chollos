@@ -38,7 +38,7 @@ from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, quote, quote_plus, unquote, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, quote, quote_plus, unquote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 from http.cookiejar import CookieJar
 import threading
 import ssl
@@ -1461,6 +1461,23 @@ def url_canonica(url):
     return url
 
 
+RE_PARAM_SEGUIMIENTO = re.compile(
+    r"^(?:utm_\w+|tag|ref|ref_|aff\w*|affiliate\w*|partner\w*|clickid|click_id|irclickid|gclid|fbclid|msclkid|"
+    r"dclid|yclid|awc|cjevent|sscid|ranmid|raneaid|ransiteid|siteid|admitad_uid|tduid|wt\.mc_id|mc_cid|mc_eid|"
+    r"campaign\w*|cmp\w*|source|src|spm|scm|pvid|algo_\w+|_trkparams|trk\w*|psc|th|smid|ascsubtag|linkcode|"
+    r"creative\w*|camp|crid|sprefix|qid|sr|dib\w*|content-id|pd_rd_\w+|pf_rd_\w+)$", re.I)
+
+
+def enlace_limpio(url):
+    """El enlace sin parámetros de afiliado ni de seguimiento (Chollometro no admite afiliados, 18/11/2026). Los
+    demás parámetros se quedan (talla, color, ?producto= de Privalia...)."""
+    if not url or "?" not in url:
+        return url
+    u = urlsplit(url)
+    qs = [(k, val) for k, val in parse_qsl(u.query, keep_blank_values=True) if not RE_PARAM_SEGUIMIENTO.match(k)]
+    return urlunsplit((u.scheme, u.netloc, u.path, urlencode(qs), ""))
+
+
 def asin_de(url):
     """El código ASIN de un enlace de Amazon, o None."""
     m = RE_ASIN.search(urlparse(url or "").path)
@@ -2246,7 +2263,11 @@ CUPONES_CADA_H = 6
 RE_VOUCHER = re.compile(r'"voucher":\{"idPool"')
 RE_CUPON_MINIMO = re.compile(r"(?:al menos|m[ií]nim[oa]s?(?: de compra)?(?: de)?|superiores? a|a partir de|desde)\s*"
                              r"(\d+(?:[.,]\d+)?)\s*(?:€|eur)", re.I)
-RE_CUPON_NUEVOS = re.compile(r"nuevos? (?:clientes|usuarios|compradores)|primer pedido|primera compra|bienvenida", re.I)
+RE_CUPON_NUEVOS = re.compile(r"nuevos? (?:clientes|usuarios|compradores)|primer pedido|primera compra|bienvenida|"
+                             # Chollometro no acepta códigos de un solo uso (18/11/2026). "1 uso por cliente" sí vale.
+                             r"c[oó]digos? (?:personal(?:es)?|[uú]nicos?|individual(?:es)?)\b|"
+                             r"\bun solo uso\b(?! por)|\buso [uú]nico\b(?! por)|\bv[aá]lido para un (?:solo )?uso\b(?! por)",
+                             re.I)
 RE_CUPON_SELLO = re.compile(r"(?:etiqueta|sello|marcados? con|identificados? con)[^«\"]{0,20}[«\"]([^»\"]{2,40})[»\"]"
                             r"|art[ií]culos del [«\"]([^»\"]{2,40})[»\"]", re.I)
 
@@ -2735,6 +2756,22 @@ def pesos_volumen(con, cfg=None, tienda=None, horas=6, min_calientes=10):
                 (clave, json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": pesos})))
     con.commit()
     return pesos
+
+
+_GRANDES = {}
+
+
+def tienda_grande(con, tienda, minimo=100, dias=180):
+    """¿La tienda tiene `minimo` hilos de 200°+ en Chollometro en los últimos `dias`? Chollometro no acepta errores
+    de precio de tiendas pequeñas (reglas de publicación, 18/11/2026). Se calcula una vez por tienda y día."""
+    clave = (tienda, minimo, datetime.now().strftime("%Y-%m-%d"))
+    if clave not in _GRANDES:
+        nombre = raiz(tienda)
+        desde = (datetime.now() - timedelta(days=dias)).timestamp()
+        n = con.execute("SELECT COUNT(*) FROM cm WHERE temp>=200 AND publicado>=? AND (host LIKE ? OR extra LIKE ?)",
+                        (desde, f"%{nombre}%", f'%"linkHost":"%{nombre}%')).fetchone()[0]
+        _GRANDES[clave] = n >= minimo
+    return _GRANDES[clave]
 
 
 def peso_de(pesos, texto):
@@ -4578,6 +4615,8 @@ def mensaje_candidato(n, p):
         socio += f" con {p['cupon']} (sin cupón: {p['precio_sin_cupon']:g} €)"
     elif p.get("cupon_posible"):
         resenas += f"\nPosible cupón: {p['cupon_posible']}"
+    if p.get("tallas_aviso"):
+        resenas += "\n⚠️ Tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
             f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'])}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
@@ -4678,6 +4717,9 @@ def confirmar_en_ficha(p, tolerancia=0.02):
     adidas a 36 € en el listado de Spartoo y a 73,51 € en su ficha, con datos de otra marca; robot
     Cecotec a 81 € en el listado y a 229 € en la ficha). -> (True | False | None, motivo).
     None = la ficha no se pudo leer (antibot, error, sin precio): no confirma ni desmiente."""
+    _, sin_tallas = regla_tallas(p, None)
+    if sin_tallas:
+        p["tallas_aviso"] = sin_tallas  # ropa o calzado: se quita si la ficha confirma las tallas
     if (clave_producto(p.get("url")) or "").startswith("privalia:"):
         # El producto de Privalia no tiene página propia: la "ficha" sería la campaña entera (otro título, otro
         # precio) y lo descartaría. El precio ya viene de los datos de la propia campaña.
@@ -4695,12 +4737,29 @@ def confirmar_en_ficha(p, tolerancia=0.02):
         return False, f"la ficha marca {ficha['precio_ahora']} € y el listado {p['precio']} €"
     if ficha.get("stock") == "no":
         return False, "la ficha lo da por agotado"
+    # Reglas de publicación de Chollometro (docs/REGLAS_CHOLLOMETRO.md): las rechazan sin discusión.
+    if ficha.get("una_unidad"):
+        return False, "solo queda una unidad (Chollometro no la acepta)"
+    if ficha.get("no_envia_es"):
+        return False, "no se envía a España (Chollometro no la acepta)"
+    ok_tallas, motivo = regla_tallas(p, ficha)
+    if ok_tallas is False:
+        return False, motivo
+    if ok_tallas:
+        p.pop("tallas_aviso", None)
     return True, "producto y precio confirmados en la ficha"
 
 
 RE_META_DESC = re.compile(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{20,})', re.I)
 RE_AGOTADO = re.compile(r"agotado|sin stock|no disponible|out of stock|avísame cuando", re.I)
 RE_ENVIO = re.compile(r"[^.<>\n]{0,60}(?:env[ií]o|entrega)[^.<>\n]{0,80}", re.I)
+# Reglas de publicación de Chollometro (18/11/2026, docs/REGLAS_CHOLLOMETRO.md): no se aceptan ofertas de una sola
+# unidad ni productos que no se envían a España.
+RE_UNA_UNIDAD = re.compile(r"\b(?:s[oó]lo|[uú]nicamente)\s+queda\s+1\b|\b[uú]ltima\s+unidad\b|\bqueda\s+1\s+unidad\b|"
+                           r"\b1\s+unidad\s+disponible\b|\bonly\s+1\s+left\b", re.I)
+RE_NO_ENVIA_ES = re.compile(r"no\s+(?:se\s+)?(?:env[ií]a|realiza(?:mos)?\s+env[ií]os|hace(?:mos)?\s+env[ií]os|"
+                            r"est[aá]\s+disponible\s+para\s+env[ií]o)\s+a\s+(?:espa[ñn]a|tu\s+pa[ií]s|tu\s+ubicaci[oó]n)|"
+                            r"no\s+se\s+puede\s+enviar\s+a\s+(?:espa[ñn]a|tu\s+pa[ií]s)|does\s+not\s+ship\s+to\s+spain", re.I)
 
 
 def leer_ficha(url, nav=None):
@@ -4732,6 +4791,10 @@ def analizar_ficha(html, final, datos=()):
     m = RE_SELLER.search(html)
     if m:
         f["vendedor"] = m.group(1)
+    if RE_UNA_UNIDAD.search(plano):
+        f["una_unidad"] = True
+    if RE_NO_ENVIA_ES.search(plano):
+        f["no_envia_es"] = True
     envios = [e.strip() for e in RE_ENVIO.findall(plano) if re.search(r"gratis|€|\d", e)]
     if envios:
         f["envio"] = envios[0][:140]
@@ -4863,6 +4926,32 @@ def variantes_de(ld, html):
                 poner(re.sub(r"\s*[-(]?\s*(?:agotad[oa]|sin stock|no disponible)\)?", "", texto, flags=re.I),
                       "agotada" if agotada else "seleccionable")  # el desplegable no dice si hay stock
     return salida[:25]
+
+
+RE_CALZADO = re.compile(r"zapatill|zapato|\bbotas?\b|botin|sandalia|chancla|deportivas|sneaker|mocas[ií]n|alpargata|"
+                        r"n[aá]uticos?|tacones", re.I)
+RE_TALLA = re.compile(r"^(?:talla\s+)?(?:\d{2}(?:[.,]5)?(?:\s*(?:eu|1/3|2/3))?|\d{1,2}(?:[.,]5)?\s*(?:uk|us)|"
+                      r"x{0,3}s|m|x{0,4}l|\d?xl|\d{2}-\d{2}|\d{2,3}\s*cm|w\d{2}(?:\s*l\d{2})?|u|única|unica)$", re.I)
+
+
+def regla_tallas(p, ficha):
+    """Reglas de Chollometro (8 y "difícil acceso", 18/11/2026): ropa con 2 tallas o más disponibles y calzado con
+    3 o más; con menos, no se acepta suelta. -> (True | False | None, motivo). None: no es ropa ni calzado, o la
+    ficha no dice las tallas (el aviso lo indica para comprobarlo antes de publicar)."""
+    fam = familia_de(p["nombre"])
+    tipo = "calzado" if fam == "calzado" or RE_CALZADO.search(p["nombre"]) else "ropa" if fam == "ropa" else None
+    if not tipo:
+        return None, ""
+    tallas = [x for x in (ficha or {}).get("variantes") or [] if RE_TALLA.match(x.split(":")[0].strip())]
+    if not tallas:
+        return None, f"{tipo}: tallas sin comprobar"
+    if any(re.sub(r"^talla\s+", "", x.split(":")[0].strip().lower()) in ("u", "única", "unica") for x in tallas):
+        return True, "talla única"
+    disponibles = [x for x in tallas if not x.endswith(": agotada")]
+    minimo = 3 if tipo == "calzado" else 2
+    if len(disponibles) < minimo:
+        return False, f"{tipo} con {len(disponibles)} tallas disponibles (Chollometro pide {minimo} o más)"
+    return True, f"{len(disponibles)} tallas disponibles"
 
 
 RE_CUPON = re.compile(r"(?:c[oó]digo|cup[oó]n|code)(?:\s+(?:promocional|descuento|de descuento))?\s*[:\-«\"']?\s*"
@@ -6088,7 +6177,9 @@ def ronda(categoria, solo=None):
             # tienda no muestre precio tachado. Son los chollos que más se calientan.
             # Hace falta un mínimo de seguimiento: un precio visto hace una hora no es referencia.
             err = (p.get("_min_previo") and p["precio"] <= p["_min_previo"] * (1 - ERROR_PRECIO)
-                   and p.get("_seguido_dias", 0) >= f.get("error_precio_dias_min", 0))
+                   and p.get("_seguido_dias", 0) >= f.get("error_precio_dias_min", 0)
+                   # Chollometro no acepta errores de precio de tiendas pequeñas (18/11/2026)
+                   and tienda_grande(con, tienda, f.get("error_precio_min_calientes", 100)))
             if err:
                 p["error_precio"] = True
                 d = max(d or 0, 1 - p["precio"] / p["_min_previo"])
@@ -6320,6 +6411,8 @@ def ronda(categoria, solo=None):
     entrega = cfg.get("entrega", {})
     modo_telegram = entrega.get("modo") == "telegram"
     finales.sort(key=lambda x: -x["score"])
+    for p in finales:  # Chollometro no admite enlaces de afiliado ni de seguimiento (18/11/2026)
+        p["url"] = enlace_limpio(p.get("url"))
     hueco = max_tanda if modo_telegram else min(max_tanda, max_dia - usadas)
     mios = titulos_perfil(con, cfg) if finales else []
     candidatos = []
