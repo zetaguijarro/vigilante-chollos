@@ -295,13 +295,38 @@ def url_ascii(url):
                        quote(p.fragment, safe=seguro)))
 
 
+SESION_CM = "cm_sesion.json"  # cookies de la cuenta de Chollometro para la precarga (comando `sesion_cm`)
+RE_COOKIE_SESION_CM = re.compile(r"^(pepper_session|remember_\w+|xsrf_t|u_l)$")
+_cookie_cm = {"activa": False, "cabecera": None}
+
+
+def cookie_cm():
+    """Cabecera Cookie de la sesión de Chollometro, solo mientras corre la precarga (_cookie_cm["activa"]).
+    18/11/2026: sin sesión, todos los listados acaban en la página 334 (la 335 da 410); con sesión Destacados
+    llega a 2024 y Subiendo a 2025. Es otra cuenta, no PorLa_Jeta. Solo las cookies de sesión, no la de
+    Cloudflare."""
+    if not _cookie_cm["activa"]:
+        return None
+    if _cookie_cm["cabecera"] is None:
+        try:
+            cks = json.loads((DATOS / SESION_CM).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cks = []
+        _cookie_cm["cabecera"] = "; ".join(f"{c['name']}={c['value']}" for c in cks
+                                           if RE_COOKIE_SESION_CM.match(c.get("name", "")))
+    return _cookie_cm["cabecera"] or None
+
+
 def _descargar(url, timeout):
-    req = Request(url_ascii(url), headers={
+    cab = {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9",
         "Accept-Encoding": "gzip, deflate",
-    })
+    }
+    if urlparse(url).netloc.endswith("chollometro.com") and cookie_cm():
+        cab["Cookie"] = cookie_cm()
+    req = Request(url_ascii(url), headers=cab)
     with _abridor().open(req, timeout=timeout) as r:
         data = r.read()
         enc = r.headers.get("Content-Encoding", "")
@@ -2725,10 +2750,28 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
     DATOS.mkdir(parents=True, exist_ok=True)
     cerrojo = DATOS / "precarga.lock"
     cerrojo.write_text(str(os.getpid()), encoding="utf-8")  # las rondas no arrancan mientras exista
+    _cookie_cm.update(activa=True, cabecera=None)
+    if not cookie_cm():
+        print("Sin sesión de Chollometro (data/cm_sesion.json): los listados acaban en la página 334. "
+              "Para pasar de ahí: vigilante.py sesion_cm")
     try:
         _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin, hasta_hora)
     finally:
+        _cookie_cm["activa"] = False
         cerrojo.unlink(missing_ok=True)
+
+
+def sesion_cm():
+    """`sesion_cm`: guarda las cookies de sesión de Chollometro del perfil del navegador del vigilante en
+    data/cm_sesion.json para la precarga. Antes hay que iniciar sesión en ese perfil (`login chollometro.com`)."""
+    cfg = cargar_config()
+    with Navegador({**cfg, "navegador": {**cfg.get("navegador", {}), "visible": True}}) as nav:
+        cks = [c for c in nav._ctx.cookies("https://www.chollometro.com") if RE_COOKIE_SESION_CM.match(c["name"])]
+    DATOS.mkdir(parents=True, exist_ok=True)
+    (DATOS / SESION_CM).write_text(json.dumps(cks), encoding="utf-8")
+    print(f"{len(cks)} cookies de sesión guardadas" + ("" if any(c["name"].startswith("remember_") for c in cks)
+                                                       else " (sin 'remember_': ¿has iniciado sesión?)"))
+    return len(cks)
 
 
 SEGUIR = "precarga_seguir.json"  # cómo seguir una carga que se paró (lo usa el botón "Seguir" de Telegram)
@@ -6356,6 +6399,8 @@ if __name__ == "__main__":
                               inicio=int(args[6]) if len(args) > 6 else 1)
     elif args[:1] == ["seguir"]:
         seguir_precarga(args[1] if len(args) > 1 else None)
+    elif args[:1] == ["sesion_cm"]:
+        sesion_cm()
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:

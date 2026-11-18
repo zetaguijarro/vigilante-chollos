@@ -343,6 +343,20 @@ class PrecargaHistorial(unittest.TestCase):
         v.DATOS, v.DB, v.descargar, v.time.sleep, v.enviar_telegram = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_sesion_solo_en_precarga(self):
+        """18/11/2026: con sesión se pasa de la página 334. Solo las cookies de sesión (no Cloudflare) y solo
+        mientras corre la precarga."""
+        (self.tmp / v.SESION_CM).write_text(json.dumps([{"name": "pepper_session", "value": "a"},
+                                                         {"name": "remember_x1", "value": "b"},
+                                                         {"name": "cf_clearance", "value": "c"}]), encoding="utf-8")
+        vistas = []
+        v.descargar = lambda url, timeout=20, reintentos=1: (vistas.append(v.cookie_cm()),
+                                                             cm_html([hilo("h", "Amazon", 10, dias=1)]))[1:] + (url,)
+        self.assertIsNone(v.cookie_cm())
+        v.precargar_chollometro(dias_nuevos=0, paginas_portada=1, pausa=0)
+        self.assertEqual(vistas, ["pepper_session=a; remember_x1=b"])
+        self.assertIsNone(v.cookie_cm())
+
     def red(self, ultima):
         pedidas = []
 
