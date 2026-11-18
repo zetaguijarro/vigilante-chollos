@@ -4514,6 +4514,12 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertFalse(mp("Converse Chuck Taylor All Star Lift Clean OX", "Converse Chuck Taylor All Star High"), "corte")
         self.assertTrue(mp("Sony WH-CH720N Azul Auriculares inalámbricos", "Sony WH-CH720N Auriculares Bluetooth"))
         self.assertTrue(mp("Zapatos Botas Dr. Martens 1460 Cherry Red", "Botas DR. Martens 1460"))
+        # Zeta (18/11/2026): los reacondicionados, fuera; y un hilo de reacondicionado no es antecedente del nuevo
+        self.assertFalse(mp("Apple iPhone 16 128GB Negro", "Apple iPhone 16 128GB Reacondicionado Grado A"))
+        for n in ("iPhone 15 128GB (Reacondicionado)", "Amazon Renewed Galaxy S24", "BOSS Segunda Mano Jersey",
+                  "Portátil HP como nuevo"):
+            self.assertTrue(v.RE_REACONDICIONADO.search(n), n)
+        self.assertFalse(v.RE_REACONDICIONADO.search("Lavadora Bosch 8 kg nueva"))
 
     def test_configuracion_sin_concretar(self):
         """#214 (18/11/2026): ThinkPad sin RAM ni disco en el nombre contra el precio de Idealo de otra configuración."""

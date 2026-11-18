@@ -2536,6 +2536,9 @@ def rx_marcas():
     return _RX_MARCAS[clave]
 
 
+RE_REACONDICIONADO = re.compile(r"reacondicionad\w*|\breaco\b|refurbished|\brenewed\b|\bremanufacturad\w*|"
+                                r"segunda[\s-]mano|seminuev\w*|\busad[oa]s?\b|como nuevo|\bgrado [abc]\b|"
+                                r"\bopen[\s-]box\b|\bexposici[oó]n\b|/reacondicionad|/segunda-mano", re.I)
 MARCA_DE_GAMA = {"poco": "xiaomi", "redmi": "xiaomi", "galaxy": "samsung", "iphone": "apple", "ipad": "apple",
                  "macbook": "apple", "airpods": "apple", "pixel": "google", "thinkpad": "lenovo", "ideapad": "lenovo",
                  "legion": "lenovo", "vivobook": "asus", "zenbook": "asus", "rog": "asus", "omen": "hp",
@@ -2653,6 +2656,8 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     (mm_b, acc_b, gb_, fb, juego_b, tok_b, recop_b) = _rasgos(titulo)
     if recop_b:
         return False  # una recopilación ("50" a 341 € / 65" a 549 €") no es un producto
+    if bool(RE_REACONDICIONADO.search(nombre)) != bool(RE_REACONDICIONADO.search(titulo)):
+        return False  # un reacondicionado no es el producto nuevo (ni su precio sirve de referencia)
     (mm_a, acc_a, ga_, fa, juego_a, tok_a, _) = _rasgos(nombre)
     ma, mo_a, ca, ta = marca_y_modelo(nombre, marca) if marca else mm_a
     mb, mo_b, cb, tb = mm_b
@@ -6667,6 +6672,8 @@ def ronda(categoria, solo=None):
             if (categoria in f.get("sin_infantil_en", []) or familia_de(p["nombre"]) in ("calzado", "ropa")) \
                     and RE_INFANTIL.search(p["nombre"]):
                 continue  # 17/11/2026: ropa y calzado infantil y junior, fuera en cualquier categoría
+            if RE_REACONDICIONADO.search(f"{p['nombre']} {p.get('url') or ''}"):
+                continue  # 18/11/2026 (Zeta): reacondicionados, segunda mano y usados, fuera
             if r["marca"] and not marca_ok(p, rx, tienda):
                 continue
             d = (1 - p["precio"] / p["precio_antes"]) if p["precio_antes"] else None
