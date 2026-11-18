@@ -4172,8 +4172,8 @@ class MiraviaAliExpress(Base):
     def test_busquedas_por_familia_por_turnos_y_por_grados(self):
         con = v.bd()
         # Copia de Chollometro: en esta tienda las consolas llegan a 200° siempre; los taladros, 1 de cada 4.
-        filas = [(i, f"PS5 Slim {i}", 400, "AliExpress", "es.aliexpress.com", 500, 0, 0, "") for i in range(8)]
-        filas += [(100 + i, f"Taladro {i}", 40, "AliExpress", "es.aliexpress.com", 300 if i % 4 == 0 else 50, 0, 0, "")
+        filas = [(i, f"PS5 Slim {i}", 400, "AliExpress", "es.aliexpress.com", 500, int(time.time()), 0, "") for i in range(8)]
+        filas += [(100 + i, f"Taladro {i}", 40, "AliExpress", "es.aliexpress.com", 300 if i % 4 == 0 else 50, int(time.time()), 0, "")
                   for i in range(8)]
         con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto) VALUES (?,?,?,?,?,?,?,?,?)", filas)
         cfg = {"busquedas_familia": {"por_ronda": 2, "cada_min": 15, "tiendas": {"aliexpress.com": {
@@ -4192,6 +4192,28 @@ class MiraviaAliExpress(Base):
             cuenta["https://es.aliexpress.com/w/wholesale-taladro.html"]
         self.assertGreater(taladro, 0, "ninguna se queda sin leer")
         self.assertGreaterEqual(ps5, 3 * taladro, (ps5, taladro))
+        con.close()
+
+    def test_pesos_por_volumen_de_cada_tienda(self):
+        """18/11/2026: la copia es casi toda caliente; el peso es cuántos hilos calientes da cada familia en esa
+        tienda (500° cuentan doble), no la tasa."""
+        con = v.bd()
+        ahora = int(time.time())
+        filas = [(i, f"Consola PS5 Slim {i}", 400, "", "", 600, ahora, 0, "", '{"linkHost":"www.mediamarkt.es"}')
+                 for i in range(9)]
+        filas += [(50 + i, f"Smartphone Xiaomi {i}", 200, "", "", 250, ahora, 0, "", '{"linkHost":"www.mediamarkt.es"}')
+                  for i in range(3)]
+        filas += [(90 + i, f"Zapatillas adidas {i}", 50, "", "", 900, ahora, 0, "", '{"linkHost":"www.zalando.es"}')
+                  for i in range(20)]
+        filas.append((200, "PS5 antigua", 400, "", "", 900, ahora - 400 * 86400, 0, "", '{"linkHost":"www.mediamarkt.es"}'))
+        con.executemany("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto, extra) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)", filas)
+        p = v.pesos_volumen(con, {}, "mediamarkt.es")
+        # Consolas 18 puntos, móviles 3: media 10,5.
+        self.assertEqual((p["consolas"], p["moviles"], p["calzado"]), (round(18 / 10.5, 2), v.PESO_MIN, v.PESO_MIN))
+        # Sin datos de la tienda, las de todas: calzado 40, consolas 18, móviles 3 (media 61/3).
+        self.assertEqual(v.pesos_volumen(con, {}, "otra.es")["calzado"], round(40 / (61 / 3), 2))
+        self.assertIsNone(v.pesos_volumen(con, {"filtros_codigo": {"peso_por_demanda": False}}, "mediamarkt.es"))
         con.close()
 
     def test_redireccion_a_reto_falla(self):

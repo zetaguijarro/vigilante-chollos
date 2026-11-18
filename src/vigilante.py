@@ -2409,7 +2409,7 @@ def mejor_chollometro(nombre, copia=None):
 # El peso de cada familia sale de la copia local de Chollometro: qué parte de sus hilos se calienta frente
 # a la media. Gana la primera que encaje, así que van de lo más concreto a lo más general.
 FAMILIAS = [
-    ("consolas", r"\bps[45]\b|playstation|nintendo switch|switch 2|\bxbox\b|steam deck|dualsense|joy-?con"),
+    ("consolas", r"\bconsolas?\b|\bps[45]\b|playstation|nintendo switch|switch 2|\bxbox\b|steam deck|dualsense|joy-?con"),
     ("videojuegos", r"videojuegos?|\bjuegos?\b|\bsteam\b|\bepic\b|\bgog\b|eshop"),
     ("moviles", r"smartphones?|m[oó]vil(?:es)?\b|iphone|\bgalaxy [sazm]\d|redmi|\bpoco [xfmc]\d|\bpixel \d|telefon[ií]a"),
     ("tablets", r"tablets?\b|\bipad\b|e-?readers?|kindle"),
@@ -2493,6 +2493,53 @@ def pesos_demanda(con, cfg=None, horas=6):
              for fam, n in total.items() if n >= f.get("peso_min_hilos", 20)}
     con.execute("INSERT OR REPLACE INTO meta VALUES ('pesos_demanda', ?)",
                 (json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": pesos}),))
+    con.commit()
+    return pesos
+
+
+def pesos_volumen(con, cfg=None, tienda=None, horas=6, min_calientes=10):
+    """{familia: peso} por VOLUMEN: cuántos hilos de la familia llegan a 200° (los de 500° cuentan doble) en esa
+    tienda, dividido por la media de las familias. Para el orden de lectura (categorías y búsquedas).
+    18/11/2026: la copia de Chollometro es casi toda caliente (Destacados y Subiendo solo traen lo que sube), así
+    que la tasa de pesos_demanda sale ~1 en todo y no ordenaba nada. Una familia sin hilos calientes en la
+    tienda pesa el mínimo; el texto sin familia, 1.0 (peso_de). Con menos de `min_calientes` hilos en la tienda,
+    los de todas las tiendas. Últimos `volumen_dias` (365). None si no hay datos o está apagado."""
+    f = (cfg or {}).get("filtros_codigo", {})
+    if not f.get("peso_por_demanda", True):
+        return None
+    clave = f"pesos_volumen:{tienda or '*'}"
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
+    if fila:
+        try:
+            guardado = json.loads(fila[0])
+            if datetime.fromisoformat(guardado["t"]) > datetime.now() - timedelta(hours=horas):
+                return guardado["p"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    grados = f.get("peso_grados", 200)
+    desde = (datetime.now() - timedelta(days=f.get("volumen_dias", 365))).timestamp()
+    sql, args = "SELECT titulo, temp FROM cm WHERE temp>=? AND publicado>=?", [grados, desde]
+    filas = []
+    if tienda:
+        nombre = raiz(tienda)
+        filtro = " AND (host LIKE ? OR lower(tienda) LIKE ? OR extra LIKE ?" + \
+                 (" OR extra LIKE '%\"linkHost\":\"amzn.%')" if nombre == "amazon" else ")")
+        filas = con.execute(sql + filtro, args + [f"%{nombre}%", f"%{nombre}%", f'%"linkHost":"%{nombre}%']).fetchall()
+    if len(filas) < min_calientes:
+        filas = con.execute(sql, args).fetchall()
+    if len(filas) < min_calientes:
+        return None
+    vol = Counter()
+    for titulo, temp in filas:
+        fam = familia_de(titulo)
+        if fam:
+            vol[fam] += 2 if (temp or 0) >= 500 else 1
+    if not vol:
+        return None
+    media = sum(vol.values()) / len(vol)
+    pesos = {fam: round(max(PESO_MIN, min(PESO_MAX, vol[fam] / media)), 2) for fam, _ in FAMILIAS}
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                (clave, json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": pesos})))
     con.commit()
     return pesos
 
@@ -3724,8 +3771,10 @@ def orden_catalogo(lista, pesos, max_turnos=4):
     if not pesos or len(lista) < 2:
         return list(lista)
     w = {u: peso_de(pesos, urlparse(u).path or u) for u in lista}
-    minimo = min(w.values())
-    veces = {u: max(1, min(max_turnos, round(w[u] / minimo))) for u in lista}
+    # Respecto a la de más peso (18/11/2026): respecto a la de menos, con pesos por volumen casi todas llegaban al
+    # tope de 4 y televisores, cafeteras y consolas salían igual.
+    maximo = max(w.values())
+    veces = {u: max(1, min(max_turnos, round(max_turnos * w[u] / maximo))) for u in lista}
     if len(set(veces.values())) == 1:
         return list(lista)
     total, credito, salida = sum(veces.values()), dict.fromkeys(lista, 0), []
@@ -3742,7 +3791,6 @@ def catalogo_turno(con, cfg, tiendas):
     """[(tienda, url)] de las categorías que tocan en esta ronda: una por tienda, por turnos, y solo si
     hace más de 'catalogo_cada_min' (60 por defecto) que se leyó la anterior de esa tienda.
     Las categorías con más demanda en Chollometro tienen más turnos (`orden_catalogo`)."""
-    pesos = pesos_demanda(con, cfg)
     cada_def = int((cfg or {}).get("catalogo_cada_min", 60))
     por_tienda = (cfg or {}).get("catalogo_por_tienda", {})  # {"pccomponentes.com": {"cada_min": 15, "por_ronda": 3}}
     cat = urls_catalogo()
@@ -3752,7 +3800,7 @@ def catalogo_turno(con, cfg, tiendas):
         lista = cat.get(t) or []
         if not lista:
             continue
-        lista = orden_catalogo(lista, pesos)
+        lista = orden_catalogo(lista, pesos_volumen(con, cfg, t))  # 18/11: por volumen de calientes en esa tienda
         cada = int(por_tienda.get(t, {}).get("cada_min", cada_def))
         cuantas = min(len(set(lista)), max(1, int(por_tienda.get(t, {}).get("por_ronda", 1))))
         fila = con.execute("SELECT v FROM meta WHERE k=?", (f"cat_ultimo:{t}",)).fetchone()
@@ -3794,43 +3842,13 @@ def ofertas_extra_turno(con, cfg, urls, tiendas):
     return salida
 
 
-def tasas_familia_tienda(con, tienda, grados=200, min_hilos=8, horas=6):
-    """{familia: tasa} de hilos de esa tienda en la copia de Chollometro que llegan a `grados`, más "_media"
-    (la de toda la tienda). Una familia con menos de `min_hilos` hilos se queda fuera (cuenta la media).
-    Caché de 6 h en meta."""
-    clave = f"tasas_familia:{tienda}"
-    fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
-    if fila:
-        try:
-            g = json.loads(fila[0])
-            if datetime.fromisoformat(g["t"]) > datetime.now() - timedelta(hours=horas):
-                return g["p"]
-        except (ValueError, KeyError, TypeError):
-            pass
-    nombre = raiz(tienda)
-    filas = con.execute("SELECT titulo, temp FROM cm WHERE host LIKE ? OR lower(tienda) LIKE ?",
-                        (f"%{nombre}%", f"%{nombre}%")).fetchall()
-    total, hot = Counter(), Counter()
-    for titulo, temp in filas:
-        fam = familia_de(titulo)
-        caliente = (temp or 0) >= grados
-        total["_media"] += 1
-        hot["_media"] += caliente
-        if fam:
-            total[fam] += 1
-            hot[fam] += caliente
-    tasas = {f: round(hot[f] / n, 3) for f, n in total.items() if n >= min_hilos or f == "_media"}
-    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
-                (clave, json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "p": tasas})))
-    return tasas
-
-
 def busquedas_turno(con, cfg, tiendas):
     """[(tienda, url)] de las búsquedas por familia que tocan en esta ronda (Miravia y AliExpress, 17/11/2026:
     "por categorías que más grados dan en Chollometro", 4 por ronda). Cada tienda tiene en tiendas.json
     (`busquedas_familia`) sus consultas agrupadas por familia; salen por turnos y la familia con más hilos a
     200° en esa tienda sale más a menudo: cada consulta avanza 1/tasa cada vez que se lee y se eligen las
-    `por_ronda` más atrasadas. Como mucho cada `cada_min` por tienda."""
+    `por_ronda` más atrasadas. Desde el 18/11 el peso es el volumen de hilos calientes (pesos_volumen).
+    Como mucho cada `cada_min` por tienda."""
     b = (cfg or {}).get("busquedas_familia") or {}
     por_ronda, cada = int(b.get("por_ronda", 4)), int(b.get("cada_min", 15))
     ahora, salida = datetime.now(), []
@@ -3841,8 +3859,8 @@ def busquedas_turno(con, cfg, tiendas):
         fila = con.execute("SELECT v FROM meta WHERE k=?", (f"busq_ultimo:{tienda}",)).fetchone()
         if fila and datetime.fromisoformat(fila[0]) > ahora - timedelta(minutes=cada):
             continue
-        tasas = tasas_familia_tienda(con, tienda, (cfg.get("filtros_codigo") or {}).get("peso_grados", 200))
-        media = tasas.get("_media") or 0.5
+        # 18/11/2026: por volumen de hilos calientes de la familia en esa tienda (la tasa salía ~1 en todas).
+        pesos = pesos_volumen(con, cfg, tienda) or {}
         fila = con.execute("SELECT v FROM meta WHERE k=?", (f"busq_pase:{tienda}",)).fetchone()
         try:
             pase = json.loads(fila[0]) if fila else {}
@@ -3854,7 +3872,7 @@ def busquedas_turno(con, cfg, tiendas):
         orden = sorted(range(len(consultas)), key=lambda i: (pase[consultas[i][1]], i))
         for i in orden[:por_ronda]:
             fam, q = consultas[i]
-            pase[q] += 1 / max(0.05, tasas.get(fam, media))
+            pase[q] += 1 / max(PESO_MIN, pesos.get(fam, 1.0))
             texto = q.strip().lower().replace(" ", d.get("espacio", "+"))
             salida.append((tienda, d["url"].format(q=quote(texto, safe="-+"))))
         pase = {q: round(pase[q], 3) for _, q in consultas if q in pase}  # sin consultas que ya no están
