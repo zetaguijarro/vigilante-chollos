@@ -4716,6 +4716,32 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/moda-hombre/ropa/"), 0.3)
 
+    def test_precioreal_acepta_el_mismo_televisor_con_otro_nombre(self):
+        """18/11/2026 (Zeta: "PrecioReal funciona, ¿por qué no lo usas?"): devolvía el televisor, pero el código
+        TQ77S93HATXXC no casaba con "S93H OLED 77"", y con el código entero salían otras series."""
+        p = {"nombre": 'TV OLED 195cm (77") Samsung TQ77S93HATXXC 4K Smart TV', "precio": 1886.0, "tienda": "elcorteingles.es"}
+        self.assertEqual(v.consulta_comparador(p), "samsung S93H 77")
+        rs = [{"nombre": "Samsung S93H OLED 65\" 4K Smart TV", "precio": 1399.0},
+              {"nombre": "Samsung S93H OLED 77\" 4K Smart TV", "precio": 1789.0},
+              {"nombre": "Samsung S95H OLED 77\" 4K Smart TV", "precio": 2379.0}]
+        self.assertEqual(v.precio_mismo_modelo(p, rs), 1789.0)
+        self.assertTrue(v.identificable({"nombre": "Loewe 100 ML", "precio": 77.0, "tienda": "douglas.es", "ean": None}))
+        self.assertFalse(v.identificable({"nombre": "Bolsita de fruta", "precio": 1.0, "tienda": "alcampo.es", "ean": None}))
+        # 503 de PrecioReal: se vuelve a pedir en vez de dar el producto por no encontrado
+        pedidas, orig = [], (v.descargar, v.time.sleep)
+
+        def descargar(url, *a, **k):
+            pedidas.append(url)
+            if len(pedidas) < 3:
+                raise OSError("HTTP Error 503: Service Unavailable")
+            return "<html></html>", url
+        v.descargar, v.time.sleep = descargar, lambda s: None
+        try:
+            self.assertIsNone(v.precioreal_red(p))
+        finally:
+            v.descargar, v.time.sleep = orig
+        self.assertEqual(len(pedidas), 3)
+
     def test_pccomtracker_sin_precio_oficial(self):
         """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""
         html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><a href="/goto/amazon?url='

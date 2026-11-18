@@ -2033,8 +2033,12 @@ def precio_mismo_modelo(p, resultados):
     """Precio más bajo del mismo modelo entre los resultados de un comparador. Menos de la mitad del
     precio de la tienda es casi siempre un accesorio con el mismo nombre (PETKIT Purobot a 7,19 € = bolsas)."""
     nombre = nombre_con_marca(p)
+    # 18/11/2026 (Zeta: "PrecioReal funciona, ¿por qué no lo usas?"): PrecioReal sí devolvía el producto, pero
+    # `mismo_modelo` lo rechazaba (TQ77S93HATXXC frente a "S93H OLED 77""). Vale también el comparador de hilos
+    # (`mismo_producto`: marca, modelo, serie y pulgadas de televisores, capacidades...).
     precios = [r["precio"] for r in resultados
-               if mismo_modelo(nombre, r["nombre"]) and r["precio"] >= p["precio"] * 0.5]
+               if (mismo_modelo(nombre, r["nombre"]) or mismo_producto(nombre, r["nombre"], p.get("marca")))
+               and r["precio"] >= p["precio"] * 0.5]
     return min(precios) if precios else None
 
 
@@ -2186,6 +2190,9 @@ def codigos_modelo(nombre):
 def consulta_comparador(p):
     """Marca + código de modelo si lo hay (el modelo suele ir al final del nombre); si no, el
     principio del nombre."""
+    tv = codigo_tv(p["nombre"])
+    if tv:  # "samsung S93H 77": con el código entero PrecioReal devolvía otros televisores de la serie
+        return f"{tv[0]} {tv[2]} {tv[1]}"
     codigos = lista_codigos(p["nombre"])
     if codigos:
         nombre = nombre_con_marca(p)
@@ -2205,7 +2212,11 @@ def identificable(p):
     if p.get("ean") or lista_codigos(p["nombre"]):
         return True
     rx = regex_marcas()
-    return bool(rx and rx.search(nombre_con_marca(p).lower()))
+    if rx and rx.search(nombre_con_marca(p).lower()):
+        return True
+    # Marca del cotejo (perfumería, supermercado, herramientas...) más un modelo o una medida concretos: sirve para
+    # buscar en PrecioReal (18/11/2026); sin nada más que la marca ("Loewe 100 ML" ya lo tiene, "HERO bolsita" no).
+    return bool(marca_y_modelo(p["nombre"], p.get("marca"))[0] and re.search(r"\d", p["nombre"]))
 
 
 def precioreal_red(p):
@@ -2213,12 +2224,18 @@ def precioreal_red(p):
     precio, None si no está el mismo modelo, o False si la consulta falló."""
     if not identificable(p):
         return None  # genérico: cualquier coincidencia sería otro producto
-    try:
-        html, url = descargar(PRECIOREAL_BUSQUEDA.format(q=quote_plus(consulta_comparador(p))))
-        time.sleep(1)
-    except Exception as e:
-        log(f"precioreal {p['nombre'][:60]}: {e}")
-        return False
+    html = url = None
+    for intento in range(3):  # 503 o 429: PrecioReal limita el ritmo; se espera y se vuelve a pedir
+        try:
+            html, url = descargar(PRECIOREAL_BUSQUEDA.format(q=quote_plus(consulta_comparador(p))))
+            time.sleep(1)
+            break
+        except Exception as e:
+            if intento < 2 and re.search(r"\b(?:503|429|502|504)\b|timed out", str(e)):
+                time.sleep(4 * (intento + 1))
+                continue
+            log(f"precioreal {p['nombre'][:60]}: {e}")
+            return False
     return precio_mismo_modelo(p, extraer(html, url))
 
 
