@@ -74,6 +74,14 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
+- **Modo Clásico de la guía "Cómo leer y comprobar ofertas" (18/11/2026), solo comprobación y filtros** (Zeta: "luego hablamos del resto"; lectura, tandas y entrega siguen como estaban). En código (`CLASICO`, `umbrales_clasico`, `historico_clasico_ok`, `anunciado_moda_ok`, ronda y `decidir_item`):
+  - SUBIENDO: tecnología, electro, hogar, juguetes, deporte, videojuegos físicos y relojes 20 % (bajo el habitual o frente a otras tiendas); consumibles 20 % por unidad; moda 40 % anunciado (30 % en marcas con gancho: 30+ hilos de 200° en la copia) y 15 % frente a otras tiendas, 3 tallas. Con mínimo histórico, como mucho un 15 % por encima.
+  - DESTACADOS: 25 % (consumibles 30 %; moda 50 % anunciado y 25 %, 4 tallas de calzado o 3 de ropa), como mucho un 8 % sobre el mínimo, y el mejor precio frente a otras tiendas.
+  - EXCEPCIONAL: mínimo histórico verificado; el "Más bajo" de 30 días de Amazon no cuenta como histórico.
+  - Cosmética: solo grandes chollos (30 %). Juegos digitales 80 % (también PS Store). Videojuegos físicos 20 %.
+  - Fuera el ahorro mínimo en euros (la guía no lo pide). Duplicados: otra tienda no es duplicado, salvo El Corte Inglés/Hipercor; misma tienda, la regla de Chollometro.
+  - Se mantiene "moda sin comparador con 70 % anunciado" (decisión anterior de Zeta, conflicto 7 del SPEC).
+
 - Sin modo Morralla y sin tope de precio. Formato de ficha: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026. Sin foto del producto se entrega igual y se declara en la INFO ("⚠️ Sin foto verificada del producto."): autorizado por Zeta el 17/11/2026.
 
 - AliExpress: se admiten vendedores terceros si la tienda tiene buenas ventas y reseñas.

@@ -98,7 +98,7 @@
   ],
   "precio_sospechoso": 0.4,
   "repetido_horas": 24,
-  "ahorro_min_eur": 5,
+  "ahorro_min_eur": 0,
   "historial_propio_dias": 14,
   "bajada_min_propia": 0.1,
   "error_precio_dias_min": 1,
@@ -512,6 +512,9 @@
    "descuento_min": 0.8,
    "antes_min_eur": 15
   },
+  "store.playstation.com/es-es": {
+   "descuento_min": 0.8
+  },
   "humblebundle.com": {
    "descuento_min": 0.8,
    "antes_min_eur": 15
@@ -630,7 +633,7 @@
     "store.playstation.com/es-es",
     "humblebundle.com"
    ],
-   "descuento_min": 0.5,
+   "descuento_min": 0.2,
    "exigir_descuento": true,
    "exigir_marca": false,
    "sin_idealo": true,
@@ -669,7 +672,7 @@
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.6,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15,
    "apartadas": {
     "aldi.es": "0 productos en todas sus lecturas del 17/11/2026 (23); apartada para no gastar tiempo de navegador.",
@@ -713,7 +716,7 @@
     "manomano.es": "Errores en todas sus lecturas (stats 7-18/11/2026).",
     "laredoute.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15
   },
   "salud_belleza": {
@@ -747,7 +750,7 @@
     "yves-rocher.es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "es.iherb.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15
   },
   "moda": {
@@ -793,7 +796,7 @@
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15,
    "sin_precioreal": true,
    "_nota_sin_precioreal": "17/11/2026: PrecioReal empareja por modelo, sin color, lavado ni talla (Levi's 726 a 44,95 € contra 63 € de una ficha que ya no existía). No cuenta como contraste en esta categoría; sí Idealo, el histórico propio y la demanda probada."
@@ -844,7 +847,7 @@
     "motocard.com": "Sin demanda: 13 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "sportsdirect.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15,
    "sin_precioreal": true,
    "_nota_sin_precioreal": "17/11/2026: PrecioReal empareja por modelo, sin color, lavado ni talla (Levi's 726 a 44,95 € contra 63 € de una ficha que ya no existía). No cuenta como contraste en esta categoría; sí Idealo, el histórico propio y la demanda probada."
@@ -860,7 +863,7 @@
    "exigir_precio_mercado": false,
    "descuento_min_sin_mercado": 0.7,
    "_nota_filtros": "Sin comparador fiable (PrecioReal apenas cubre esta categoría): si hay precio de mercado tiene que estar por debajo; si no, solo pasa con descuento_min_sin_mercado. Sin filtro de marca: marcas.txt es de tecnología.",
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15,
    "apartadas": {
     "eurekakids.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
@@ -891,7 +894,7 @@
     "bitiba.es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "piensoymascotas.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
    },
-   "ahorro_min_eur": 15,
+   "ahorro_min_eur": 0,
    "min_bajo_mercado": 0.15
   },
   "viajes": {

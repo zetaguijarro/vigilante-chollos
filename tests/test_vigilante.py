@@ -1177,7 +1177,7 @@ class Rondas(Base):
                            {"n": "Cosori Freidora 5,5 L", "p": 79.99, "a": 99.99, "ld": False}],
             "pccomponentes": [{"n": "Xiaomi Redmi Buds 6 Pro", "m": "Xiaomi", "e": "6941812790000", "p": 41.99, "a": 79.99}],
         }
-        self.red.idealo = {"6941812790000": "41,50"}
+        self.red.idealo = {"6941812790000": "45,00"}  # 34,99 € = 22 % menos (guía: 20 %)
 
     def test_primera_ronda_solo_memoriza(self):
         self.preparar()
@@ -1198,7 +1198,7 @@ class Rondas(Base):
         c = self.ronda()
         self.assertEqual(len(c), 1, "mismo EAN en 2 tiendas: solo el más barato")
         self.assertEqual((c[0]["t"], c[0]["p"], c[0]["id"], c[0]["ch"], c[0]["baja"]),
-                         ("mediamarkt.es", 34.99, 41.5, "no", 1))
+                         ("mediamarkt.es", 34.99, 45.0, "no", 1))
         self.assertLess(len(json.dumps(c, separators=(",", ":"))), 400, "JSON compacto")
 
     def test_no_repite_si_sube_y_vuelve_a_bajar(self):
@@ -1218,7 +1218,7 @@ class Rondas(Base):
         self.preparar()
         self.ronda()
         self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0})
-        self.red.idealo["6925281993145"] = "85,00"
+        self.red.idealo["6925281993145"] = "99,00"
         c = self.ronda()
         self.assertEqual([x["n"] for x in c], ["JBL Flip 6"])
         self.assertNotIn("baja", c[0])
@@ -1250,12 +1250,12 @@ class Rondas(Base):
         self.preparar()
         self.ronda()
         self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0})
-        self.red.tiendas["precioreal"] = [{"n": "JBL Flip 6", "m": "JBL", "p": 95.0, "a": 139.0}]
-        self.red.idealo["6925281993145"] = "85,00"
+        self.red.tiendas["precioreal"] = [{"n": "JBL Flip 6", "m": "JBL", "p": 99.0, "a": 139.0}]
+        self.red.idealo["6925281993145"] = "99,00"
         antes = self.red.llamadas["idealo"]
         c = self.ronda()
         self.assertEqual([x["n"] for x in c], ["JBL Flip 6"])
-        self.assertEqual(c[0]["id"], 95.0, "el precio de mercado es el de PrecioReal")
+        self.assertEqual(c[0]["id"], 99.0, "el precio de mercado es el de PrecioReal")
         self.assertEqual(self.red.llamadas["idealo"], antes, "con PrecioReal no se consulta Idealo")
 
     def test_sin_precio_de_mercado_no_se_envia(self):
@@ -1268,7 +1268,7 @@ class Rondas(Base):
         self.red.tiendas["mediamarkt"] += [
             {"n": "Sony WF-C710N", "m": "Sony", "p": 89.0, "a": 199.0},          # sin Idealo: fuera
             {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]
-        self.red.idealo["6925281993145"] = "85,00"                               # con Idealo: pasa
+        self.red.idealo["6925281993145"] = "99,00"                               # con Idealo: pasa
         self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
 
     def _exigir_mercado(self):
@@ -1333,7 +1333,7 @@ class Rondas(Base):
         self.red.tiendas["mediamarkt"] += [
             {"n": "LG QNED70 43", "m": "LG", "e": "8806096000001", "p": 348.12, "a": 449.0},
             {"n": "LG QNED80 50", "m": "LG", "e": "8806096000002", "p": 399.0, "a": 549.0}]
-        self.red.idealo.update({"8806096000001": "339,00", "8806096000002": "449,00"})
+        self.red.idealo.update({"8806096000001": "339,00", "8806096000002": "520,00"})  # 399 € = 23 % menos
         self.assertEqual([x["n"] for x in self.ronda()], ["LG QNED80 50"])
 
     def test_amazon_deals_en_script(self):
@@ -1958,7 +1958,8 @@ class Rondas(Base):
 
     def test_ya_publicado_igual_o_mas_barato(self):
         # Caso real: Endzone en GOG a 1,99 € con Chollometro ya a 1,06 €: Hermes siempre lo descartaba.
-        self.assertTrue(v.ya_publicado_igual_o_mas_barato("otra:1.06", 1.99))
+        # Guía del 18/11/2026: otra tienda no es duplicado (antes se descartaba el Endzone de GOG a 1,99 €).
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:1.06", 1.99))
         self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:2", 1.99))
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:6", 0.99), "ahora más barato: sí")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("no", 5))
@@ -1972,7 +1973,8 @@ class Rondas(Base):
         self.ronda()
         self.red.tiendas["mediamarkt"][0]["p"] = 34.99
         self.red.chollometro = [hilo("Xiaomi Redmi Buds 6 Pro", "Amazon", 33.0)]
-        self.assertEqual(self.ronda(), [])
+        c = self.ronda()  # guía del 18/11/2026: publicado en otra tienda no es duplicado
+        self.assertEqual([x["ch"] for x in c], ["otra:33"])
 
     def test_ahorro_minimo_en_euros(self):
         # Caso real: cuchillo Arcos a 10,99 € con el mercado a 11,96 €: 1 € de ahorro no es chollo.
@@ -1982,9 +1984,9 @@ class Rondas(Base):
         self.preparar()
         self.ronda()
         self.red.tiendas["mediamarkt"] += [
-            {"n": "JBL Go 4", "m": "JBL", "e": "6925281900001", "p": 30.0, "a": 49.0},       # mercado 33: 3 €
-            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]    # mercado 95: 16 €
-        self.red.idealo.update({"6925281900001": "33,00", "6925281993145": "95,00"})
+            {"n": "JBL Go 4", "m": "JBL", "e": "6925281900001", "p": 12.0, "a": 29.0},       # mercado 15,50: 3,50 €
+            {"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 139.0}]    # mercado 99: 20 €
+        self.red.idealo.update({"6925281900001": "15,50", "6925281993145": "99,00"})
         self.assertEqual([x["n"] for x in self.ronda()], ["JBL Flip 6"])
         self.assertTrue(v.ahorro_suficiente({"precio": 0, "gratis": True}, None, {}, {"ahorro_min_eur": 5}))
         self.assertFalse(v.ahorro_suficiente({"precio": 3.89, "precio_antes": 14.99}, None,
@@ -2576,7 +2578,7 @@ class ModoTelegram(Base):
         self.red.tiendas = {"mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro Negro", "m": "Xiaomi", "e": "6941812790000",
                                             "p": 39.99, "a": 79.99}],
                             "pccomponentes": []}
-        self.red.idealo = {"6941812790000": "41,50"}
+        self.red.idealo = {"6941812790000": "45,00"}  # 34,99 € = 22 % menos (guía: 20 %)
 
     def tearDown(self):
         v.enviar_telegram, v.token_telegram = self._orig_tg
@@ -2689,9 +2691,11 @@ class ModoTelegram(Base):
 
     def test_decidir_sin_historico(self):
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
-        d = v.decidir_item(self._item(id=41.5), cfg)
+        d = v.decidir_item(self._item(id=38.5), cfg)  # 22 % menos que otras tiendas
         self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "SUBIENDO"))
         self.assertIn("otras tiendas", d["prueba"])
+        d = v.decidir_item(self._item(id=41.5), cfg)  # 28 %: llega al 25 % de DESTACADOS y es el mejor precio
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "DESTACADOS"))
         d = v.decidir_item(self._item(id=33.0), cfg)
         self.assertEqual(d["veredicto"], "descartado")
         self.assertIn("solo un 9 % por debajo del mercado", d["motivo"])
@@ -2702,6 +2706,38 @@ class ModoTelegram(Base):
         self.assertIn("sin prueba de ventaja", d["motivo"])
         d = v.decidir_item(self._item(gratis=1), cfg)
         self.assertEqual(d["veredicto"], "pasa")
+
+    def test_guia_modo_clasico(self):
+        """Guía "Cómo leer y comprobar ofertas" (18/11/2026), apartados 3 y 4."""
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        u = v.CLASICO["tec"]
+        # Con histórico: 20 % bajo el habitual y como mucho un 15 % sobre el mínimo.
+        self.assertTrue(v.historico_clasico_ok(79.0, 100.0, 70.0, u))
+        self.assertFalse(v.historico_clasico_ok(85.0, 100.0, 70.0, u), "solo un 15 % bajo el habitual")
+        self.assertFalse(v.historico_clasico_ok(79.0, 100.0, 60.0, u), "un 32 % por encima de su mínimo")
+        # Moda: 40 % anunciado por la tienda (30 % con gancho) y tallas (3; 4 en calzado para DESTACADOS).
+        moda = dict(n="Zapatillas Joma Kaiser", t="adidas.es", p=60.0, id=80.0,
+                    ficha={"precio_ahora": 60.0, "titulo": "Zapatillas Joma Kaiser",
+                           "variantes": ["41: hay stock", "42: hay stock", "43: hay stock"]})
+        d = v.decidir_item(self._item(**moda, a=85.0), cfg)
+        self.assertEqual(d["veredicto"], "descartado")
+        self.assertIn("anuncia un 29 %", d["motivo"])
+        d = v.decidir_item(self._item(**moda, a=130.0), cfg)  # 54 % anunciado, 25 % frente a otras tiendas
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "SUBIENDO"), "3 tallas de calzado: no DESTACADOS")
+        moda["ficha"]["variantes"].append("44: hay stock")
+        self.assertEqual(v.decidir_item(self._item(**moda, a=130.0), cfg)["etiqueta"], "DESTACADOS")
+        # Un mínimo de 30 días no es el mínimo histórico: no da EXCEPCIONAL.
+        h = {"minimo": 30.0, "habitual": 40.0, "fuente": "Amazon", "min_30d": True}
+        d = v.decidir_item(self._item(id=45.0, historico=h), cfg)
+        self.assertEqual((d["veredicto"], d["etiqueta"]), ("pasa", "DESTACADOS"))
+        self.assertEqual(v.decidir_item(self._item(id=45.0, historico={**h, "min_30d": False}), cfg)["etiqueta"],
+                         "EXCEPCIONAL")
+        # DESTACADOS exige el mejor precio: otra tienda más barata lo deja en SUBIENDO.
+        self.assertEqual(v.decidir_item(self._item(id=29.0, historico={"habitual": 40.0}), cfg)["etiqueta"], "SUBIENDO")
+        # Cosmética: solo grandes chollos (30 %).
+        self.assertEqual(v.clase_clasico(cfg, "druni.es", "Eau de parfum Carolina Herrera 100 ml"), "cosmetica")
+        self.assertEqual(v.decidir_item(self._item(n="Eau de parfum Carolina Herrera 100 ml", t="druni.es",
+                                                   historico={"habitual": 40.0}), cfg)["veredicto"], "descartado")
 
     def test_decidir_descartes_y_sin_validar(self):
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
@@ -2721,7 +2757,7 @@ class ModoTelegram(Base):
         self.assertEqual(d["veredicto"], "descartado")
         self.assertEqual(v.decidir_item({"num": 9, "error": "no existe"}, cfg)["veredicto"], "descartado")
         # Moda: tallas de Chollometro (3 en calzado) y filtro del 15 % frente a otras tiendas.
-        zap = dict(n="Zapatillas adidas Gazelle", t="adidas.es", p=60.0, id=75.0)
+        zap = dict(n="Zapatillas adidas Gazelle", t="adidas.es", p=60.0, id=75.0, a=110.0)  # moda: 45 % anunciado
         d = v.decidir_item(self._item(**zap, ficha={"precio_ahora": 60.0, "titulo": "Zapatillas adidas Gazelle",
                                                     "variantes": ["41: hay stock", "42: hay stock", "43: agotada"]}), cfg)
         self.assertEqual(d["veredicto"], "descartado")
@@ -2741,7 +2777,7 @@ class ModoTelegram(Base):
         con.close()
         self.enviados.clear()
         orig = v.dossier_items
-        item = self._item(num=n, id=41.5, a=59.99, img="https://img/x.jpg",
+        item = self._item(num=n, id=38.5, a=59.99, img="https://img/x.jpg",
                           ficha={"specs": ["Autonomía: 36 h", "Bluetooth: 5.3"], "resumen": "Auriculares con cancelación de ruido."},
                           buscar_chollometro={"nombre": "https://www.chollometro.com/search?q=x"})
         try:
@@ -2772,7 +2808,7 @@ class ModoTelegram(Base):
             info = textos[4]
             self.assertTrue(info.startswith("🏷️ SUBIENDO"))
             self.assertIn("💶 30 € frente a PVP de 59,99 €: -50 % sobre esa referencia, no sobre habitual probado.", info)
-            self.assertIn("📉 Comparación puntual: siguiente precio en otras tiendas 41,50 €", info)
+            self.assertIn("📉 Comparación puntual: siguiente precio en otras tiendas 38,50 €", info)
             self.assertRegex(info, r"🕒 Detectada \S+ · Enviada \d\d:\d\d del \d\d/\d\d/\d{4}")
             self.assertIn("🔎 Chollometro: no localizado en la consulta. Búsqueda manual: https://www.chollometro.com/search", info)
             for proceso in ("Comprobado:", "Prueba:", "PENDIENTE", "Precio inicial publicado"):
@@ -2944,7 +2980,7 @@ class ModoTelegram(Base):
         self.ronda()
         self.red.tiendas["mediamarkt"][0]["p"] = 34.99
         self.red.tiendas["mediamarkt"].append({"n": "JBL Flip 6", "m": "JBL", "e": "6925281993145", "p": 79.0, "a": 149.0})
-        self.red.idealo["6925281993145"] = "95,00"
+        self.red.idealo["6925281993145"] = "99,00"
         self.ronda()
         self.assertEqual(len(self.enviados), 2)
         for (_, texto, _), teclado in zip(self.enviados, self.teclados):
@@ -2989,7 +3025,7 @@ class ModoTelegram(Base):
         self.assertEqual(chat, "456808276")
         self.assertIn("#1 · mediamarkt.es", texto)
         self.assertIn("34.99 € (referencia de la tienda: 79.99 €, -56 %)", texto)
-        self.assertIn("Mercado: 41.5 €", texto)
+        self.assertIn("Mercado: 45 €", texto)
         self.assertEqual(json.loads(self.teclados[0])["inline_keyboard"][0][0]["callback_data"], "vg:verifica:1")
         self.assertTrue(foto.endswith("/img.jpg"))
         n = sqlite3.connect(v.DB).execute("SELECT COUNT(*) FROM cupo").fetchone()[0]

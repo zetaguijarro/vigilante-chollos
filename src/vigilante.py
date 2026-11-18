@@ -6260,7 +6260,8 @@ def dossier_items(ids, ficha_manual=None):
                             # Amazon: "Mediano" (90 días) o "Más bajo" (30 días) de su precio tachado.
                             minimo = c["a"] if c["rt"] == "mas_bajo" else None
                             h = {"minimo": minimo, "habitual": c["a"], "fuente": REF_TIENDA_HISTORICO[c["rt"]],
-                                 "es_minimo": bool(minimo and (ahora or c["p"]) <= minimo * 1.03)}
+                                 "es_minimo": bool(minimo and (ahora or c["p"]) <= minimo * 1.03),
+                                 "min_30d": c["rt"] == "mas_bajo"}
                     if h:
                         item["historico"] = h
                 except Exception as e:
@@ -6288,12 +6289,21 @@ def dossier_items(ids, ficha_manual=None):
 # Zeta (17/11/2026): el "verifica" no tiene que pasar entero por una IA. Los filtros son una tabla de
 # porcentajes: los aplica el código, sin interpretaciones (el #189, un 25 % bajo su habitual, lo descartó
 # la IA leyendo mal una frase). La IA solo redacta el título y la descripción de lo que pasa.
+# Guía "Cómo leer y comprobar ofertas" del 18/11/2026 (Zeta: "solo aplica la comprobación y los filtros en modo
+# clásico"). subiendo/destacados: bajada sobre el habitual acreditado; mercado: ventaja frente a otras tiendas.
+# Moda: además, descuento anunciado por la tienda (40 %, 30 % en marcas con gancho; 50 % en DESTACADOS) y tallas.
+# Cosmética: "solo grandes chollos" (el listón de DESTACADOS de consumibles para todo).
 CLASICO = {
     "tec": {"subiendo": 0.20, "destacados": 0.25, "mercado": 0.20},
     "consumible": {"subiendo": 0.20, "destacados": 0.30, "mercado": 0.20},
-    "moda": {"subiendo": 0.30, "destacados": 0.50, "mercado": 0.15, "mercado_destacados": 0.25},
+    "cosmetica": {"subiendo": 0.30, "destacados": 0.30, "mercado": 0.30},
+    "moda": {"subiendo": 0.15, "destacados": 0.25, "mercado": 0.15, "mercado_destacados": 0.25,
+             "anunciado": 0.40, "anunciado_gancho": 0.30, "anunciado_destacados": 0.50},
     "digital": {"subiendo": 0.80, "destacados": 0.80, "mercado": 0.80},
 }
+TALLAS_SUBIENDO = {"calzado": 3, "ropa": 3}
+TALLAS_DESTACADOS = {"calzado": 4, "ropa": 3}
+MARCA_GANCHO_HILOS = 30  # hilos de 200° o más en la copia para que una marca de moda "tenga gancho"
 SOBRE_MINIMO_SUBIENDO, SOBRE_MINIMO_DESTACADOS = 0.15, 0.08
 RE_TIENDA_DIGITAL = re.compile(r"steampowered|epicgames|gog\.com|humblebundle|instant-gaming|eneba|gamesplanet|"
                                r"store\.playstation|nintendo\.com|ubisoft|xbox\.com", re.I)
@@ -6308,9 +6318,64 @@ def clase_clasico(cfg, tienda, nombre):
     fam = familia_de(nombre)
     if fam in ("calzado", "ropa", "bolsos") or cat == "moda":
         return "moda"
-    if fam in ("higiene", "alimentacion", "bebidas", "perfumes") or cat in ("supermercado", "salud_belleza"):
+    if fam == "perfumes" or (cat == "salud_belleza" and fam not in ("higiene", "alimentacion", "bebidas")):
+        return "cosmetica"
+    if fam in ("higiene", "alimentacion", "bebidas") or cat in ("supermercado", "salud_belleza"):
         return "consumible"
     return "tec"
+
+
+def umbrales_clasico(cfg, tienda, nombre):
+    """(clase, umbrales) del Modo Clásico para un producto; `filtros_codigo.clasico.<clase>` los ajusta."""
+    clase = clase_clasico(cfg, tienda, nombre)
+    return clase, {**CLASICO[clase], **(cfg or {}).get("filtros_codigo", {}).get("clasico", {}).get(clase, {})}
+
+
+_GANCHO = {}
+
+
+def marca_con_gancho(nombre):
+    """¿La marca del producto tiene gancho en Chollometro (al menos MARCA_GANCHO_HILOS hilos de 200° en la copia)?
+    Para la excepción de moda del 30 % anunciado."""
+    rx = rx_marcas()
+    marcas = set(rx.findall(sin_tildes((nombre or "").lower()))) if rx else set()
+    if not marcas:
+        return False
+    if DB not in _GANCHO:
+        _GANCHO[DB] = {}
+    cache = _GANCHO[DB]
+    for m in marcas:
+        if m not in cache:
+            try:
+                con = bd()
+                try:
+                    cache[m] = con.execute("SELECT COUNT(*) FROM cm WHERE temp >= 200 AND lower(titulo) LIKE ?",
+                                           (f"%{m}%",)).fetchone()[0]
+                finally:
+                    con.close()
+            except Exception:
+                cache[m] = 0
+        if cache[m] >= MARCA_GANCHO_HILOS:
+            return True
+    return False
+
+
+def anunciado_moda_ok(u, nombre, impreso, destacados=False):
+    """Moda: el descuento anunciado por la tienda llega al de la guía (40 %, 30 % con gancho, 50 % en DESTACADOS)."""
+    if impreso is None:
+        return False
+    if destacados:
+        return impreso >= u["anunciado_destacados"] - 0.005
+    minimo = u["anunciado_gancho"] if marca_con_gancho(nombre) else u["anunciado"]
+    return impreso >= minimo - 0.005
+
+
+def historico_clasico_ok(precio, habitual, minimo, u):
+    """Con histórico: al menos `subiendo` bajo el habitual acreditado y, si hay mínimo histórico, como mucho un 15 %
+    por encima de él."""
+    if not habitual or precio > habitual * (1 - u["subiendo"] + 0.005):
+        return False
+    return not minimo or precio <= minimo * (1 + SOBRE_MINIMO_SUBIENDO)
 
 
 def _pct(x):
@@ -6348,18 +6413,25 @@ def decidir_item(item, cfg=None):
     if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, precio):
         return fin("descartado", f"ya está en Chollometro ({ch}) y ahora cuesta {precio:g} €: misma tienda solo si "
                                  f"baja más de un 5 % y más de 1 €; otra tienda, si ahora es más barato", memoria="dudosa")
-    clase = clase_clasico(cfg, item.get("t"), item.get("n", ""))
-    u = {**CLASICO[clase], **(cfg or {}).get("filtros_codigo", {}).get("clasico", {}).get(clase, {})}
+    clase, u = umbrales_clasico(cfg, item.get("t"), item.get("n", ""))
     fam = familia_de(item.get("n", ""))
     tallas = [v for v in ficha.get("variantes") or [] if not v.endswith("agotada")]
+    pocas_tallas = False  # sin las de DESTACADOS no pasa de SUBIENDO
     if fam in ("calzado", "ropa") and ficha.get("variantes"):
-        minimo_tallas = 3 if fam == "calzado" else 2
-        if len(tallas) < minimo_tallas:
-            return fin("descartado", f"quedan {len(tallas)} tallas con stock y Chollometro exige {minimo_tallas} "
+        if len(tallas) < TALLAS_SUBIENDO[fam]:
+            return fin("descartado", f"quedan {len(tallas)} tallas con stock y se exigen {TALLAS_SUBIENDO[fam]} "
                                      f"en {'calzado' if fam == 'calzado' else 'ropa'}", memoria="caducada")
+        pocas_tallas = len(tallas) < TALLAS_DESTACADOS[fam]
     if item.get("gratis"):
         return fin("pasa", "gratis", etiqueta="SUBIENDO", prueba="gratis", precio=precio, clase=clase)
-    h = item.get("historico") or {}
+    impreso = (item["a"] - precio) / item["a"] if item.get("a") and item["a"] > precio else None
+    if clase == "moda" and not anunciado_moda_ok(u, item.get("n", ""), impreso):
+        return fin("descartado", f"moda: la tienda anuncia un {_pct(impreso or 0)} de descuento y se exige un "
+                                 f"{_pct(u['anunciado_gancho'] if marca_con_gancho(item.get('n', '')) else u['anunciado'])}"
+                                 f"{cambio}", memoria=mem)
+    h = dict(item.get("historico") or {})
+    if h.get("min_30d"):
+        h["minimo"] = None  # un mínimo de 30 días no es el mínimo histórico (guía, 3)
     mercado, etiqueta, prueba, fallo = item.get("id"), None, None, None
     if h.get("habitual"):
         baja = (h["habitual"] - precio) / h["habitual"]
@@ -6373,8 +6445,10 @@ def decidir_item(item, cfg=None):
                                      f"y se admite hasta un {_pct(SOBRE_MINIMO_SUBIENDO)}{cambio}", memoria=mem)
         if sobre is not None and sobre <= 0.03 and mercado and precio < mercado:
             etiqueta = "EXCEPCIONAL"
-        elif baja >= u["destacados"] - 0.005 and (sobre is None or sobre <= SOBRE_MINIMO_DESTACADOS):
-            etiqueta = "DESTACADOS"
+        elif (baja >= u["destacados"] - 0.005 and (sobre is None or sobre <= SOBRE_MINIMO_DESTACADOS)
+              and (not mercado or precio <= mercado) and not pocas_tallas
+              and (clase != "moda" or anunciado_moda_ok(u, item.get("n", ""), impreso, destacados=True))):
+            etiqueta = "DESTACADOS"  # y el mejor precio frente a otras tiendas
         else:
             etiqueta = "SUBIENDO"
         prueba = (f"histórico de {fuente}: habitual {h['habitual']:g} €"
@@ -6383,10 +6457,12 @@ def decidir_item(item, cfg=None):
     elif mercado:
         ventaja = (mercado - precio) / mercado
         if ventaja >= u["mercado"] - 0.005:
-            impreso = (item["a"] - precio) / item["a"] if item.get("a") and item["a"] > precio else 0
             if h.get("minimo") and precio <= h["minimo"] * 1.03:
                 etiqueta = "EXCEPCIONAL"
-            elif clase == "moda" and impreso >= u["destacados"] and ventaja >= u.get("mercado_destacados", 1):
+            elif clase == "moda" and not pocas_tallas and anunciado_moda_ok(u, item.get("n", ""), impreso, True) \
+                    and ventaja >= u.get("mercado_destacados", 1) - 0.005:
+                etiqueta = "DESTACADOS"
+            elif clase != "moda" and ventaja >= u["destacados"] - 0.005:
                 etiqueta = "DESTACADOS"
             else:
                 etiqueta = "SUBIENDO"
@@ -6850,7 +6926,7 @@ def ya_publicado_igual_o_mas_barato(ch, precio):
         return False
     if ch.startswith("misma:"):
         return not (precio < x * 0.95 and x - precio > 1)
-    return x <= precio * 1.02
+    return False  # guía del 18/11/2026: otra tienda no es duplicado (El Corte Inglés/Hipercor ya cuentan como misma)
 
 
 def normalizar_nota(v):
@@ -7390,6 +7466,7 @@ def ronda(categoria, solo=None):
             # configuración. Sin RAM ni capacidad en el nombre, el precio del comparador no es del mismo producto.
             log(f"configuración sin concretar, no se compara con el mercado: {p['tienda']} {p['nombre'][:60]}")
             mejor = None
+        clase_c, u_c = umbrales_clasico(cfg, p["tienda"], p["nombre"])  # Modo Clásico (guía del 18/11/2026)
         mp = p.get("_mp")
         if mp and not sin_idealo and mejor is None:
             # Sin comparador: el mismo EAN en otra tienda que lee el vigilante sirve de precio de mercado.
@@ -7410,7 +7487,7 @@ def ronda(categoria, solo=None):
         elif mejor is not None:
             # Más barato que el mercado, no "parecido": LG QNED70 a 348 € con el mercado a 339 € pasaba
             # porque la tienda enseñaba un PVPR de 449 €. El "antes" de la tienda ya no cuenta aquí.
-            ok = p.get("error_precio") or p["precio"] <= mejor * (1 - cat_cfg.get("min_bajo_mercado", min_bajo))
+            ok = p.get("error_precio") or p["precio"] <= mejor * (1 - u_c["mercado"] + 0.005)
         elif p.get("historico_url") and not (p.get("_pcct_otra") and p.get("_camel")) \
                 and (ref := _historico_seguro(p["historico_url"])):
             # Sin precio de mercado pero con el historial de la propia tienda (PcComponentes por PCComTracker):
@@ -7418,12 +7495,12 @@ def ronda(categoria, solo=None):
             p["_hist"] = ref
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
-            ok = p["precio"] <= ref["minimo"] * 1.03 or bool(ref.get("habitual") and p["precio"] <= ref["habitual"] * 0.9)
+            ok = historico_clasico_ok(p["precio"], ref.get("habitual"), ref.get("minimo"), u_c)
         elif (cc := p.get("_camel")):
             # Amazon por CamelCamelCamel: como PCComTracker, cerca de su mínimo o claramente bajo su media.
             p["_hist"] = {"habitual": cc.get("media"), "minimo": cc["minimo"], "minimo_fecha": cc.get("minimo_fecha"),
                           "fuente_corta": "CamelCamelCamel"}
-            ok = p["precio"] <= cc["minimo"] * 1.03 or bool(cc.get("media") and p["precio"] <= cc["media"] * 0.9)
+            ok = historico_clasico_ok(p["precio"], cc.get("media"), cc["minimo"], u_c)
         elif (ok_ref := contraste_ref_tienda(p, f)) is not None:
             ok = ok_ref
         elif p.get("_hp") and p["_hp"]["habitual"] and not sin_idealo:
@@ -7431,7 +7508,7 @@ def ronda(categoria, solo=None):
             # que costó al menos 7 días antes de la bajada). Es lo que mira el soporte de Chollometro.
             hp = p["_hp"]
             p["_hist"] = {"habitual": hp["habitual"], "minimo": hp["minimo"], "fuente_corta": "historial del vigilante"}
-            ok = p["precio"] <= hp["habitual"] * (1 - f.get("bajada_min_habitual", 0.20))
+            ok = p["precio"] <= hp["habitual"] * (1 - u_c["subiendo"] + 0.005)
         elif cat_cfg.get("exigir_precio_mercado", f.get("exigir_precio_mercado", True)) and not p.get("error_precio"):
             # Sin precio de mercado no se puede saber si el "antes" de la tienda es real (Sony WF-C710N:
             # "antes 199 €" con el mercado a 71,95 €). Regla de Zeta: sin contraste claro, no se envía.
@@ -7450,7 +7527,7 @@ def ronda(categoria, solo=None):
             # La otra tienda también ha bajado (promoción de marca, Black Friday): lo que cuenta es el habitual.
             hp = p["_hp"]
             p["_hist"] = {"habitual": hp["habitual"], "minimo": hp["minimo"], "fuente_corta": "historial del vigilante"}
-            ok = p["precio"] <= hp["habitual"] * (1 - f.get("bajada_min_habitual", 0.20))
+            ok = p["precio"] <= hp["habitual"] * (1 - u_c["subiendo"] + 0.005)
         if not ok and mejor is None and not p.get("gratis") and demanda_probada_ok(p):
             # Sin comparador, pero la comunidad ya lo calentó a este precio o más caro: precio y demanda probados.
             ok = True
@@ -7468,8 +7545,11 @@ def ronda(categoria, solo=None):
             log(f"precio sospechoso, no se envía: {p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
             ok = False
         ok = ok and ahorro_suficiente(p, mejor, cat_cfg, f)
+        if ok and clase_c == "moda" and not p.get("gratis") and not p.get("error_precio") \
+                and not anunciado_moda_ok(u_c, p["nombre"], d):
+            ok = False  # moda: 40 % anunciado por la tienda (30 % en marcas con gancho)
         exento = p.get("gratis") or p.get("error_precio") or (sin_idealo and not dias_hist)
-        dto_min = cat_cfg.get("descuento_real_min", f.get("descuento_real_min", 0))
+        dto_min = u_c["mercado"] if cat_cfg.get("descuento_real_min", f.get("descuento_real_min", 0)) else 0
         if ok and dto_min and not exento:
             dto, ref = descuento_real(p, mejor, dias_hist or 14)
             ok = dto is not None and dto >= dto_min
