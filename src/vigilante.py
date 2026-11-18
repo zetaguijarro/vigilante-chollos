@@ -3538,9 +3538,16 @@ def destinos_cm(max_hilos=1000, pausa=3.0, grados=200):
                 break
             url = None
         clave = clave_producto(url)
-        con.execute("INSERT OR REPLACE INTO cm_destino VALUES (?,?,?,?)",
-                    (hilo, url_canonica(url) if clave else url, clave, datetime.now().isoformat(timespec="minutes")))
-        con.commit()
+        fila = (hilo, url_canonica(url) if clave else url, clave, datetime.now().isoformat(timespec="minutes"))
+        for intento in range(20):  # una ronda escribiendo a la vez bloquea la base: se espera (18/11/2026)
+            try:
+                con.execute("INSERT OR REPLACE INTO cm_destino VALUES (?,?,?,?)", fila)
+                con.commit()
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or intento == 19:
+                    raise
+                time.sleep(15)
         hechos += 1
         con_clave += bool(clave)
         if hechos % 100 == 0:
