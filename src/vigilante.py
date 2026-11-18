@@ -5669,6 +5669,78 @@ def modo_telegram_cfg(cfg):
     return (cfg or {}).get("entrega", {}).get("modo") == "telegram"
 
 
+def _casi_con_pinta(p):
+    d = (1 - p["precio"] / p["precio_antes"]) if p.get("precio_antes") else None
+    if d is None or not (d >= CASI_DTO_MIN or (d >= CASI_DTO_FAMILIA and p.get("peso", 1) >= 1.5)):
+        return None
+    if not marca_y_modelo(p["nombre"], p.get("marca"))[0]:
+        return None  # sin marca reconocible (bodies de bebé, un armario sin nombre): no vale la pena (18/11/2026)
+    return d
+
+
+def _texto_rebaja(r):
+    partes = []
+    for clave, nombre in (("tachado", "tachado"), ("min30", "mínimo 30 días"), ("mediano", "mediano"),
+                          ("minimo", "mínimo histórico")):
+        if r.get(clave):
+            partes.append(f"{nombre} {r[clave]:g} €")
+    if r.get("etiqueta"):
+        partes.append(r["etiqueta"])
+    return ", ".join(partes)
+
+
+def revisar_casi_en_ficha(con, cfg, casi, maximo=CASI_POR_RONDA):
+    """Los casi chollos (sin mercado ni histórico) se miran en la ficha de la tienda (Zeta, 18/11/2026):
+    sin ninguna señal de rebaja, fuera; con el mínimo de 30 días, el mediano o el mínimo histórico de la propia
+    tienda y al menos el 20 % del Modo Clásico por debajo, pasan a candidatas; con señales pero sin eso, a Radar
+    diciendo qué trae la ficha. La ficha que no se lee o que marca más caro, fuera. -> (radar, candidatas)."""
+    buenos = sorted(((d, p) for p in casi if (d := _casi_con_pinta(p)) is not None), key=lambda x: -x[0])
+    radar, candidatas, nav, nav_ctx = [], [], None, None
+    try:
+        for d, p in buenos[:maximo * 2]:
+            try:
+                if ficha_se_intenta(cfg, p["tienda"]):
+                    ficha = leer_ficha(p["url"])
+                else:
+                    if nav is None:
+                        nav_ctx = NavegadorNormal(cfg)
+                        nav = nav_ctx.__enter__()
+                    ficha = leer_ficha(p["url"], nav)
+            except Exception as e:
+                log(f"casi chollo sin ficha, fuera: {p['tienda']} {p['nombre'][:50]}: {str(e)[:60]}")
+                continue
+            ahora = ficha.get("precio_ahora")
+            if ficha.get("antibot") or not ahora:
+                log(f"casi chollo sin ficha legible, fuera: {p['tienda']} {p['nombre'][:60]}")
+                continue
+            if ahora > p["precio"] * 1.02:
+                log(f"casi chollo: la ficha marca {ahora} € y el listado {p['precio']} €, fuera: {p['nombre'][:50]}")
+                continue
+            reb = rebaja_del_producto(ficha.get("rebaja"), ahora, ficha.get("precio_antes") or p.get("precio_antes"))
+            if not reb:
+                log(f"casi chollo sin rebaja en la ficha, fuera: {p['tienda']} {p['nombre'][:60]}")
+                continue
+            p["_rebaja_ficha"] = reb
+            _, u = umbrales_clasico(cfg, p["tienda"], p["nombre"])
+            ref = reb.get("minimo") or reb.get("mediano") or reb.get("min30")
+            if ref and ahora <= ref * (1 - u["subiendo"] + 0.005):
+                fuente = ("mínimo histórico" if reb.get("minimo") else "precio mediano" if reb.get("mediano")
+                          else "mínimo de 30 días")
+                p["_hist"] = {"habitual": ref, "minimo": reb.get("minimo"), "min_30d": not reb.get("minimo"),
+                              "fuente_corta": f"{fuente} que enseña la tienda"}
+                p.update(precio=ahora, score=d, peso=p.get("peso", 1))
+                candidatas.append(p)
+            else:
+                radar.append(p)
+    finally:
+        if nav_ctx is not None:
+            try:
+                nav_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+    return radar, candidatas
+
+
 def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
     """Pestaña 🔔 Radar (Zeta, 18/11/2026): productos con buena pinta que se rechazan SOLO por no tener contraste
     (ni mercado ni histórico). Mucho descuento visible, o bastante en una familia que se calienta en esa tienda.
@@ -5677,14 +5749,7 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
     token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
     if not (token and chat):
         return 0
-    buenos = []
-    for p in casi:
-        d = (1 - p["precio"] / p["precio_antes"]) if p.get("precio_antes") else None
-        if d is None or not (d >= CASI_DTO_MIN or (d >= CASI_DTO_FAMILIA and p.get("peso", 1) >= 1.5)):
-            continue
-        if not marca_y_modelo(p["nombre"], p.get("marca"))[0]:
-            continue  # sin marca reconocible (bodies de bebé, un armario sin nombre): no vale la pena (18/11/2026)
-        buenos.append((d, p))
+    buenos = [(d, p) for p in casi if (d := _casi_con_pinta(p)) is not None]
     hace = (datetime.now() - timedelta(days=CASI_REPETIR_DIAS)).isoformat(timespec="minutes")
     enviados = 0
     for d, p in sorted(buenos, key=lambda x: -x[0]):
@@ -5695,9 +5760,10 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
         if fila and fila[0] >= hace:
             continue
         texto = (f"🔎 Casi chollo · {p['tienda']}\n{p['nombre']}\n{p['precio']:g} € (antes {p['precio_antes']:g} €, "
-                 f"-{d:.0%} según la tienda)\nRechazado solo por no tener contraste: sin precio de mercado ni "
-                 f"histórico. El \"antes\" no está comprobado: míralo tú.\n"
-                 f"Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
+                 f"-{d:.0%} según la tienda)\nSin precio de mercado ni histórico. "
+                 + (f"En la ficha: {_texto_rebaja(p['_rebaja_ficha'])}.\n" if p.get("_rebaja_ficha")
+                    else "El \"antes\" no está comprobado: míralo tú.\n")
+                 + f"Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
                  f"{lineas_iguales(p)}\n{enlace_limpio(p.get('url')) or ''}")
         if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
@@ -5834,6 +5900,49 @@ def leer_ficha(url, nav=None):
     return analizar_ficha(html, final, datos)
 
 
+_NUM = r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:&nbsp;|\u00a0)?\s*€"
+RE_REBAJA_MIN30 = re.compile(r"(?:m[aá]s\s+bajo|m[ií]nimo|m[ií]n\.)\s+(?:en\s+|de\s+)?(?:los\s+)?[uú]ltimos\s+30\s+d[ií]as"
+                             r"[^0-9€]{0,40}" + _NUM, re.I)
+RE_REBAJA_MEDIANO = re.compile(r"precio\s+mediano[^0-9€]{0,40}" + _NUM, re.I)
+RE_REBAJA_MINIMO = re.compile(r"m[ií]nimo\s+hist[oó]rico[^0-9€]{0,40}" + _NUM, re.I)
+RE_REBAJA_ETIQUETA = re.compile(r"(?<![\d,.])-\s?(\d{1,2})\s?%|\bahorr(?:a|as|e)\s+(?:de\s+)?" + _NUM, re.I)
+
+
+def rebaja_en_ficha(plano, ficha):
+    """Señales de rebaja que enseña la propia ficha (Zeta, 18/11/2026: "si no viene nada se descarta directamente
+    porque no tiene rebaja"): precio tachado o recomendado, mínimo de 30 días, precio mediano, mínimo histórico y
+    etiqueta de descuento. -> dict con lo que haya (vacío = la ficha no anuncia ninguna rebaja)."""
+    r = {}
+    if ficha.get("precio_antes"):
+        r["tachado"] = ficha["precio_antes"]
+    for clave, rx in (("min30", RE_REBAJA_MIN30), ("mediano", RE_REBAJA_MEDIANO), ("minimo", RE_REBAJA_MINIMO)):
+        m = rx.search(plano)
+        if m and a_numero(m.group(1)):
+            r[clave] = a_numero(m.group(1))
+    for m in RE_REBAJA_ETIQUETA.finditer(plano):
+        if m.group(1):
+            r.setdefault("pcts", []).append(int(m.group(1)))
+            r.setdefault("etiqueta", f"-{m.group(1)} %")
+        else:
+            r.setdefault("etiqueta", f"ahorras {m.group(2)} €")
+            r.setdefault("ahorro", a_numero(m.group(2)))
+    return r
+
+
+def rebaja_del_producto(reb, precio, antes):
+    """Quita de las señales una etiqueta que no es de este producto: un "-15 %" de un banner ("-15 % en tu primer
+    pedido") no casa con el descuento del producto (±5 puntos) ni el ahorro con su precio (±1 €)."""
+    reb = dict(reb or {})
+    d = round((1 - precio / antes) * 100) if antes and antes > precio else None
+    pcts, ahorro = reb.pop("pcts", []), reb.pop("ahorro", None)
+    if "etiqueta" in reb:
+        ok_pct = d is not None and any(abs(x - d) <= 5 for x in pcts)
+        ok_ahorro = ahorro is not None and antes and abs((antes - precio) - ahorro) <= 1
+        if not (ok_pct or ok_ahorro):
+            reb.pop("etiqueta")
+    return reb
+
+
 def analizar_ficha(html, final, datos=()):
     plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I)
     plano = " ".join(plano.split())
@@ -5846,6 +5955,9 @@ def analizar_ficha(html, final, datos=()):
             f["precio_antes"] = principal["precio_antes"]
         if principal["ean"]:
             f["ean"] = principal["ean"]
+    reb = rebaja_en_ficha(plano, f)
+    if reb:
+        f["rebaja"] = reb
     m = RE_AVAIL.search(html)
     if m:
         f["stock"] = "sí" if re.search(r"instock|limitedavailability|preorder", m.group(1), re.I) else "no"
@@ -7605,6 +7717,9 @@ def ronda(categoria, solo=None):
             casi.append(p)
     con.commit()
     if modo_telegram_cfg(cfg) and casi:
+        if f.get("casi_ficha", True):
+            casi, subidas = revisar_casi_en_ficha(con, cfg, casi, f.get("casi_por_ronda", CASI_POR_RONDA))
+            finales += subidas  # la ficha de la tienda trae su referencia (mínimo de 30 días, mediano...)
         avisar_casi_chollos(con, cfg, casi, f.get("casi_por_ronda", CASI_POR_RONDA))
 
     # 4) Memoria (modelos ya juzgados o ya enviados) y Chollometro, todo por código.

@@ -4579,6 +4579,32 @@ class PestanasTelegram(unittest.TestCase):
         finally:
             v.token_telegram, v.enviar_telegram = orig
 
+    def test_casi_chollos_miran_la_rebaja_en_la_ficha(self):
+        """Zeta (18/11/2026): en la ficha, ¿hay tachado, mínimo de 30 días, mediano, mínimo histórico o etiqueta?
+        Si no hay nada, fuera; con una referencia de la tienda y un 20 % por debajo, a candidata."""
+        plano = "Precio 39,99 € PVPR 79,99 € Precio más bajo de los últimos 30 días: 59,99 € -50 %"
+        self.assertEqual(v.rebaja_del_producto(v.rebaja_en_ficha(plano, {"precio_antes": 79.99}), 39.99, 79.99),
+                         {"tachado": 79.99, "min30": 59.99, "etiqueta": "-50 %"})
+        self.assertEqual(v.rebaja_del_producto(v.rebaja_en_ficha("Abrigo 94,95 € -15 % en tu primer pedido", {}),
+                                               94.95, 189.9), {}, "el -15 % del banner no es la rebaja del abrigo")
+        self.assertEqual(v.rebaja_en_ficha("Lámpara de mesa 39,99 € Añadir a la cesta", {}), {})
+        fichas = {"https://t.es/a": {"precio_ahora": 40.0, "rebaja": {"tachado": 100.0, "min30": 59.99}},
+                  "https://t.es/b": {"precio_ahora": 40.0, "rebaja": {"tachado": 100.0}},
+                  "https://t.es/c": {"precio_ahora": 40.0},
+                  "https://t.es/d": {"precio_ahora": 55.0, "rebaja": {"tachado": 100.0}}}
+        orig = v.leer_ficha, v.ficha_se_intenta
+        v.leer_ficha = lambda url, nav=None: fichas[url]
+        v.ficha_se_intenta = lambda cfg, t: True
+        try:
+            casi = [{"tienda": "t.es", "nombre": f"Cosori Freidora {x.upper()}", "precio": 40.0, "precio_antes": 100.0,
+                     "url": f"https://t.es/{x}"} for x in "abcd"]
+            radar, candidatas = v.revisar_casi_en_ficha(None, {}, casi)
+            self.assertEqual([p["url"][-1] for p in candidatas], ["a"], "33 % bajo su mínimo de 30 días")
+            self.assertEqual([p["url"][-1] for p in radar], ["b"], "solo tachado: a Radar, diciendo qué trae la ficha")
+            self.assertEqual(v._texto_rebaja(radar[0]["_rebaja_ficha"]), "tachado 100 €")
+        finally:
+            v.leer_ficha, v.ficha_se_intenta = orig
+
     def test_cada_mensaje_a_su_pestana(self):
         (self.tmp / v.TEMAS).write_text(json.dumps({"sistema": 7, "cat:moda": 9}), encoding="utf-8")
         v.enviar_telegram("t", "1", "hola", hilo="sistema")
