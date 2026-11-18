@@ -4209,5 +4209,55 @@ class MiraviaAliExpress(Base):
         self.assertIn("reto", str(e.exception))
 
 
+
+
+class ListaVigilancia(unittest.TestCase):
+    """Encargo 9 (18/11/2026): ASIN de los hilos de Amazon de 200° o más, por la redirección de Chollometro."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = v.DATOS, v.DB, v.destino_hilo, v.time.sleep
+        v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
+        v.time.sleep = lambda s: None
+        con = v.bd()
+        filas = [(1, "Café A", 10.0, 500, '{"linkHost":"www.amazon.es","mainGroup":{"threadGroupName":"Supermercado"}}'),
+                 (2, "Café A otra vez", 8.0, 300, '{"linkHost":"www.amazon.es"}'),
+                 (3, "Frío", 5.0, 50, '{"linkHost":"www.amazon.es"}'),
+                 (4, "Otra tienda", 5.0, 900, '{"linkHost":"www.pccomponentes.com"}'),
+                 (5, "Corto", 20.0, 400, '{"linkHost":"amzn.eu"}')]
+        for i, t, p, temp, e in filas:
+            con.execute("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto, extra) "
+                        "VALUES (?,?,?,?,?,?,?,0,'',?)", (i, t, p, "", "", temp, 1000 + i, e))
+        con.commit()
+        con.close()
+
+    def tearDown(self):
+        v.DATOS, v.DB, v.destino_hilo, v.time.sleep = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_guarda_precio_minimo_y_temp_maxima(self):
+        destinos = {1: "https://www.amazon.es/dp/B000000001?tag=x", 2: "https://www.amazon.es/dp/B000000001",
+                    5: "https://www.amazon.es/dp/B000000005"}
+        pedidos = []
+        v.destino_hilo = lambda h: (pedidos.append(h), destinos[h])[1]
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(v.asins_vigilancia(), (3, 2))
+        self.assertEqual(sorted(pedidos), [1, 2, 5])  # ni el frío ni el de otra tienda
+        con = v.bd()
+        fila = con.execute("SELECT precio, temp, grupo FROM vigilancia WHERE asin='B000000001'").fetchone()
+        self.assertEqual(fila, (8.0, 500, "Supermercado"))
+        con.close()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(v.asins_vigilancia(), (0, 0))  # ya mirados
+
+    def test_para_con_429_sin_marcar(self):
+        def falla(h):
+            raise v.HTTPError("u", 429, "Too Many", {}, None)
+        v.destino_hilo = falla
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(v.asins_vigilancia(), (0, 0))
+        con = v.bd()
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM asin_hilos").fetchone()[0], 0)
+        con.close()
 if __name__ == "__main__":
     unittest.main()

@@ -42,7 +42,7 @@ from urllib.parse import parse_qs, quote, quote_plus, unquote, urljoin, urlparse
 from http.cookiejar import CookieJar
 import threading
 import ssl
-from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener
+from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 # Estructura del proyecto: src/ (este archivo), config/ (tiendas.json, marcas.txt), data/ (base y cachés).
 # VIGILANTE_HOME cambia la raíz y VIGILANTE_DATOS solo la carpeta de datos (p. ej. la de Hermes).
@@ -1305,6 +1305,11 @@ def bd():
         -- Fichas de PCComTracker por código de modelo (17/11/2026): sirven de histórico para el mismo modelo en
         -- Amazon, MediaMarkt... Se llena al leer su catálogo; su buscador va por /api/ (prohibido en su robots.txt).
         CREATE TABLE IF NOT EXISTS pcct (codigo TEXT, url TEXT, nombre TEXT, PRIMARY KEY (codigo, url)) WITHOUT ROWID;
+        -- Lista de vigilancia de Amazon (encargo 9): productos que ya triunfaron en Chollometro. precio = el más
+        -- bajo con que llegó a 200°, temp = la más alta. asin_hilos: hilos ya mirados (con o sin ASIN).
+        CREATE TABLE IF NOT EXISTS vigilancia (asin TEXT PRIMARY KEY, hilo INTEGER, titulo TEXT, precio REAL,
+            temp INTEGER, publicado INTEGER, grupo TEXT, alta TEXT);
+        CREATE TABLE IF NOT EXISTS asin_hilos (hilo INTEGER PRIMARY KEY, asin TEXT, fecha TEXT);
     """)
     if not con.execute("SELECT 1 FROM meta WHERE k='cm_codigos_v1'").fetchone():
         # Una vez: los hilos que ya estaban en la copia. Los nuevos los indexa guardar_hilos.
@@ -2759,6 +2764,69 @@ def precargar_chollometro(dias_nuevos=3, paginas_portada=60, pausa=1.5, desde=No
     finally:
         _cookie_cm["activa"] = False
         cerrojo.unlink(missing_ok=True)
+
+
+class _SinRedireccion(HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def destino_hilo(hilo, saltos=4):
+    """Adónde lleva "Ir al chollo" de un hilo, leyendo solo las cabeceras Location (no descarga la tienda).
+    Chollometro -> path.chollometro.com -> amazon.es/dp/ASIN. Los amzn.eu/d/... dan un salto más (la cabecera
+    del acortador de Amazon). -> URL o None."""
+    url = f"https://www.chollometro.com/visit/threadmain/{hilo}"
+    op = build_opener(_SinRedireccion)
+    for _ in range(saltos):
+        try:
+            op.open(Request(url, headers={"User-Agent": UA}), timeout=15).close()
+            return url  # sin redirección: ya es el destino
+        except HTTPError as e:
+            if e.code not in (301, 302, 303, 307, 308):
+                raise
+            url = urljoin(url, e.headers.get("Location") or "")
+        if asin_de(url) or not re.search(r"chollometro\.com|amzn\.(eu|to)|amazon\.[a-z.]+/(gp/r|s\?)", url):
+            return url
+    return url
+
+
+def asins_vigilancia(max_hilos=200, pausa=3.0):
+    """`asins [N]`: saca el ASIN de hasta N hilos de Amazon con 200° o más que aún no se han mirado (los más
+    calientes primero) y los guarda en `vigilancia`. Para sola con un 403/429 (no reintenta)."""
+    con = bd()
+    filas = con.execute("""SELECT id, titulo, precio, temp, publicado, extra FROM cm WHERE temp>=200
+        AND (extra LIKE '%"linkHost":"%amazon.%' OR extra LIKE '%"linkHost":"amzn.%'
+             OR ((extra IS NULL) AND (tienda LIKE '%amazon%' OR host LIKE '%amazon%')))
+        AND id NOT IN (SELECT hilo FROM asin_hilos) ORDER BY temp DESC LIMIT ?""", (max_hilos,)).fetchall()
+    hechos = nuevos = 0
+    hoy = datetime.now().isoformat(timespec="minutes")
+    for hilo, titulo, precio, temp, publicado, extra in filas:
+        try:
+            asin = asin_de(destino_hilo(hilo) or "")
+        except Exception as e:
+            log(f"asins: hilo {hilo}: {e}")
+            if getattr(e, "code", None) in (403, 429) or not getattr(e, "code", None):
+                print(f"Paro en el hilo {hilo}: {str(e)[:80]}")
+                break
+            asin = None
+        con.execute("INSERT OR REPLACE INTO asin_hilos VALUES (?,?,?)", (hilo, asin, hoy))
+        hechos += 1
+        if asin:
+            grupo = (json.loads(extra or "{}").get("mainGroup") or {}).get("threadGroupName")
+            nuevos += con.execute("SELECT 1 FROM vigilancia WHERE asin=?", (asin,)).fetchone() is None
+            con.execute("""INSERT INTO vigilancia VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(asin) DO UPDATE SET
+                precio=CASE WHEN excluded.precio>0 AND (precio IS NULL OR excluded.precio<precio) THEN excluded.precio
+                            ELSE precio END,
+                temp=MAX(temp, excluded.temp), publicado=MAX(publicado, excluded.publicado)""",
+                        (asin, hilo, titulo, precio, temp, publicado, grupo, hoy))
+        con.commit()
+        time.sleep(pausa * random.uniform(0.8, 1.2))
+    total = con.execute("SELECT COUNT(*) FROM vigilancia").fetchone()[0]
+    falta = con.execute("""SELECT COUNT(*) FROM cm WHERE temp>=200 AND (extra LIKE '%"linkHost":"%amazon.%'
+        OR extra LIKE '%"linkHost":"amzn.%') AND id NOT IN (SELECT hilo FROM asin_hilos)""").fetchone()[0]
+    con.close()
+    print(f"{hechos} hilos mirados, {nuevos} ASIN nuevos. Lista de vigilancia: {total} productos. Faltan {falta} hilos.")
+    return hechos, nuevos
 
 
 def sesion_cm():
@@ -6401,6 +6469,8 @@ if __name__ == "__main__":
         seguir_precarga(args[1] if len(args) > 1 else None)
     elif args[:1] == ["sesion_cm"]:
         sesion_cm()
+    elif args[:1] == ["asins"]:
+        asins_vigilancia(int(args[1]) if len(args) > 1 else 200)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:
