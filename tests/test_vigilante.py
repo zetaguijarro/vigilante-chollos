@@ -4460,9 +4460,9 @@ class PestanasTelegram(unittest.TestCase):
         try:
             con = v.bd()
             cfg = {"entrega": {"modo": "telegram", "chat_id": "1"}}
-            casi = [{"tienda": "t.es", "nombre": "Freidora A", "precio": 40, "precio_antes": 100, "url": "https://t.es/a"},
-                    {"tienda": "t.es", "nombre": "Freidora B", "precio": 70, "precio_antes": 100, "url": "https://t.es/b"},
-                    {"tienda": "t.es", "nombre": "Consola C", "precio": 70, "precio_antes": 100, "peso": 2.0,
+            casi = [{"tienda": "t.es", "nombre": "Cosori Freidora A", "precio": 40, "precio_antes": 100, "url": "https://t.es/a"},
+                    {"tienda": "t.es", "nombre": "Cosori Freidora B", "precio": 70, "precio_antes": 100, "url": "https://t.es/b"},
+                    {"tienda": "t.es", "nombre": "Sony Consola C", "precio": 70, "precio_antes": 100, "peso": 2.0,
                      "url": "https://t.es/c"},
                     {"tienda": "t.es", "nombre": "Sin antes", "precio": 10, "precio_antes": None, "url": "https://t.es/d"}]
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 2, "-60 % y -30 % de una familia que se calienta")
@@ -4520,6 +4520,22 @@ class EmparejamientoPorTipo(unittest.TestCase):
                   "Portátil HP como nuevo"):
             self.assertTrue(v.RE_REACONDICIONADO.search(n), n)
         self.assertFalse(v.RE_REACONDICIONADO.search("Lavadora Bosch 8 kg nueva"))
+        self.assertTrue(v.RE_REACONDICIONADO.search("https://x.com/samsung-galaxy-s23-ultra-renovado-estado-excelente"))
+
+    def test_marca_y_precio_de_la_tarjeta(self):
+        """18/11/2026: Toys R Us pone la marca encima del nombre; Forumsport la deja en la dirección ("CLUB" eran
+        unas Nike); Neobyte enseña "-200,10 €" de descuento y se cogía como precio (#222)."""
+        html = ('<a href="/p/K1"><p class="product-brand">KLEIN</p><a class="name" href="/Hot-Wheels-Maletin/p/K1">'
+                'Hot Wheels - Maletín Metálico</a></a>')
+        self.assertEqual(v.marca_de_tarjeta(html, "Hot Wheels - Maletín Metálico"), "KLEIN")
+        self.assertEqual(v.nombre_con_marca_de_ficha(
+            {"nombre": "CLUB", "url": "https://www.forumsport.com/es-es/nike-sudadera-hombre-club-fz0772-1000982276-p"}),
+            "Nike Sudadera Hombre Club Fz0772")
+        tarjetas = "".join(f'<a class="card" href="/producto/nas-synology-ds72{i}-2011033{i}"><h3>Synology DS72{i}neo '
+                           f'Servidor NAS</h3><span class="product-flag discount">-200,10€</span>'
+                           f'<span class="product-price">59{i},89€</span></a>' for i in range(3))
+        ps = v.tarjetas_html(tarjetas, "https://t.es/ofertas")
+        self.assertEqual([p["price"] for p in ps], [590.89, 591.89, 592.89])
 
     def test_configuracion_sin_concretar(self):
         """#214 (18/11/2026): ThinkPad sin RAM ni disco en el nombre contra el precio de Idealo de otra configuración."""

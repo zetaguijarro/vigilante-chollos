@@ -993,12 +993,59 @@ def extraer(html, base_url, extra_json=()):
                 p["ref_tienda"] = e[0]
         return productos
     productos = _extraer(html, base_url, extra_json)
-    if "zalando." in host:
-        for p in productos:
-            nombre = nombre_zalando(p.get("url"))
-            if nombre:
-                p["nombre"] = nombre
+    for p in productos:
+        if not p.get("marca"):
+            p["marca"] = marca_de_tarjeta(html, p.get("nombre"))
+        nombre = nombre_zalando(p.get("url")) if "zalando." in host else None
+        p["nombre"] = nombre or nombre_con_marca_de_ficha(p)
     return productos
+
+
+RE_MARCA_TARJETA = re.compile(r'class="[^"]*\b(?:product-)?(?:brand|marca|manufacturer)\w*[^"]*"[^>]*>\s*([^<]{2,40}?)\s*<',
+                              re.I)
+
+
+def marca_de_tarjeta(html, nombre):
+    """La marca que la tarjeta pone en su propio elemento encima del nombre (Toys R Us: <p class="product-brand">
+    KLEIN</p> y debajo "Hot Wheels - Maletín..."). Se busca justo antes del nombre en la página."""
+    if not html or not nombre:
+        return None
+    i = html.find(escape(nombre[:40], quote=False)) if escape(nombre[:40], quote=False) in html else html.find(nombre[:40])
+    if i < 0:
+        return None
+    marcas = RE_MARCA_TARJETA.findall(html[max(0, i - 1200):i])
+    return unescape(marcas[-1]).strip() if marcas else None
+
+
+RE_ID_FINAL = re.compile(r"^(?:p|k?\d{5,}|[a-z]{0,3}\d{5,}[a-z0-9]*|\d+)$", re.I)
+
+
+def nombre_con_marca_de_ficha(p):
+    """La marca que la tienda pone aparte (encima del título en Toys R Us, en la dirección en Forumsport: el
+    nombre era solo "CLUB" y eran unas Nike) delante del nombre (Zeta, 18/11/2026). Orden: el campo marca de la
+    tienda; si el nombre no lleva ninguna marca conocida, la que diga la dirección; y si el nombre es de una o dos
+    palabras, el de la dirección entero."""
+    nombre = p.get("nombre") or ""
+    rx = rx_marcas()
+    tiene = bool(rx and rx.search(sin_tildes(nombre.lower())))
+    marca = (p.get("marca") or "").strip()
+    if marca and sin_tildes(marca.lower()) not in sin_tildes(nombre.lower()):
+        return f"{marca} {nombre}".strip()
+    if tiene:
+        return nombre
+    ruta = unquote(urlparse(p.get("url") or "").path).strip("/").split("/")
+    trozo = max(ruta, key=len) if ruta and ruta != [""] else ""
+    palabras = [w for w in re.split(r"[-_\s]+", re.sub(r"\.(?:html?|php|aspx?)$", "", trozo)) if w]
+    while palabras and RE_ID_FINAL.match(palabras[-1]):
+        palabras.pop()
+    desde_url = " ".join(palabras)
+    marca_url = rx.search(sin_tildes(desde_url.lower())) if rx and desde_url else None
+    corto = len(nombre.split()) == 1 or (len(nombre.split()) <= 2 and nombre.isupper())  # "CLUB", "CLUB GFX"
+    if corto and marca_url and len(palabras) >= 3:
+        return " ".join(w.capitalize() for w in palabras)
+    if marca_url:
+        return f"{marca_url.group(0).title()} {nombre}".strip()
+    return nombre
 
 
 RE_ZALANDO_SLUG = re.compile(r"zalando\.[a-z.]+/([a-z0-9-]+?)-[a-z0-9]{9}-[a-z0-9]{3}\.html", re.I)
@@ -1085,6 +1132,10 @@ RE_VALORACION = re.compile(r"\d(?:[.,]\d)?\s+(?:de|out of)\s+5\s+estrellas|\d(?:
 RE_TEXTO_GENERICO =re.compile(r"^(?:ver|comprar|añadir|acceder|más|mas|detalles|ficha)\b", re.I)
 
 
+RE_ETIQUETA_DESCUENTO = re.compile(r'<(\w+)[^>]*class="[^"]*(?:discount|descuento|ahorro|saving|you-save|'
+                                   r'product-flag)[^"]*"[^>]*>[^<]{0,40}</\1>', re.I)
+
+
 def tarjetas_html(html, base_url, tope=6000):
     """Último recurso para listados sin datos estructurados: cada enlace a una ficha de producto
     con un precio en € en su tarjeta (hasta el enlace a la siguiente ficha) es un producto.
@@ -1117,7 +1168,9 @@ def tarjetas_html(html, base_url, tope=6000):
     salida = []
     for n, (url, (ini, nombres)) in enumerate(orden):
         fin = min(ini + tope, orden[n + 1][1][0] if n + 1 < len(orden) else len(plano))
-        visible = unescape(re.sub(r"<[^>]+>", " ", RE_TACHADO.sub(" ", plano[ini:fin])))
+        # La etiqueta de descuento ("-200,10 €" en Neobyte, 18/11/2026) no es el precio: fuera antes de buscarlo.
+        trozo = RE_ETIQUETA_DESCUENTO.sub(" ", plano[ini:fin])
+        visible = unescape(re.sub(r"<[^>]+>", " ", RE_TACHADO.sub(" ", trozo)))
         visible = RE_PRECIO_PARTIDO.sub(r"\1\2\3", visible)  # Back Market: '684 ,23 €' -> '684,23 €'
         visible = RE_PARTIDO_DELANTE.sub(r"\1\2\3", visible)  # Expert: '€58 ,90' -> '€58,90'
         precio = None
@@ -1125,6 +1178,8 @@ def tarjetas_html(html, base_url, tope=6000):
             antes_txt, despues_txt = visible[max(0, e.start() - 20):e.start()], visible[e.end():e.end() + 16]
             if RE_NO_PRECIO.search(antes_txt) or RE_NO_PRECIO_DESPUES.match(despues_txt):
                 continue
+            if re.search(r"[-−–]\s*$", antes_txt):
+                continue  # "-200,10 €": lo que se descuenta, no el precio
             precio = a_numero(e.group(1).replace(" ", ""))
             break
         buenos = [t for t in nombres if 8 <= len(t) <= 250 and re.search(r"[a-zA-Z]{3}", t)
@@ -2537,6 +2592,7 @@ def rx_marcas():
 
 
 RE_REACONDICIONADO = re.compile(r"reacondicionad\w*|\breaco\b|refurbished|\brenewed\b|\bremanufacturad\w*|"
+                                r"\brenovad[oa]s?\b|estado[\s-](?:excelente|muy[\s-]bueno|bueno|correcto)|"
                                 r"segunda[\s-]mano|seminuev\w*|\busad[oa]s?\b|como nuevo|\bgrado [abc]\b|"
                                 r"\bopen[\s-]box\b|\bexposici[oó]n\b|/reacondicionad|/segunda-mano", re.I)
 MARCA_DE_GAMA = {"poco": "xiaomi", "redmi": "xiaomi", "galaxy": "samsung", "iphone": "apple", "ipad": "apple",
@@ -5124,6 +5180,8 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
         d = (1 - p["precio"] / p["precio_antes"]) if p.get("precio_antes") else None
         if d is None or not (d >= CASI_DTO_MIN or (d >= CASI_DTO_FAMILIA and p.get("peso", 1) >= 1.5)):
             continue
+        if not marca_y_modelo(p["nombre"], p.get("marca"))[0]:
+            continue  # sin marca reconocible (bodies de bebé, un armario sin nombre): no vale la pena (18/11/2026)
         buenos.append((d, p))
     hace = (datetime.now() - timedelta(days=CASI_REPETIR_DIAS)).isoformat(timespec="minutes")
     enviados = 0
