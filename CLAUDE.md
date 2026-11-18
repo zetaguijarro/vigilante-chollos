@@ -78,6 +78,8 @@ Hecho: la rama `comprueba` está en `main`; el botón "Verificar" funciona con H
 4. **Revisar a mano** las páginas guardadas de IKEA, Dyson y DeLonghi en `data/urls_ofertas.json`.
 5. **Vigilar** que la ronda de navegador no pase de 14 min (ahora también abre el Chrome normal de Miravia, AliExpress y CamelCamelCamel).
 
+**Pendiente (Zeta, 18/11): cuando Subiendo termine de cargar (seguir con el botón "Seguir" o `seguir`), recalcular el análisis de familias y tiendas (los pesos `pesos_volumen` se rehacen solos cada 6 h; el sesgo de octubre-noviembre debería bajar) y lanzar `destinos` para rellenar `cm_destino`.**
+
 Herramientas para mirar sin tocar: `data/recorrido.txt` (diario por tienda y ronda), `data/log.txt`, `prueba <categoría>`, `volcar <tienda>`, `informe 1`, `decidir N --callado` (decide sin mandar nada).
 
 Cerrojo del navegador: si `data/navegador.lock` existe y su proceso no (`tasklist //FI "PID eq <pid>"`), está huérfano y bloquea las rondas de navegador y el `login`: se borra. Pasó el 16/11.
