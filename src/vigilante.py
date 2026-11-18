@@ -13,7 +13,7 @@ Uso (desde la raíz del proyecto: python src/vigilante.py ...):
   python vigilante.py login <tienda>             abre la tienda para que inicies sesión (se guarda)
   python vigilante.py informe [días]             qué aporta cada tienda (para quitar las que no)
   python vigilante.py historial <texto|EAN|url>  cambios de precio de un producto y su mínimo con fecha
-  python vigilante.py entregar <n>                manda la oferta verificada en 6 mensajes (formato móvil)
+  python vigilante.py entregar <n>                manda la oferta verificada en 5 mensajes (formato móvil)
   python vigilante.py recordar <n> <buena|dudosa|caducada> <motivo>   guarda el veredicto del modelo
                                                 (caducada: la oferta se acabó; avisa si vuelve a ese precio)
   python vigilante.py wrappers                crea vig_<categoria>.py para cada categoría
@@ -5630,7 +5630,7 @@ def tema_id(clave):
 
 def crear_temas():
     """`temas`: crea en el chat del bot las pestañas que falten (18/11/2026, Zeta: "como en Instinct"):
-    una por categoría con tiendas (candidatos y descartes), "✅ Para publicar" (los 6 mensajes) y "⚠️ Sistema"
+    una por categoría con tiendas (candidatos y descartes), "✅ Para publicar" (los 5 mensajes) y "⚠️ Sistema"
     (precarga, sesiones, frenos). El bot tiene los temas activados en el chat privado (has_topics_enabled)."""
     cfg = cargar_config()
     token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
@@ -6670,12 +6670,17 @@ def bloques_de_codigo(item, d):
                    f"Unidad suelta: {eur(suelto)}. Total por {uds}: {eur(round(precio * uds, 2))}."]
     elif item.get("cup") and item.get("psc"):
         precios = [f"{eur(precio)} con {item['cup']}", f"Sin cupón: {eur(item['psc'])}."]
-    if h.get("habitual") and item.get("rt") == "mas_bajo" and h["habitual"] == item.get("a"):
-        precios.append(f"Precio más bajo de los últimos 30 días: {eur(h['habitual'])} (según Amazon)")
-    elif h.get("habitual"):
-        precios.append(f"Precio habitual: {eur(h['habitual'])} (en {fuente})")
-    if pvp:
-        precios.append(f"PVP de la tienda: {eur(pvp)}")
+    # Zeta (18/11/2026): "el precio habitual es el PVPR que pone la tienda, el PVP o el tachado". La referencia de la
+    # ficha es lo que la tienda enseña (tachado, PVP, PVPR, o el "mediano"/"más bajo 30 días" de Amazon), con su
+    # descuento; los comparadores no ponen "habitual" aquí.
+    ref_tienda = (item.get("a") if item.get("a") and item["a"] > precio else None) \
+        or next((x for x in (ficha.get("precio_antes"), (ficha.get("rebaja") or {}).get("tachado"))
+                 if x and x > precio), None)
+    if ref_tienda:
+        etiqueta_ref = {"mas_bajo": "Precio más bajo de los últimos 30 días (según Amazon)",
+                        "mediano": "Precio mediano (según Amazon)"}.get(item.get("rt"), "PVPR de la tienda")
+        precios.append(f"Descuento: -{round((ref_tienda - precio) / ref_tienda * 100)} %")
+        precios.append(f"{etiqueta_ref}: {eur(ref_tienda)}")
     precios.append(f"Envío: {envio}" if envio else "Envío: portes no verificados.")
     # 5 · INFO ADICIONAL
     info = [f"🏷️ {d['etiqueta']}", ""]
@@ -6743,7 +6748,15 @@ def bloques_de_codigo(item, d):
     if avisos:
         info.append("")
         info += [f"⚠️ {a}." for a in avisos]
+    codigos = []
+    if item.get("cup"):
+        codigos.append(f"🏷️ Cupón aplicado en el precio: {item['cup']}")
+    for c in ficha.get("cupones") or []:
+        codigos.append(f"🏷️ Posible código visto en la ficha, sin probar: {c}")
+    codigos = codigos or ["Sin códigos de descuento visibles."]
+    precios += [f"⚠️ {a}." for a in avisos if a.startswith(("Promoción", "Tallas", "Sin foto"))]
     return {"precios": "\n".join(precios), "info": "\n".join(info), "enlace": item.get("u", ""),
+            "codigos": "\n".join(codigos),
             "foto": ficha.get("foto") or item.get("img"), "etiqueta": d["etiqueta"],
             "redaccion": {"num": item["num"], "etiqueta": d["etiqueta"], "nombre": item.get("n"),
                           "tallas": [v.split(":")[0] for v in tallas[:15]], "specs": (ficha.get("specs") or [])[:15],
@@ -6882,13 +6895,14 @@ def redaccion(n):
     print(json.dumps(b["redaccion"], ensure_ascii=False, separators=(",", ":")))
 
 
-# Orden de envío de las reglas de formato de Zeta (17/11/2026): foto, título, enlace, precio, INFO, descripción.
-BLOQUES = ("titulo", "enlace", "precios", "info", "descripcion")
+# Orden de envío (Zeta, 18/11/2026): 5 mensajes: foto, título, precio (final, descuento y PVPR; lleva el enlace al
+# final), posibles códigos y descripción. Antes eran 6 (con enlace e INFO ADICIONAL aparte, docs/FORMATO.md).
+BLOQUES = ("titulo", "precios", "codigos", "descripcion")
 
 
 def entregar(n, callado=False):
-    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 6 mensajes: foto,
-    título, enlace, precio, INFO ADICIONAL y descripción (con negrita real). Así la IA no repite texto y el
+    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 5 mensajes: foto,
+    título, precio (con descuento, PVPR y enlace), posibles códigos y descripción (con negrita real). Así la IA no repite texto y el
     formato sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
     "descripcion": precio, INFO, enlace y foto salen de la decisión por código. La etiqueta va en la INFO,
     no en el título. Con `entrega.hilos` {categoría: id del tema}, va al tema de su categoría."""
@@ -6906,11 +6920,16 @@ def entregar(n, callado=False):
     except (OSError, ValueError):
         pass
     if hecha:
-        for k in ("precios", "info", "enlace"):  # lo calculado por código manda sobre lo que escriba la IA
-            b[k] = hecha[k]
+        for k in ("precios", "info", "enlace", "codigos"):  # lo calculado por código manda sobre lo que escriba la IA
+            if k in hecha:
+                b[k] = hecha[k]
         b.setdefault("foto", hecha.get("foto"))
     # Título sin etiqueta, precio, tienda ni código interno: la etiqueta va en la INFO.
     b["titulo"] = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(b.get("titulo", ""))).strip()[:140]
+    b.setdefault("codigos", "Sin códigos de descuento visibles.")
+    enlace = str(b.get("enlace", "")).strip()
+    if enlace and enlace not in str(b.get("precios", "")):
+        b["precios"] = f"{str(b.get('precios', '')).strip()}\n\n{enlace}"  # el enlace, al final del precio
     faltan = [k for k in BLOQUES if not str(b.get(k, "")).strip()]
     if faltan:
         decir(f"#{n}: faltan bloques: {', '.join(faltan)}")
@@ -6944,7 +6963,7 @@ def entregar(n, callado=False):
         archivo.unlink(missing_ok=True)
         if hecha:
             decision.unlink(missing_ok=True)
-            recordar(n, "buena", hecha["info"].split("Prueba: ", 1)[-1].split("\n")[0], callado=True)
+            recordar(n, "buena", hecha.get("info", "").split("Prueba: ", 1)[-1].split("\n")[0], callado=True)
     return ok
 
 

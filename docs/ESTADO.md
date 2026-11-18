@@ -82,7 +82,7 @@ Pruebas: `& $py -m unittest test_vigilante`. Son 145 y deben pasar siempre. Aña
   - Fuera el ahorro mínimo en euros (la guía no lo pide). Duplicados: otra tienda no es duplicado, salvo El Corte Inglés/Hipercor; misma tienda, la regla de Chollometro.
   - Se mantiene "moda sin comparador con 70 % anunciado" (decisión anterior de Zeta, conflicto 7 del SPEC).
 
-- Sin modo Morralla y sin tope de precio. Formato de ficha: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026. Sin foto del producto se entrega igual y se declara en la INFO ("⚠️ Sin foto verificada del producto."): autorizado por Zeta el 17/11/2026.
+- Sin modo Morralla y sin tope de precio. **Formato de ficha desde el 18/11/2026: 5 mensajes** (foto, título, precio con descuento y PVPR de la tienda y el enlace al final, posibles códigos y descripción; ya no hay INFO ADICIONAL ni enlace aparte). Antes: 6 mensajes (foto, título, enlace, precio, INFO ADICIONAL y descripción) según `docs/FORMATO.md` (reglas de Zeta del 17/11/2026, sustituye a los 5 mensajes). Ropa y calzado infantil y junior, fuera desde el 17/11/2026. Sin foto del producto se entrega igual y se declara en la INFO ("⚠️ Sin foto verificada del producto."): autorizado por Zeta el 17/11/2026.
 
 - AliExpress: se admiten vendedores terceros si la tienda tiene buenas ventas y reseñas.
 

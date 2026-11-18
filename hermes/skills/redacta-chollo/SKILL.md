@@ -37,6 +37,6 @@ Escribe C:\Users\Zeus\proyectos\vigilante-chollos\data\entrega_N.json, en UTF-8,
 Usa solo `specs`, `resumen` y lo que dice el propio `nombre`. Nada inventado ni tomado de un modelo parecido; si hay pocas características, pon las que haya. Sin precios, ahorro, históricos, comparadores, tienda, notas de comprobación, bromas ni consejos para combinar ropa. Sin afirmaciones médicas ni de durabilidad. No escribas "Recogida en tienda GRATIS" (no está verificada).
 
 ## 3. Entrega
-Ejecuta `PY V entregar N`. El script añade la foto, el enlace, el precio y la INFO ADICIONAL, y manda los 6 mensajes en orden: foto, título, enlace, precio, INFO y descripción.
+Ejecuta `PY V entregar N`. El script añade la foto, el precio (con descuento, PVPR de la tienda y enlace) y los posibles códigos, y manda los 5 mensajes en orden: foto, título, precio, códigos y descripción.
 
 Tu respuesta final es solo: "#N enviado".
