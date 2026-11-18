@@ -64,9 +64,12 @@ OLVIDAR_DIAS = 120          # productos no vistos en este tiempo se borran (larg
 
 def log(msg):
     DATOS.mkdir(exist_ok=True)
-    if LOG.exists() and LOG.stat().st_size > 1_000_000:
-        LOG.replace(LOG.with_suffix(".old.txt"))
-    with LOG.open("a", encoding="utf-8") as f:
+    # Siempre en la carpeta de datos en uso: las pruebas que cambian DATOS a una temporal y no LOG escribían en el
+    # data/log.txt de verdad (18/11/2026: "429 en subiendo", "camelcamelcamel: reto"... que nunca pasaron).
+    ruta = LOG if LOG.parent == DATOS else DATOS / "log.txt"
+    if ruta.exists() and ruta.stat().st_size > 1_000_000:
+        ruta.replace(ruta.with_suffix(".old.txt"))
+    with ruta.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
 
 

@@ -406,6 +406,13 @@ class PrecargaHistorial(unittest.TestCase):
         self.assertEqual(len(portada), 5)
         self.assertIn("fin del historial", buf.getvalue())
 
+    def test_el_log_va_a_la_carpeta_de_datos_en_uso(self):
+        real = v.LOG
+        antes = real.stat().st_size if real.exists() else 0
+        v.log("prueba: no debe ir al log de verdad")
+        self.assertIn("no debe ir", (self.tmp / "log.txt").read_text(encoding="utf-8"))
+        self.assertEqual(real.stat().st_size if real.exists() else 0, antes)
+
     def test_avisa_por_telegram_cada_50_paginas(self):
         pedidas = self.red(ultima=120)
         orig = v.token_telegram
