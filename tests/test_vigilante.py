@@ -4552,6 +4552,19 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/moda-hombre/ropa/"), 0.3)
 
+    def test_ficha_amazon_precio_del_bloque_de_compra(self):
+        """18/11/2026: la ficha del LEGO 75433 daba 55,99 € (un LEGO del carrusel); Zeta lo veía a 49,99 €."""
+        html = ('<span id="productTitle" class="a-size-medium">  LEGO Star Wars Nave Estelar de Jango Fett 75433  </span>'
+                '<span class="a-price a-text-price" data-a-strike="true"><span class="basisPrice">Precio recomendado: '
+                '<span class="a-offscreen">69,99€</span></span></span>'
+                '{"desktop_buybox_group_1":[{"displayPrice":"49,99&nbsp;€","priceAmount":49.99,"currencySymbol":"€"}]}'
+                '<div data-asin="B0CARRUSEL"><a href="/dp/B0CARRUSEL">LEGO KPop Demon Hunters</a>'
+                '<span class="a-offscreen">55,99€</span></div>')
+        ps = v.extraer(html, "https://www.amazon.es/dp/B0DWDK2V4R")
+        self.assertEqual((ps[0]["nombre"], ps[0]["precio"], ps[0]["precio_antes"]),
+                         ("LEGO Star Wars Nave Estelar de Jango Fett 75433", 49.99, 69.99))
+        self.assertEqual(ps[0]["url"], "https://www.amazon.es/dp/B0DWDK2V4R")
+
     def test_lectores_game_y_jysk(self):
         """18/11/2026: GAME daba 4 productos de 24 y Jysk 1 de 36; ahora sus tarjetas, con el mínimo de 30 días."""
         game = ('<article class="ProductListCard-x"><a href="/game-hh-st-rgb-negro-auriculares-gaming/232337"><h3>GAME '

@@ -1077,6 +1077,9 @@ def extraer(html, base_url, extra_json=()):
             e = etiquetas.get(asin_de(p.get("url")) or "")
             if e and p.get("precio_antes") and abs(p["precio_antes"] - e[1]) < 0.015:
                 p["ref_tienda"] = e[0]
+        principal = ficha_amazon(html, base_url)
+        if principal:  # en una ficha, el producto de la página va primero (no el primero del carrusel)
+            productos = [principal] + [p for p in productos if asin_de(p.get("url")) != asin_de(base_url)]
         return productos
     productos = _extraer(html, base_url, extra_json)
     for p in productos:
@@ -1085,6 +1088,26 @@ def extraer(html, base_url, extra_json=()):
         nombre = nombre_zalando(p.get("url")) if "zalando." in host else None
         p["nombre"] = nombre or nombre_con_marca_de_ficha(p)
     return productos
+
+
+RE_AMZ_TITULO = re.compile(r'id="productTitle"[^>]*>\s*([^<]+?)\s*<')
+RE_AMZ_COMPRA = re.compile(r'"desktop_buybox_group_1":\[\{[^\]]*?"priceAmount":([\d.]+)')
+RE_AMZ_RECOMENDADO = re.compile(r'class="[^"]*basisPrice[^"]*"[^>]*>.{0,300}?a-offscreen">\s*([\d.,]+)\s*(?:&nbsp;)?€', re.S)
+
+
+def ficha_amazon(html, url):
+    """Ficha de Amazon (/dp/ASIN): título y precio del bloque de compra (lo que ve el comprador, sin sesión), y el
+    precio recomendado tachado. Sin esto la ficha daba el primer producto del carrusel de recomendados (LEGO 75433:
+    salía un LEGO KPop de 55,99 € en vez de 49,99 €, Zeta 18/11/2026)."""
+    asin = asin_de(url)
+    t, c = RE_AMZ_TITULO.search(html or ""), RE_AMZ_COMPRA.search(html or "")
+    if not (asin and t and c and "/dp/" in urlparse(url).path):
+        return None
+    r = RE_AMZ_RECOMENDADO.search(html)
+    antes = a_numero(r.group(1)) if r else None
+    precio = float(c.group(1))
+    return {"nombre": unescape(t.group(1)).strip(), "precio": precio, "precio_antes": antes if antes and antes > precio else None,
+            "url": f"https://www.amazon.es/dp/{asin}", "ean": None, "marca": None}
 
 
 RE_MARCA_TARJETA = re.compile(r'class="[^"]*\b(?:product-)?(?:brand|marca|manufacturer)\w*[^"]*"[^>]*>\s*([^<]{2,40}?)\s*<',
