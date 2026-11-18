@@ -4514,6 +4514,11 @@ class EmparejamientoPorTipo(unittest.TestCase):
         self.assertFalse(mp("Converse Chuck Taylor All Star Lift Clean OX", "Converse Chuck Taylor All Star High"), "corte")
         self.assertTrue(mp("Sony WH-CH720N Azul Auriculares inalámbricos", "Sony WH-CH720N Auriculares Bluetooth"))
         self.assertTrue(mp("Zapatos Botas Dr. Martens 1460 Cherry Red", "Botas DR. Martens 1460"))
+        # #225: duplicado no visto ("+3" de edad y "15 cm" contaban como número de modelo; juguete/juguetes)
+        self.assertTrue(mp("Paw Patrol Patrulla Canina Camión Bomberos y Marshall Juguetes niños +3 | Camión de bomberos "
+                           "Marshall de 15 cm con figura de Marshall para recrear aventuras de Patrulla Canina. +3 años.",
+                           "Juguete Patrulla Canina Camión de Bomberos 15 cm con Figura de Marshall (Paw Patrol Spin "
+                           "Master, +3 Años)"))
         # Zeta (18/11/2026): los reacondicionados, fuera; y un hilo de reacondicionado no es antecedente del nuevo
         self.assertFalse(mp("Apple iPhone 16 128GB Negro", "Apple iPhone 16 128GB Reacondicionado Grado A"))
         for n in ("iPhone 15 128GB (Reacondicionado)", "Amazon Renewed Galaxy S24", "BOSS Segunda Mano Jersey",

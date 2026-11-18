@@ -2732,7 +2732,7 @@ def genero(texto):
 def numero_modelo(texto, de_marca=frozenset()):
     """El primer número del modelo, sin medidas ni capacidades: "Xiaomi 18 Pro 12 GB" -> "18"; "Xiaomi 15t 12/256"
     -> "15"; "Galaxy Tab A11+" -> "11". None si no hay."""
-    limpio = RE_RUIDO_TITULO.sub(" ", texto or "").lower()
+    limpio = _limpiar_titulo(texto).lower()  # sin edades ("+3") y con "15 cm" -> "15cm" (una medida, no el modelo)
     for t in re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", limpio).encode("ascii", "ignore").decode()):
         if t in de_marca or RE_UNIDAD.match(t) or not any(c.isdigit() for c in t):
             continue
@@ -2767,15 +2767,26 @@ def _rasgos(texto):
             bool(RE_JUEGO.search(texto)), frozenset(tokens(texto)), bool(RE_RECOPILACION.search(texto)))
 
 
-def marca_y_modelo(texto, marca=None):
-    """-> (palabras de la marca, palabras del modelo, códigos de modelo, tipos de producto)."""
+def _limpiar_titulo(texto):
+    """El título sin ruido (precios, tallas, edades, años) y con las medidas pegadas a su número."""
     limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", texto or ""))
     # "256 GB" -> "256gb"; "6+128" y "6/128" (RAM + almacenamiento de un móvil) -> "6gb 128gb"
     limpio = re.sub(r"\b(\d{1,2})\s*(?:gb)?\s*[+/]\s*(\d{2,4})(?:\s*gb)?\b(?!\s*(?:€|%))", r"\1gb \2gb", limpio,
                     flags=re.I)
     limpio = re.sub(r"(\d)\s+(gb|tb|mah|hz|mhz|mm|cm|w|ml|kg)\b", r"\1\2", limpio, flags=re.I)
     limpio = re.sub(r"\b([a-z]+\d+)\+", r"\1 plus", limpio, flags=re.I)  # "Tab A11+" -> "Tab A11 plus" (no "7+ años")
-    limpio = re.sub(r"\bcode in a box\b|\bciab\b", " ", limpio, flags=re.I)  # formato de venta, no el juego
+    limpio = re.sub(r"(?<![a-z0-9])\+\s?\d{1,2}\b", " ", limpio, flags=re.I)  # "niños +3": edad (#225, 18/11/2026)
+    return re.sub(r"\bcode in a box\b|\bciab\b", " ", limpio, flags=re.I)  # formato de venta, no el juego
+
+
+def _singular(t):
+    """'juguetes' -> 'juguete', 'figuras' -> 'figura' (#225: "juguete" y "juguetes" contaban como distintas)."""
+    return t[:-1] if len(t) > 4 and t.endswith("s") and not any(c.isdigit() for c in t) and t not in VARIANTES else t
+
+
+def marca_y_modelo(texto, marca=None):
+    """-> (palabras de la marca, palabras del modelo, códigos de modelo, tipos de producto)."""
+    limpio = _limpiar_titulo(texto)
     rx = rx_marcas()
     marcas = set(rx.findall(sin_tildes(limpio.lower()))) if rx else set()  # Lancome = Lancôme
     if marca:
@@ -2783,7 +2794,7 @@ def marca_y_modelo(texto, marca=None):
     for t in tokens(limpio) & set(MARCA_DE_GAMA):  # "POCO M7" es Xiaomi aunque el título no lo diga
         marcas.add(MARCA_DE_GAMA[t])
     de_marca = set().union(*(tokens(m) for m in marcas)) if marcas else set()
-    modelo = {t for t in tokens(limpio) if t not in de_marca and t not in COLORES and t not in GENERICAS_POST
+    modelo = {_singular(t) for t in tokens(limpio) if t not in de_marca and t not in COLORES and t not in GENERICAS_POST
               and t not in GENERICAS and t not in PALABRAS_ANUNCIO and not tipos_producto(t)}
     return de_marca, modelo, codigos_modelo(texto or ""), tipos_producto(texto or "")
 
@@ -2860,8 +2871,9 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
         # una palabra poco frecuente en cada lado que el otro no tiene = modelos distintos.
         def raras(m, otro):
             return {t for t in m - otro if not any(c.isdigit() for c in t) and len(idx.get(t, ())) < 150}
-        if raras(mo_a, mo_b) and raras(mo_b, mo_a):
-            return False
+        cubre = len(mo_a & mo_b) / max(1, min(len(mo_a), len(mo_b)))
+        if raras(mo_a, mo_b) and raras(mo_b, mo_a) and cubre < 0.85:
+            return False  # con el 85 % del modelo en común, una palabra rara suelta es descripción o fabricante (#225)
     if idx and not any(c.isdigit() for t in mo_b for c in t) and all(len(idx.get(t, ())) > 100 for t in mo_b):
         return False  # solo palabras corrientes ("adidas Originals bermuda", "Figuras Funko Pop"): no es un producto
     if mo_b and all(any(c.isdigit() for c in t) for t in mo_b) and idx \
