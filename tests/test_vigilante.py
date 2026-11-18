@@ -1027,6 +1027,7 @@ class Piezas(unittest.TestCase):
             v.descargar, v.time.sleep = orig, sleep
         self.assertEqual(sorted(p["nombre"] for p in ps2), ["Logitech G733 Lightspeed Lilas", "Oral-B Vitality Pro Morado"])
         self.assertTrue(all("pccomponentes.com" in p["url"] for p in ps2))
+        self.assertTrue(all(p.get("_precio_comparador") for p in ps2), "leído en el comparador: lo confirma la tienda")
         # En la web de la propia tienda no cambia nada.
         propios = [{"nombre": "X", "precio": 1.0, "precio_antes": None, "url": None}]
         self.assertIs(v.via_comparador("", propios, "pccomponentes.com", "https://www.pccomponentes.com/ofertas"), propios)
@@ -1445,6 +1446,35 @@ class Rondas(Base):
             self.assertEqual([x["n"] for x in self.ronda()], ["Samsung Odyssey G5"])
         finally:
             v.via_comparador, v.historico_comparador = orig
+
+    def test_precio_de_comparador_lo_confirma_la_tienda(self):
+        # Zeta (18/11/2026): "los precios de las propias tiendas son los que mandan, los comparadores son solo para
+        # comparar". Un precio leído en PCComTracker solo se avisa si la ficha de la tienda lo confirma.
+        hist = {"Samsung Odyssey G5": {"minimo": 199.0, "habitual": 279.0}}
+        orig = (v.via_comparador, v.historico_comparador, v.NavegadorNormal, v.confirmar_en_ficha)
+
+        class Nav:
+            def __init__(self, cfg=None): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        respuesta = [(None, "reto antibot")]
+        v.via_comparador = lambda html, ps, t, base, estricto=False: [
+            {**p, "_precio_comparador": True,
+             "historico_url": "https://pccomtracker.com/producto/" + p["nombre"].replace(" ", "-")} for p in ps
+        ] if "pccomponentes" in t else ps
+        v.historico_comparador = lambda url: {**hist[url.rsplit("/", 1)[1].replace("-", " ")], "url": url}
+        v.NavegadorNormal = Nav
+        v.confirmar_en_ficha = lambda p, tol=0.02, nav=None: respuesta[0]
+        try:
+            self.red.tiendas = {"mediamarkt": [], "pccomponentes": [{"n": "Logitech G502 X", "m": "Logitech", "p": 59.0}]}
+            self.ronda()
+            self.red.tiendas["pccomponentes"].append({"n": "Samsung Odyssey G5", "m": "Samsung", "p": 204.0})
+            self.assertEqual(self.ronda(), [], "la tienda no se deja leer: no se avisa")
+            respuesta[0] = (True, "confirmado")
+            self.red.tiendas["pccomponentes"][-1]["p"] = 189.0
+            self.assertEqual([x["n"] for x in self.ronda()], ["Samsung Odyssey G5"])
+        finally:
+            v.via_comparador, v.historico_comparador, v.NavegadorNormal, v.confirmar_en_ficha = orig
 
     def test_sin_idealo_exige_mas_descuento(self):
         self.preparar()

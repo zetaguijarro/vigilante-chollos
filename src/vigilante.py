@@ -4395,6 +4395,10 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                 if p.get("url") and not p.get("historico_url") and raiz(tienda) not in urlparse(p["url"]).netloc \
                         and re.search(r"/(?:producto|productos|product)/", urlparse(p["url"]).path):
                     p["historico_url"] = p["url"]
+                if raiz(tienda) not in urlparse(final).netloc:
+                    # Leído en un comparador: su precio solo vale si la propia tienda lo confirma (Zeta, 18/11/2026:
+                    # "los precios de las propias tiendas son los que mandan, los comparadores son solo para comparar").
+                    p["_precio_comparador"] = True
             nuevos = [p for p in nuevos if (p["nombre"].lower(), p["precio"]) not in claves]
             if not nuevos:
                 break
@@ -5770,7 +5774,7 @@ def ficha_se_intenta(cfg, tienda):
     return not any(d == h or d.endswith("." + h) for h in cfg.get("filtros_codigo", {}).get("ficha_no_leer", []))
 
 
-def confirmar_en_ficha(p, tolerancia=0.02):
+def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
     """Antes de avisar, el código abre la ficha del producto y comprueba que es ese producto y a ese
     precio. Caso real (16/11/2026): Hermes descartaba al verificar lo que el listado leía mal (mochila
     adidas a 36 € en el listado de Spartoo y a 73,51 € en su ficha, con datos de otra marca; robot
@@ -5784,7 +5788,7 @@ def confirmar_en_ficha(p, tolerancia=0.02):
         # precio) y lo descartaría. El precio ya viene de los datos de la propia campaña.
         return None, "Privalia: el producto no tiene ficha propia"
     try:
-        ficha = leer_ficha(p["url"])
+        ficha = leer_ficha(p["url"], nav)
     except Exception as e:
         return None, f"ficha no leída: {str(e)[:80]}"
     if ficha.get("error") or ficha.get("antibot") or not ficha.get("precio_ahora"):
@@ -5867,7 +5871,7 @@ def analizar_ficha(html, final, datos=()):
     var = variantes_de(ld, html)
     if var:
         f["variantes"] = var
-    for rx in (RE_H1, RE_OG_TITULO, RE_TITLE):
+    for rx in (RE_AMZ_TITULO, RE_H1, RE_OG_TITULO, RE_TITLE):  # Amazon: su productTitle (el primer h1 es otra cosa)
         m = rx.search(html)
         if m and _texto(m.group(1)).strip():
             f["titulo"] = unescape(_texto(m.group(1)))[:200]
@@ -7513,7 +7517,8 @@ def ronda(categoria, solo=None):
                     continue
                 # El precio en pantalla es el de Amazon (Zeta, 18/11/2026): la oferta es de Amazon, comparada con el
                 # habitual de PcComponentes. Los duplicados se miran otra vez, ahora como Amazon.
-                p.update(tienda="amazon.es", url=ref["amazon_url"], precio=pa, _vendedor_pcct="amazon")
+                p.update(tienda="amazon.es", url=ref["amazon_url"], precio=pa, _vendedor_pcct="amazon",
+                         _precio_comparador=True)
                 ref = {**ref, "fuente_corta": "habitual en PcComponentes (PCComTracker)"}
                 ref.pop("tienda_url", None)
                 p["_hist"], p["ch"] = ref, estado_chollometro(p, copia)
@@ -7630,6 +7635,7 @@ def ronda(categoria, solo=None):
     # llenar sola la tanda. Los mejores de cada tienda primero (la lista ya va ordenada por score).
     max_tienda = f.get("max_por_tienda_y_ronda", 2)
     por_tienda, enviar = Counter(), []
+    nav_tiendas, nav_ctx = None, None  # Chrome normal para confirmar precios de comparador, solo si hace falta
     recientes = avisos_recientes(con, f.get("repetido_horas", 24)) if revisar else []
     for p in revisar:
         if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
@@ -7638,7 +7644,24 @@ def ronda(categoria, solo=None):
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
             continue  # 'vuelve' (oferta caducada que regresa) se reenvía a propósito
         if por_tienda[p["tienda"]] < max_tienda and len(enviar) < hueco:
-            if f.get("confirmar_ficha") and not p.get("gratis") and ficha_se_intenta(cfg, p["tienda"]):
+            if p.get("_precio_comparador") and not p.get("gratis"):
+                # Precio de comparador: solo vale si la propia tienda lo confirma, con Chrome normal. Si la tienda no se
+                # deja leer (reto, sin precio), no se avisa.
+                if nav_tiendas is None:
+                    try:
+                        nav_ctx = NavegadorNormal(cfg)
+                        nav_tiendas = nav_ctx.__enter__()
+                    except Exception as e:
+                        nav_tiendas = False
+                        log(f"sin navegador para confirmar precios de comparador: {str(e)[:80]}")
+                ok_f, motivo = (confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02), nav_tiendas) if nav_tiendas
+                                else (None, "sin navegador"))
+                if ok_f is not True:
+                    log(f"precio de comparador sin confirmar en la tienda, no se envía: {p['tienda']} "
+                        f"{p['nombre'][:60]} a {p['precio']} €: {motivo}")
+                    continue
+                p["ficha_ok"] = True
+            elif f.get("confirmar_ficha") and not p.get("gratis") and ficha_se_intenta(cfg, p["tienda"]):
                 p["ficha_ok"], motivo = confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02))
                 if p["ficha_ok"] is False:
                     log(f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
@@ -7650,6 +7673,11 @@ def ronda(categoria, solo=None):
                     continue
             por_tienda[p["tienda"]] += 1
             enviar.append(p)
+    if nav_ctx is not None and nav_tiendas:
+        try:
+            nav_ctx.__exit__(None, None, None)
+        except Exception:
+            pass
     for p in finales:
         estadistica(con, p["tienda"], candidatos=1)
     for p in enviar:
