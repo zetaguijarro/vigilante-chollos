@@ -345,6 +345,14 @@ def _descargar(url, timeout):
             return data.decode("utf-8", errors="replace"), r.geturl()
 
 
+def en_seccion(tienda, url):
+    """Si la tienda va con ruta (samsung.com/es), el enlace debe quedarse dentro: la portada de Samsung enlaza las de
+    otros países (/uk/, /de/...) y el mapa acababa leyendo páginas en otro idioma (Zeta, 18/11/2026)."""
+    seccion = urlparse(url_tienda(tienda)).path.rstrip("/").lower()
+    ruta = unquote(urlparse(url).path).lower()
+    return not seccion or ruta == seccion or ruta.startswith(seccion + "/")
+
+
 def url_tienda(dominio):
     if dominio.startswith("http"):
         return dominio
@@ -4954,7 +4962,7 @@ def _mapa_tienda(cfg, tienda, modo, urls, catalogo_actual, probar, minimo):
         while cola and len(pruebas) < probar:
             u, nivel = cola.pop(0)
             clave = unquote(urlparse(u).path).rstrip("/").lower() + "?" + urlparse(u).query
-            if clave in vistas or not permitido(u):
+            if clave in vistas or not permitido(u) or not en_seccion(tienda, u):
                 continue
             vistas.add(clave)
             try:

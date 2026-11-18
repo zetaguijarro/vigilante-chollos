@@ -4542,6 +4542,11 @@ class EmparejamientoPorTipo(unittest.TestCase):
         enlaces = v.enlaces_de_mapa(portada, "https://www.elcorteingles.es/")
         self.assertEqual(enlaces[:2], ["https://www.elcorteingles.es/black-friday/", "https://www.elcorteingles.es/rebajas/"])
         self.assertNotIn("https://www.elcorteingles.es/mi-cuenta/", enlaces)
+        # Samsung enlaza las portadas de otros países: el mapa de samsung.com/es no sale de /es/
+        self.assertTrue(v.en_seccion("samsung.com/es", "https://www.samsung.com/es/offer/"))
+        self.assertFalse(v.en_seccion("samsung.com/es", "https://www.samsung.com/uk/offer/"))
+        self.assertFalse(v.en_seccion("samsung.com/es", "https://www.samsung.com/estonia/"))
+        self.assertTrue(v.en_seccion("elcorteingles.es", "https://www.elcorteingles.es/rebajas/"))
         # Zeta: "las categorías más frecuentes en Chollometro": la página de una familia caliente pesa más
         pesos = {"televisores": 2.5, "ropa": 0.3}
         self.assertEqual(v._peso_pagina(pesos, "https://www.elcorteingles.es/black-friday/electronica/tv/"), 2.5)
