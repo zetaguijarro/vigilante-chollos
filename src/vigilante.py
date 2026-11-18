@@ -4906,7 +4906,7 @@ def mapa(*tiendas, probar=45, guardar=20, minimo=8):
                         c["tiendas"].remove(tienda)
                         c.setdefault("navegador", []).append(tienda)
                 CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        buenas = ordenar_por_demanda(tienda, [x for x in resultado["pruebas"] if x[1] >= minimo], cfg)
+        buenas = ordenar_por_demanda(tienda, [x for x in resultado["pruebas"] if x[1] >= minimo and en_seccion(tienda, x[0])], cfg)
         if len(buenas) >= 2:
             cat = urls_catalogo()
             cat[tienda] = [u for u, _, _ in buenas[:guardar]]
@@ -4954,7 +4954,7 @@ def reordenar_mapas(guardar=20, minimo=8):
     cat = urls_catalogo()
     for f in sorted((DATOS / MAPAS).glob("*.json")):
         d = json.loads(f.read_text(encoding="utf-8"))
-        buenas = ordenar_por_demanda(d["tienda"], [x for x in d["pruebas"] if x[1] >= minimo], cfg)
+        buenas = ordenar_por_demanda(d["tienda"], [x for x in d["pruebas"] if x[1] >= minimo and en_seccion(d["tienda"], x[0])], cfg)
         if len(buenas) >= 2:
             cat[d["tienda"]] = [u for u, _, _ in buenas[:guardar]]
             print(f"{d['tienda']:28} {len(buenas):3} buenas -> {len(cat[d['tienda']])} en el catálogo; primera: "

@@ -279,7 +279,8 @@
    "aliexpress.com",
    "neobyte.es",
    "tradeinn.com",
-   "privatesportshop.es"
+   "privatesportshop.es",
+   "tiendasmgi.es"
   ],
   "paginas": 1,
   "pausa_min": 30,
@@ -382,13 +383,88 @@
   },
   "elcorteingles.es": {
    "cada_min": 15,
-   "por_ronda": 2,
+   "por_ronda": 4,
    "_nota": "17/11/2026: 243 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
   },
   "carrefour.es": {
    "cada_min": 15,
    "por_ronda": 2,
    "_nota": "17/11/2026: 322 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
+  },
+  "lidl.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "outlet-pc.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "coolmod.com": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "asos.com/es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "primor.eu": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "tiendasmgi.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "xtralife.com": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "ldlc.com/es-es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "dia.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "druni.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "samsung.com/es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "hipercor.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "womensecret.com/es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "footlocker.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "alcampo.es": {
+   "cada_min": 20,
+   "por_ronda": 3,
+   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   }
  },
  "entrega": {
@@ -500,15 +576,14 @@
   },
   "generalistas": {
    "cada_min": 10,
-   "tiendas": [
-    "tiendasmgi.es"
-   ],
+   "tiendas": [],
    "navegador": [
     "amazon.es",
     "aliexpress.com",
     "miravia.es",
     "carrefour.es",
-    "elcorteingles.es"
+    "elcorteingles.es",
+    "tiendasmgi.es"
    ],
    "apartadas": {
     "groupon.es": "Lee bien con navegador (18 ofertas), pero son servicios sin marca ni precio de mercado: con las reglas actuales nunca pasa nada. Necesitaría reglas propias.",
