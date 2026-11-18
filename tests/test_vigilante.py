@@ -4233,53 +4233,108 @@ class MiraviaAliExpress(Base):
 
 
 
-class ListaVigilancia(unittest.TestCase):
-    """Encargo 9 (18/11/2026): ASIN de los hilos de Amazon de 200° o más, por la redirección de Chollometro."""
+class DestinoDeHilos(unittest.TestCase):
+    """18/11/2026: adónde lleva cada hilo (cm_destino) y su clave de producto, para duplicados por enlace y para
+    el precio con que triunfó (cm_ref). Antes solo ASIN de Amazon (asins/vigilancia)."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self._orig = v.DATOS, v.DB, v.destino_hilo, v.time.sleep
+        self._orig = v.DATOS, v.DB, v.destino_hilo, v.time.sleep, v.cargar_config, v.build_opener
         v.DATOS, v.DB = self.tmp, self.tmp / "vistos.db"
         v.time.sleep = lambda s: None
+        v.cargar_config = lambda: {"categorias": {"x": {"tiendas": ["amazon.es", "mediamarkt.es"]}}}
+        self.ahora = int(time.time())
         con = v.bd()
-        filas = [(1, "Café A", 10.0, 500, '{"linkHost":"www.amazon.es","mainGroup":{"threadGroupName":"Supermercado"}}'),
+        filas = [(1, "Café A", 10.0, 500, '{"linkHost":"www.amazon.es"}'),
                  (2, "Café A otra vez", 8.0, 300, '{"linkHost":"www.amazon.es"}'),
                  (3, "Frío", 5.0, 50, '{"linkHost":"www.amazon.es"}'),
-                 (4, "Otra tienda", 5.0, 900, '{"linkHost":"www.pccomponentes.com"}'),
-                 (5, "Corto", 20.0, 400, '{"linkHost":"amzn.eu"}')]
+                 (4, "Zapatillas", 50.0, 900, '{"linkHost":"www.zalando.es"}'),
+                 (5, "Tele", 300.0, 250, '{"linkHost":"www.mediamarkt.es"}')]
         for i, t, p, temp, e in filas:
             con.execute("INSERT INTO cm (id, titulo, precio, tienda, host, temp, publicado, caducado, visto, extra) "
-                        "VALUES (?,?,?,?,?,?,?,0,'',?)", (i, t, p, "", "", temp, 1000 + i, e))
+                        "VALUES (?,?,?,?,?,?,?,1,'',?)", (i, t, p, "", "", temp, self.ahora - 86400 * i, e))
         con.commit()
         con.close()
 
     def tearDown(self):
-        v.DATOS, v.DB, v.destino_hilo, v.time.sleep = self._orig
+        v.DATOS, v.DB, v.destino_hilo, v.time.sleep, v.cargar_config, v.build_opener = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_guarda_precio_minimo_y_temp_maxima(self):
+    def test_clave_producto(self):
+        self.assertEqual(v.clave_producto("https://www.amazon.es/Cafe-X/dp/b0fcxr32cr?tag=a"), "amazon:B0FCXR32CR")
+        self.assertEqual(v.clave_producto("https://es.aliexpress.com/item/1005006001.html?spm=1"), "aliexpress:1005006001")
+        self.assertEqual(v.clave_producto("https://www.miravia.es/p/i3058766-s51.html"), "miravia:3058766")
+        self.assertEqual(v.clave_producto("https://www.miravia.es/p/cafetera-xx-i3058766.html"), "miravia:3058766")
+        self.assertEqual(v.clave_producto("https://www.mediamarkt.es/es/product/_tv-lg-1234.html?x=1"),
+                         "mediamarkt.es/es/product/_tv-lg-1234.html")
+        self.assertIsNone(v.clave_producto("https://www.mediamarkt.es/"), "una portada no es un producto")
+        self.assertIsNone(v.clave_producto("https://www.chollometro.com/ofertas/x-1"))
+        self.assertIsNone(v.clave_producto(None))
+
+    def test_destino_sigue_cabeceras_y_parametros(self):
+        saltos = {"https://www.chollometro.com/visit/threadmain/7":
+                  "https://www.awin1.com/cread.php?awinmid=1&ued=https%3A%2F%2Fwww.mediamarkt.es%2Fes%2Fproduct%2F_tv-1.html",
+                  "https://amzn.eu/d/abc": "https://www.amazon.es/dp/B000000009?tag=x"}
+        pedidas = []
+
+        class Abridor:
+            def open(self, req, timeout=None):
+                pedidas.append(req.full_url)
+                if req.full_url in saltos:
+                    raise v.HTTPError(req.full_url, 302, "Found", {"Location": saltos[req.full_url]}, None)
+                raise AssertionError("no debe pedir la tienda")
+        v.build_opener = lambda *a: Abridor()
+        self.assertEqual(v.destino_hilo(7), "https://www.mediamarkt.es/es/product/_tv-1.html")
+        self.assertEqual(pedidas, ["https://www.chollometro.com/visit/threadmain/7"], "el afiliado no se pide")
+        saltos["https://www.chollometro.com/visit/threadmain/8"] = "https://amzn.eu/d/abc"
+        self.assertEqual(v.destino_hilo(8), "https://www.amazon.es/dp/B000000009?tag=x")
+
+    def test_destinos_guarda_clave_y_cm_ref(self):
         destinos = {1: "https://www.amazon.es/dp/B000000001?tag=x", 2: "https://www.amazon.es/dp/B000000001",
-                    5: "https://www.amazon.es/dp/B000000005"}
+                    4: "https://www.zalando.es/", 5: "https://www.mediamarkt.es/es/product/_tele-55.html"}
         pedidos = []
         v.destino_hilo = lambda h: (pedidos.append(h), destinos[h])[1]
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(v.asins_vigilancia(), (3, 2))
-        self.assertEqual(sorted(pedidos), [1, 2, 5])  # ni el frío ni el de otra tienda
+            self.assertEqual(v.destinos_cm(), (4, 3))
+        self.assertEqual(pedidos[-1], 4, "las tiendas que no leemos, al final; el frío, nunca")
         con = v.bd()
-        fila = con.execute("SELECT precio, temp, grupo FROM vigilancia WHERE asin='B000000001'").fetchone()
-        self.assertEqual(fila, (8.0, 500, "Supermercado"))
+        self.assertEqual(con.execute("SELECT hilos, precio_min, precio_max, temp_max FROM cm_ref "
+                                     "WHERE clave='amazon:B000000001'").fetchone(), (2, 8.0, 10.0, 500))
+        self.assertEqual(con.execute("SELECT url, clave FROM cm_destino WHERE hilo=4").fetchone(),
+                         ("https://www.zalando.es/", None))
         con.close()
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(v.asins_vigilancia(), (0, 0))  # ya mirados
+            self.assertEqual(v.destinos_cm(), (0, 0), "ya mirados")
 
     def test_para_con_429_sin_marcar(self):
         def falla(h):
             raise v.HTTPError("u", 429, "Too Many", {}, None)
         v.destino_hilo = falla
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(v.asins_vigilancia(), (0, 0))
+            self.assertEqual(v.destinos_cm(), (0, 0))
         con = v.bd()
-        self.assertEqual(con.execute("SELECT COUNT(*) FROM asin_hilos").fetchone()[0], 0)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM cm_destino").fetchone()[0], 0)
         con.close()
+
+    def test_duplicado_y_contraste_por_enlace(self):
+        con = v.bd()
+        con.executemany("INSERT INTO cm_destino VALUES (?,?,?,'')",
+                        [(1, "https://www.amazon.es/dp/B000000001", "amazon:B000000001"),
+                         (2, "https://www.amazon.es/dp/B000000001", "amazon:B000000001")])
+        con.commit()
+        copia = v.cargar_chollometro(con)
+        con.close()
+        # Título que no se parece en nada: por el enlace es el mismo producto.
+        p = {"nombre": "Nescafé Dolce Gusto cápsulas espresso intenso 30 uds", "tienda": "amazon.es", "precio": 8.0,
+             "url": "https://www.amazon.es/dp/B000000001"}
+        self.assertEqual(v.estado_chollometro(p, copia), "misma", "publicado hace 2 días al mismo precio")
+        self.assertEqual(v.estado_chollometro({**p, "precio": 9.0}, copia), "misma:8")
+        self.assertEqual(p["_cm_hot"]["temp"], 500)
+        self.assertEqual(v.chollo_previo(p)["id"], 1, "sin código de modelo, pero por el enlace (el más caliente)")
+        self.assertIsNone(v.ya_salio_mas_barato(p))
+        self.assertEqual(v.ya_salio_mas_barato({**p, "precio": 12.0}), 10.0, "más caro que cuando triunfó")
+        self.assertIsNone(v.ya_salio_mas_barato({**p, "url": "https://www.amazon.es/dp/B000000002", "precio": 99}))
+
+
 if __name__ == "__main__":
     unittest.main()

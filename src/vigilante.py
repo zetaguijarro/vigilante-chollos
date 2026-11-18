@@ -1305,12 +1305,21 @@ def bd():
         -- Fichas de PCComTracker por código de modelo (17/11/2026): sirven de histórico para el mismo modelo en
         -- Amazon, MediaMarkt... Se llena al leer su catálogo; su buscador va por /api/ (prohibido en su robots.txt).
         CREATE TABLE IF NOT EXISTS pcct (codigo TEXT, url TEXT, nombre TEXT, PRIMARY KEY (codigo, url)) WITHOUT ROWID;
-        -- Lista de vigilancia de Amazon (encargo 9): productos que ya triunfaron en Chollometro. precio = el más
-        -- bajo con que llegó a 200°, temp = la más alta. asin_hilos: hilos ya mirados (con o sin ASIN).
-        CREATE TABLE IF NOT EXISTS vigilancia (asin TEXT PRIMARY KEY, hilo INTEGER, titulo TEXT, precio REAL,
-            temp INTEGER, publicado INTEGER, grupo TEXT, alta TEXT);
-        CREATE TABLE IF NOT EXISTS asin_hilos (hilo INTEGER PRIMARY KEY, asin TEXT, fecha TEXT);
+        -- Adónde lleva "Ir al chollo" de cada hilo (18/11/2026), con la clave del producto (clave_producto:
+        -- amazon:ASIN, aliexpress:ID, miravia:ID u host+ruta). Une Chollometro con lo que leen las rondas:
+        -- duplicados por enlace y precio con que triunfó. clave NULL = mirado sin enlace de producto.
+        CREATE TABLE IF NOT EXISTS cm_destino (hilo INTEGER PRIMARY KEY, url TEXT, clave TEXT, fecha TEXT);
+        CREATE INDEX IF NOT EXISTS cm_destino_clave ON cm_destino(clave) WHERE clave IS NOT NULL;
     """)
+    if con.execute("SELECT 1 FROM sqlite_master WHERE name='asin_hilos'").fetchone():
+        # 18/11/2026: asin_hilos y vigilancia (solo Amazon) pasan a cm_destino (todas las tiendas) y cm_ref.
+        con.executescript("""
+            INSERT OR IGNORE INTO cm_destino SELECT hilo,
+                CASE WHEN asin IS NOT NULL THEN 'https://www.amazon.es/dp/' || asin END,
+                CASE WHEN asin IS NOT NULL THEN 'amazon:' || asin END, fecha FROM asin_hilos;
+            DROP TABLE asin_hilos;
+            DROP TABLE IF EXISTS vigilancia;
+        """)
     if not con.execute("SELECT 1 FROM meta WHERE k='cm_codigos_v1'").fetchone():
         # Una vez: los hilos que ya estaban en la copia. Los nuevos los indexa guardar_hilos.
         con.executemany("INSERT OR IGNORE INTO cm_codigos VALUES (?,?)",
@@ -1325,6 +1334,13 @@ def bd():
         # 18/11/2026: datos del hilo para analizar categorías y productos (grupo, enlace, cupón...).
         con.execute("ALTER TABLE cm ADD COLUMN extra TEXT")
         con.commit()
+    # Una fila por producto: cuántos hilos, el último, y el precio más bajo y más alto con que llegó a 200°.
+    # La lista de vigilancia de Amazon (encargo 9) es WHERE clave LIKE 'amazon:%'. Después de la columna extra.
+    con.execute("""CREATE VIEW IF NOT EXISTS cm_ref AS SELECT d.clave, COUNT(*) AS hilos, MAX(c.publicado) AS ultimo,
+        MIN(CASE WHEN c.temp>=200 AND c.precio>0 THEN c.precio END) AS precio_min,
+        MAX(CASE WHEN c.temp>=200 AND c.precio>0 THEN c.precio END) AS precio_max,
+        MAX(c.temp) AS temp_max, MAX(c.extra LIKE '%"voucherCode":"_%') AS cupon
+        FROM cm_destino d JOIN cm c ON c.id = d.hilo WHERE d.clave IS NOT NULL GROUP BY d.clave""")
     if "desde" not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
         # Desde cuándo se sigue el precio de cada producto (histórico propio). Las filas viejas
         # empiezan a contar ahora: no se sabe cuándo se vieron por primera vez.
@@ -1365,6 +1381,34 @@ def asin_de(url):
     """El código ASIN de un enlace de Amazon, o None."""
     m = RE_ASIN.search(urlparse(url or "").path)
     return m.group(1).upper() if m else None
+
+
+RE_MIRAVIA_ITEM = re.compile(r"/p/(?:[^/]*-)?i(\d{5,})", re.I)
+
+
+def clave_producto(url):
+    """El mismo producto con la misma clave, venga de un hilo de Chollometro o de una ronda (18/11/2026):
+    amazon:ASIN, aliexpress:ID, miravia:ID; en el resto, host sin www + ruta sin parámetros. None si el enlace no
+    es de un producto (portada, sección corta, Chollometro)."""
+    if not url:
+        return None
+    u = urlparse(url)
+    host = (u.hostname or "").lower()
+    if not host or "chollometro" in host:
+        return None
+    if "amazon." in host:
+        a = asin_de(url)
+        return f"amazon:{a}" if a else None
+    if "aliexpress." in host:
+        m = RE_ALI_ITEM.search(u.path)
+        return f"aliexpress:{m.group(1)}" if m else None
+    if "miravia." in host:
+        m = RE_MIRAVIA_ITEM.search(u.path)
+        return f"miravia:{m.group(1)}" if m else None
+    ruta = unquote(u.path).rstrip("/").lower()
+    if len(ruta) < 8:
+        return None
+    return re.sub(r"^(www\d?|m|es|tienda|shop)\.", "", host) + ruta
 
 
 def clave_vista(tienda, p):
@@ -2222,7 +2266,10 @@ def cargar_chollometro(con):
     """Posts guardados (para comparar en memoria) y si la copia está al día."""
     filas = con.execute("SELECT id, titulo, precio, tienda, host, temp, publicado, caducado FROM cm").fetchall()
     claves = ("id", "titulo", "precio", "tienda", "host", "temp", "publicado", "caducado")
-    return {"hilos": [dict(zip(claves, f)) for f in filas], "fresca": chollometro_fresca(con)}
+    por_clave = {}  # clave de producto -> ids de hilos que llevan a él (cm_destino, 18/11/2026)
+    for clave, hilo in con.execute("SELECT clave, hilo FROM cm_destino WHERE clave IS NOT NULL"):
+        por_clave.setdefault(clave, set()).add(hilo)
+    return {"hilos": [dict(zip(claves, f)) for f in filas], "fresca": chollometro_fresca(con), "por_clave": por_clave}
 
 
 # Palabras que comparten productos distintos: no cuentan para decir que un hilo es el mismo producto
@@ -2270,15 +2317,20 @@ def estado_chollometro(p, copia=None):
     tienda = raiz(p["tienda"]) if p.get("tienda") else ""
     limite = (datetime.now() - timedelta(days=CM_RECIENTE_DIAS)).timestamp()
     misma, otros, hot = [], [], None
+    # Mismo enlace de producto que el hilo (cm_destino, 18/11/2026): es el mismo producto y la misma tienda
+    # aunque los títulos no se parezcan.
+    por_enlace = (copia.get("por_clave") or {}).get(clave_producto(p.get("url"))) or set()
     for h in copia["hilos"]:
-        if not mismo_post(p["nombre"], h["titulo"]):
+        enlace = h["id"] in por_enlace
+        if not enlace and not mismo_post(p["nombre"], h["titulo"]):
             continue
         if h["temp"] >= CM_HOT and (hot is None or h["temp"] > hot["temp"]) \
-                and mismo_producto_hot(p["nombre"], h["titulo"]):
+                and (enlace or mismo_producto_hot(p["nombre"], h["titulo"])):
             hot = h
         if not h["precio"] or (h["publicado"] < limite and h["caducado"]):
             continue
-        es_misma = len(tienda) >= 4 and (tienda in h["host"].lower() or tienda in h["tienda"].lower().replace(" ", ""))
+        es_misma = enlace or (len(tienda) >= 4 and (tienda in h["host"].lower()
+                                                    or tienda in h["tienda"].lower().replace(" ", "")))
         if es_misma:
             if abs(h["precio"] - p["precio"]) <= p["precio"] * 0.02:
                 misma.append(None)
@@ -2634,14 +2686,43 @@ CHOLLO_PREVIO_DIAS = 180
 PCCT_MAX_RONDA = 10  # fichas de PCComTracker que se piden por ronda para productos de otras tiendas
 
 
+def hilos_por_enlace(url):
+    """Hilos de Chollometro que llevan a este mismo producto (misma clave_producto en cm_destino)."""
+    clave = clave_producto(url)
+    if not clave:
+        return []
+    con = bd()
+    try:
+        filas = con.execute("SELECT cm.id, titulo, precio, tienda, host, temp, publicado, caducado FROM cm_destino d "
+                            "JOIN cm ON cm.id = d.hilo WHERE d.clave=?", (clave,)).fetchall()
+    finally:
+        con.close()
+    claves = ("id", "titulo", "precio", "tienda", "host", "temp", "publicado", "caducado")
+    return [dict(zip(claves, f)) for f in filas]
+
+
+def ya_salio_mas_barato(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
+    """El mismo producto (mismo enlace) llegó a `grados` en los últimos `dias`, y siempre más barato que ahora:
+    por encima del precio más alto con que triunfó, la comunidad no lo va a calentar (18/11/2026, propuesta
+    aprobada por Zeta). -> el precio más alto con que triunfó, o None."""
+    desde = (datetime.now() - timedelta(days=dias)).timestamp()
+    precios = [h["precio"] for h in hilos_por_enlace(p.get("url")) if h["precio"] and (h["temp"] or 0) >= grados
+               and (h["publicado"] or 0) >= desde]
+    techo = max(precios, default=None)
+    return techo if techo and p["precio"] > techo * 1.02 else None
+
+
 def chollo_previo(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
     """El mismo modelo (mismo código, por el índice cm_codigos) se publicó en Chollometro en los últimos `dias` con
     `grados` o más, y ahora está igual o más barato (sin bajar del 60 %: sería otro producto). La comunidad validó
-    ese precio: es contraste real aunque no haya comparador. Sin código de modelo no se intenta. -> hilo o None."""
-    if not codigos_modelo(p["nombre"]):
-        return None
+    ese precio: es contraste real aunque no haya comparador. Sin código de modelo no se intenta. -> hilo o None.
+    Desde el 18/11/2026 también por el enlace del producto (cm_destino), con o sin código de modelo."""
+    hilos = hilos_por_enlace(p.get("url"))
+    if codigos_modelo(p["nombre"]):
+        ya = {h["id"] for h in hilos}
+        hilos += [h for h in hilos_del_producto(p["nombre"]) if h["id"] not in ya]
     desde = (datetime.now() - timedelta(days=dias)).timestamp()
-    buenos = [h for h in hilos_del_producto(p["nombre"]) if h["precio"] and (h["temp"] or 0) >= grados
+    buenos = [h for h in hilos if h["precio"] and (h["temp"] or 0) >= grados
               and (h["publicado"] or 0) >= desde and h["precio"] * HOT_PRECIO_MIN <= p["precio"] <= h["precio"] * 1.0]
     return max(buenos, key=lambda h: h["temp"]) if buenos else None
 
@@ -2818,62 +2899,90 @@ class _SinRedireccion(HTTPRedirectHandler):
         return None
 
 
-def destino_hilo(hilo, saltos=4):
-    """Adónde lleva "Ir al chollo" de un hilo, leyendo solo las cabeceras Location (no descarga la tienda).
-    Chollometro -> path.chollometro.com -> amazon.es/dp/ASIN. Los amzn.eu/d/... dan un salto más (la cabecera
-    del acortador de Amazon). -> URL o None."""
+# Servicios de redirección y afiliados entre Chollometro y la tienda: se siguen sus cabeceras Location (o el
+# destino que llevan en un parámetro) sin descargar nada. En cuanto el enlace sale de ellos, es la tienda: no se pide.
+RE_REDIRECTOR = re.compile(
+    r"(^|\.)(chollometro\.com|amzn\.(eu|to)|(s|click|a)\.aliexpress\.com|awin1\.com|tradedoubler\.com|prf\.hn|"
+    r"tradetracker\.net|skimresources\.com|bit\.ly|tidd\.ly|linksynergy\.com|pntra\.com|anrdoezrs\.net|"
+    r"dpbolvw\.net|jdoqocy\.com|kqzyfj\.com|tkqlhce\.com|webgains\.com|effiliation\.com|admitad\.com|"
+    r"rover\.ebay\.[a-z.]+|ebay\.us)$", re.I)
+PARAMS_DESTINO = ("ued", "url", "murl", "dest", "destination", "dl", "u", "r")
+
+
+def destino_hilo(hilo, saltos=6):
+    """Adónde lleva "Ir al chollo" de un hilo, leyendo solo cabeceras Location (no descarga la tienda).
+    Chollometro -> path.chollometro.com -> amazon.es/dp/ASIN; amzn.eu y s.click.aliexpress dan un salto más; los
+    afiliados que llevan el destino en un parámetro (awin "ued", "url"...) se saltan sin pedirlos. -> URL."""
     url = f"https://www.chollometro.com/visit/threadmain/{hilo}"
     op = build_opener(_SinRedireccion)
-    for _ in range(saltos):
+    for n in range(saltos):
+        u = urlparse(url)
+        if not RE_REDIRECTOR.search(u.hostname or ""):
+            return url
+        q = parse_qs(u.query)
+        siguiente = next((q[k][0] for k in PARAMS_DESTINO if q.get(k, [""])[0].startswith("http")), None)
+        if siguiente and n:
+            url = siguiente
+            continue
         try:
             op.open(Request(url, headers={"User-Agent": UA}), timeout=15).close()
-            return url  # sin redirección: ya es el destino
+            return url  # sin redirección
         except HTTPError as e:
             if e.code not in (301, 302, 303, 307, 308):
                 raise
             url = urljoin(url, e.headers.get("Location") or "")
-        if asin_de(url) or not re.search(r"chollometro\.com|amzn\.(eu|to)|amazon\.[a-z.]+/(gp/r|s\?)", url):
-            return url
     return url
 
 
-def asins_vigilancia(max_hilos=200, pausa=3.0):
-    """`asins [N]`: saca el ASIN de hasta N hilos de Amazon con 200° o más que aún no se han mirado (los más
-    calientes primero) y los guarda en `vigilancia`. Para sola con un 403/429 (no reintenta)."""
+def tiendas_que_leemos(cfg):
+    """Raíces de las tiendas de tiendas.json (las de las categorías y las de Chrome normal)."""
+    t = set((cfg.get("navegador_normal") or {}).get("tiendas") or [])
+    for cat in (cfg.get("categorias") or {}).values():
+        t.update(cat.get("tiendas") or [])
+        t.update(cat.get("navegador") or [])
+    return {raiz(x) for x in t if raiz(x)}
+
+
+def destinos_cm(max_hilos=1000, pausa=3.0, grados=200):
+    """`destinos [N]`: mira adónde lleva el botón de hasta N hilos de 200° o más aún no mirados (primero los de
+    las tiendas que lee el vigilante, y de esos los más calientes) y lo guarda en cm_destino con su clave de
+    producto. Para sola con un 403/429 o sin red (no reintenta)."""
     con = bd()
-    filas = con.execute("""SELECT id, titulo, precio, temp, publicado, extra FROM cm WHERE temp>=200
-        AND (extra LIKE '%"linkHost":"%amazon.%' OR extra LIKE '%"linkHost":"amzn.%'
-             OR ((extra IS NULL) AND (tienda LIKE '%amazon%' OR host LIKE '%amazon%')))
-        AND id NOT IN (SELECT hilo FROM asin_hilos) ORDER BY temp DESC LIMIT ?""", (max_hilos,)).fetchall()
-    hechos = nuevos = 0
-    hoy = datetime.now().isoformat(timespec="minutes")
-    for hilo, titulo, precio, temp, publicado, extra in filas:
+    nuestras = tiendas_que_leemos(cargar_config())
+    filas = con.execute("""SELECT id, temp, host, tienda, extra FROM cm WHERE temp>=?
+                           AND id NOT IN (SELECT hilo FROM cm_destino)""", (grados,)).fetchall()
+
+    def de_las_nuestras(f):
+        host = ((json.loads(f[4]).get("linkHost") if f[4] else None) or f[2] or f[3] or "").lower()
+        return any(r in host for r in nuestras) or (("amzn." in host) and "amazon" in nuestras)
+    filas.sort(key=lambda f: (not de_las_nuestras(f), -(f[1] or 0)))
+    hechos = con_clave = 0
+    for hilo, *_ in filas[:max_hilos]:
         try:
-            asin = asin_de(destino_hilo(hilo) or "")
+            url = destino_hilo(hilo)
         except Exception as e:
-            log(f"asins: hilo {hilo}: {e}")
+            log(f"destinos: hilo {hilo}: {e}")
             if getattr(e, "code", None) in (403, 429) or not getattr(e, "code", None):
                 print(f"Paro en el hilo {hilo}: {str(e)[:80]}")
                 break
-            asin = None
-        con.execute("INSERT OR REPLACE INTO asin_hilos VALUES (?,?,?)", (hilo, asin, hoy))
-        hechos += 1
-        if asin:
-            grupo = (json.loads(extra or "{}").get("mainGroup") or {}).get("threadGroupName")
-            nuevos += con.execute("SELECT 1 FROM vigilancia WHERE asin=?", (asin,)).fetchone() is None
-            con.execute("""INSERT INTO vigilancia VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(asin) DO UPDATE SET
-                precio=CASE WHEN excluded.precio>0 AND (precio IS NULL OR excluded.precio<precio) THEN excluded.precio
-                            ELSE precio END,
-                temp=MAX(temp, excluded.temp), publicado=MAX(publicado, excluded.publicado)""",
-                        (asin, hilo, titulo, precio, temp, publicado, grupo, hoy))
+            url = None
+        clave = clave_producto(url)
+        con.execute("INSERT OR REPLACE INTO cm_destino VALUES (?,?,?,?)",
+                    (hilo, url_canonica(url) if clave else url, clave, datetime.now().isoformat(timespec="minutes")))
         con.commit()
+        hechos += 1
+        con_clave += bool(clave)
+        if hechos % 100 == 0:
+            print(f"  {hechos} hilos, {con_clave} con producto")
         time.sleep(pausa * random.uniform(0.8, 1.2))
-    total = con.execute("SELECT COUNT(*) FROM vigilancia").fetchone()[0]
-    falta = con.execute("""SELECT COUNT(*) FROM cm WHERE temp>=200 AND (extra LIKE '%"linkHost":"%amazon.%'
-        OR extra LIKE '%"linkHost":"amzn.%') AND id NOT IN (SELECT hilo FROM asin_hilos)""").fetchone()[0]
+    total, productos = con.execute("SELECT COUNT(*), COUNT(DISTINCT clave) FROM cm_destino").fetchone()
+    amazon = con.execute("SELECT COUNT(*) FROM cm_ref WHERE clave LIKE 'amazon:%'").fetchone()[0]
+    falta = con.execute("SELECT COUNT(*) FROM cm WHERE temp>=? AND id NOT IN (SELECT hilo FROM cm_destino)",
+                        (grados,)).fetchone()[0]
     con.close()
-    print(f"{hechos} hilos mirados, {nuevos} ASIN nuevos. Lista de vigilancia: {total} productos. Faltan {falta} hilos.")
-    return hechos, nuevos
+    print(f"{hechos} hilos mirados, {con_clave} con producto. cm_destino: {total} hilos, {productos} productos "
+          f"({amazon} de Amazon). Faltan {falta} hilos de {grados}°+.")
+    return hechos, con_clave
 
 
 def sesion_cm():
@@ -6002,6 +6111,10 @@ def ronda(categoria, solo=None):
                             "caducado": bool(cp["caducado"])}
             p["_chollo_previo"] = True
             ok = True
+        if ok and not p.get("error_precio") and not p.get("gratis") and (techo := ya_salio_mas_barato(p)):
+            log(f"ya salió más barato en Chollometro (200°+ a {techo:g} € como mucho), no se envía: "
+                f"{p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
+            ok = False
         if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
             log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
             ok = False
@@ -6487,8 +6600,8 @@ if __name__ == "__main__":
         seguir_precarga(args[1] if len(args) > 1 else None)
     elif args[:1] == ["sesion_cm"]:
         sesion_cm()
-    elif args[:1] == ["asins"]:
-        asins_vigilancia(int(args[1]) if len(args) > 1 else 200)
+    elif args[:1] == ["destinos"]:
+        destinos_cm(int(args[1]) if len(args) > 1 else 1000)
     elif args[:1] == ["catalogo"]:
         catalogo(*args[1:])
     elif args == ["wrappers"]:
