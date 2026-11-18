@@ -4477,6 +4477,24 @@ class PestanasTelegram(unittest.TestCase):
         self.assertEqual([e.get("message_thread_id") for e in self.enviados], ["7", "9", None, "12"])
 
 
+class EmparejamientoPorTipo(unittest.TestCase):
+    """#213 (18/11/2026): camiseta Calvin Klein Jeans de Spartoo emparejada con "Calvin Klein jeans mujer" (415°,
+    una recopilación de vaqueros) como demanda probada, y con unas zapatillas como "publicado en otra tienda"."""
+    NOMBRE = "textil Mujer Camisetas sin mangas Calvin Klein Jeans WOVEN LABEL RIB TANK TOP Blanco"
+
+    def test_tipos_distintos_no_son_el_mismo_producto(self):
+        self.assertFalse(v.mismo_post(self.NOMBRE, "CALVIN KLEIN JEANS , Zapatillas tallas de la 36 a la 41"))
+        self.assertTrue(v.mismo_post("Zapatillas Nike Air Force 1 07 blancas", "Nike air force 1 07 zapatillas"))
+
+    def test_titulo_vago_no_es_demanda_probada(self):
+        self.assertFalse(v.mismo_producto_hot(self.NOMBRE, "Calvin Klein jeans mujer"))
+
+    def test_busqueda_manual_con_marca_y_modelo(self):
+        self.assertEqual(v.enlace_busqueda_chollometro(self.NOMBRE, "Calvin Klein Jeans"),
+                         "https://www.chollometro.com/search?q=Calvin+Klein+Jeans+WOVEN+LABEL+RIB")
+        self.assertNotIn("textil", v.enlace_busqueda_chollometro(self.NOMBRE))
+
+
 class ReglasDuplicadosChollometro(unittest.TestCase):
     """Reglas de publicación de Chollometro (chollometro.com/reglas, leídas el 18/11/2026)."""
 

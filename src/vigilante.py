@@ -2431,12 +2431,36 @@ GENERICAS_POST = {"mm", "cm", "pulgadas", "pulgada", "gb", "tb", "hz", "amoled",
                   "anos", "ninos", "nino", "nina", "adultos", "unisex", "hombre", "mujer", "talla", "tallas"}
 
 
+# Tipo de producto (ropa, calzado, complementos...): dos títulos con tipos distintos no son el mismo producto
+# aunque compartan marca (18/11/2026, #213: camiseta Calvin Klein Jeans emparejada con "CALVIN KLEIN JEANS,
+# Zapatillas" y con "Calvin Klein jeans mujer").
+TIPOS_PRODUCTO = [(t, re.compile(r, re.I)) for t, r in (
+    ("camiseta", r"\bcamisetas?\b|\bt-?shirts?\b|\btank\s+tops?\b|\btops?\b"), ("camisa", r"\bcamisas?\b"),
+    ("polo", r"\bpolos?\b"), ("sudadera", r"\bsudaderas?\b|\bhoodies?\b"), ("jersey", r"\bjerseys?\b|\bcardigans?\b"),
+    ("pantalon", r"\bpantal[oó]n(?:es)?\b|\bjoggers?\b|\bleggings?\b|\bmallas\b|\bshorts?\b|\bbermudas?\b"),
+    ("vaquero", r"\bvaqueros?\b"), ("chaqueta", r"\bchaquetas?\b|\bcazadoras?\b|\babrigos?\b|\bparkas?\b|\bplum[ií]feros?\b"),
+    ("vestido", r"\bvestidos?\b|\bfaldas?\b"), ("calzado", r"\bzapatill\w*|\bzapatos?\b|\bsneakers?\b|\bbotas?\b|"
+                                                          r"\bbotines?\b|\bsandalias?\b|\bchanclas?\b|\bdeportivas\b"),
+    ("ropa_interior", r"\bcalzoncillos?\b|\bboxers?\b|\bbragas?\b|\bsujetadores?\b|\bcalcetines\b|\bpijamas?\b"),
+    ("bolso", r"\bbolsos?\b|\bmochilas?\b|\bcarteras?\b|\bri[ñn]oneras?\b|\bmaletas?\b"),
+    ("reloj", r"\brelojes?\b|\bsmartwatch\w*"), ("gafas", r"\bgafas\b"), ("perfume", r"\bperfumes?\b|\bcolonias?\b|"
+                                                                                  r"\beau de\b"),
+    ("bano", r"\bba[ñn]adores?\b|\bbikinis?\b"))]
+
+
+def tipos_producto(texto):
+    return {t for t, rx in TIPOS_PRODUCTO if rx.search(texto)}
+
+
 def mismo_post(nombre, titulo):
     """¿El post de Chollometro es este producto? Los títulos de Chollometro son cortos ('Nike air force 1
     07 camel') y los de las tiendas largos: se compara sobre el más corto, con el número de modelo igual.
     Sin palabras genéricas ni números sueltos al contar coincidencias."""
     if codigos_modelo(nombre) & codigos_modelo(titulo):
         return True
+    ta_tipo, tb_tipo = tipos_producto(nombre), tipos_producto(titulo)
+    if ta_tipo and tb_tipo and not (ta_tipo & tb_tipo):
+        return False  # camiseta frente a zapatillas: otro producto aunque sea la misma marca
     ta, tb = tokens(nombre) - COLORES - GENERICAS_POST, tokens(titulo) - COLORES - GENERICAS_POST
     pa, pb = {t for t in ta if not t.isdigit()}, {t for t in tb if not t.isdigit()}
     comunes = pa & pb
@@ -2839,10 +2863,23 @@ def descuento_real(p, mejor, dias_min=14):
     return max(mejores) if mejores else (None, None)
 
 
-def enlace_busqueda_chollometro(nombre):
+RE_PALABRA_RELLENO = re.compile(r"^(?:textil|ropa|calzado|zapatos|complementos|accesorios|mujer|hombre|unisex|"
+                                r"ni[ñn][oa]s?|adultos?|junior|de|para|con|sin|y|el|la|los|las|en)$", re.I)
+
+
+def enlace_busqueda_chollometro(nombre, marca=None):
     """Enlace de búsqueda para que Zeta la haga A MANO (su robots.txt prohíbe /search a los programas:
-    el vigilante y Hermes nunca la abren)."""
-    return "https://www.chollometro.com/search?q=" + quote_plus(consulta_corta(nombre, 6))
+    el vigilante y Hermes nunca la abren). 18/11/2026 (#213): Spartoo empieza sus nombres por "textil Mujer
+    Camisetas sin mangas..." y la búsqueda no encontraba nada. Ahora: marca y modelo, sin palabras de relleno."""
+    palabras = [w for w in re.split(r"[\s,/|()]+", nombre or "")
+                if w and w.lower() not in COLORES and not RE_PALABRA_RELLENO.match(w)]
+    if marca:
+        resto = [w for w in palabras if w.lower() not in marca.lower().split() and not tipos_producto(w)]
+        modelo = [w for w in resto if w[0].isupper() or any(c.isdigit() for c in w)] or resto  # el modelo va en mayúsculas
+        q = " ".join([marca] + modelo[:3])
+    else:
+        q = " ".join(palabras[:5])
+    return "https://www.chollometro.com/search?q=" + quote_plus(q.strip())
 
 
 def busquedas_chollometro(c):
@@ -2968,8 +3005,18 @@ def mismo_producto_hot(nombre, titulo):
     """Para "ya fue chollo" no basta con parecerse (mismo_post): ese hilo deja pasar un producto sin
     comparador. Casos reales (15-16/11/2026): monitor Philips a 41 € emparejado con un hilo de 599 €,
     AirPods Max a 130 € con otro de 378,99 €, zapatillas Puma de niña con otro modelo.
-    Hace falta el mismo código de modelo o el mismo modelo con la regla estricta del comparador."""
-    return bool(codigos_modelo(nombre) & codigos_modelo(titulo)) or mismo_modelo(nombre, titulo)
+    Hace falta el mismo código de modelo o el mismo modelo con la regla estricta del comparador.
+    18/11/2026 (#213): un título vago, de 3 palabras o menos sin código ("Calvin Klein jeans mujer", una
+    recopilación), no identifica un producto: no sirve de demanda probada. Ni un hilo de otro tipo de producto."""
+    if codigos_modelo(nombre) & codigos_modelo(titulo):
+        return True
+    ta_tipo, tb_tipo = tipos_producto(nombre), tipos_producto(titulo)
+    if ta_tipo and tb_tipo and not (ta_tipo & tb_tipo):
+        return False
+    palabras = tokens(titulo) - COLORES - GENERICAS_POST
+    if len(palabras) <= 3 and not any(any(c.isdigit() for c in w) for w in palabras):
+        return False  # vago y sin número de modelo ("JBL Charge 5" sí identifica el producto)
+    return mismo_modelo(nombre, titulo)
 
 
 # Accesorios y recambios "para" otro producto: heredan la familia del producto principal (una carcasa de
@@ -4621,7 +4668,7 @@ def mensaje_candidato(n, p):
     if p.get("_detectado"):
         resenas += f"\n🕒 Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}"
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
-            f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'])}\n"
+            f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'], p.get('marca'))}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
             f"{p.get('url') or ''}")
 
@@ -4734,7 +4781,7 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
                  f"-{d:.0%} según la tienda)\nRechazado solo por no tener contraste: sin precio de mercado ni "
                  f"histórico. El \"antes\" no está comprobado: míralo tú.\n"
                  f"🕒 Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
-                 f"Búsqueda en Chollometro: {enlace_busqueda_chollometro(p['nombre'])}\n{enlace_limpio(p.get('url')) or ''}")
+                 f"Búsqueda en Chollometro: {enlace_busqueda_chollometro(p['nombre'], p.get('marca'))}\n{enlace_limpio(p.get('url')) or ''}")
         if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
             enviados += 1
