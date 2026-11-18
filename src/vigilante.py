@@ -21,6 +21,7 @@ Uso (desde la raíz del proyecto: python src/vigilante.py ...):
 
 Solo usa la librería estándar de Python: no hay que instalar nada.
 """
+import functools
 import gzip
 import json
 import os
@@ -991,7 +992,26 @@ def extraer(html, base_url, extra_json=()):
             if e and p.get("precio_antes") and abs(p["precio_antes"] - e[1]) < 0.015:
                 p["ref_tienda"] = e[0]
         return productos
-    return _extraer(html, base_url, extra_json)
+    productos = _extraer(html, base_url, extra_json)
+    if "zalando." in host:
+        for p in productos:
+            nombre = nombre_zalando(p.get("url"))
+            if nombre:
+                p["nombre"] = nombre
+    return productos
+
+
+RE_ZALANDO_SLUG = re.compile(r"zalando\.[a-z.]+/([a-z0-9-]+?)-[a-z0-9]{9}-[a-z0-9]{3}\.html", re.I)
+
+
+def nombre_zalando(url):
+    """Zalando: el nombre de la tarjeta era el texto de la foto ("Zapatilla blanca de lona alta con suela...") y no
+    decía ni marca ni modelo (18/11/2026). El de verdad va en la dirección: /converse-chuck-classic-unisex-zapatillas-
+    altas-white-monochrome-co411a00u-a11.html -> "Converse Chuck Classic Unisex Zapatillas Altas White Monochrome"."""
+    m = RE_ZALANDO_SLUG.search(url or "")
+    if not m:
+        return None
+    return " ".join(w.capitalize() for w in m.group(1).split("-") if w)
 
 
 def _extraer(html, base_url, extra_json=()):
@@ -2495,14 +2515,21 @@ RE_RUIDO_TITULO = re.compile(
 _RX_MARCAS = {}
 
 
+def sin_tildes(s):
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+
+
 def rx_marcas():
     """Marcas para el cotejo: marcas.txt (las del filtro de marca conocida) + marcas_cotejo.txt (moda, hogar,
     supermercado...: solo para comparar títulos, no relajan ese filtro)."""
     extra = MARCAS.parent / "marcas_cotejo.txt"
-    clave = tuple(f.stat().st_mtime if f.exists() else 0 for f in (MARCAS, extra))
+    clave = (str(MARCAS),) + tuple(f.stat().st_mtime if f.exists() else 0 for f in (MARCAS, extra))
     if clave not in _RX_MARCAS:
         _RX_MARCAS.clear()
-        marcas = [m.strip().lower() for f in (MARCAS, extra) if f.exists()
+        for f in ("_rasgos", "numero_modelo"):  # sus resultados dependen de la lista de marcas
+            if f in globals():
+                globals()[f].cache_clear()
+        marcas = [sin_tildes(m.strip().lower()) for f in (MARCAS, extra) if f.exists()
                   for m in f.read_text(encoding="utf-8").splitlines() if m.strip() and not m.lstrip().startswith("#")]
         marcas = sorted(set(marcas), key=len, reverse=True)
         _RX_MARCAS[clave] = re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, marcas)) + r")(?!\w)") if marcas else None
@@ -2549,13 +2576,15 @@ COLORES_EXTRA = {"noir", "rouge", "bleu", "blanc", "marron", "burdeos", "camel",
 RE_GENERO = {"hombre": re.compile(r"\bhombres?\b|\bmen\b|\bmasculin", re.I),
              "mujer": re.compile(r"\bmujer(?:es)?\b|\bwomen\b|\bfemenin", re.I),
              "infantil": re.compile(r"\bni[ñn][oa]s?\b|\bkids?\b|\bjunior\b|\binfantil\b|\bbeb[eé]s?\b|\bjuvenil\b", re.I)}
-CORTES = {"high", "hi", "low", "ox", "mid", "lift", "platform"}  # Chuck Taylor High ≠ OX ("plataforma móvil" no)
+CORTES = {"high", "low", "mid", "lift", "platform"}  # Chuck Taylor High ≠ OX ("plataforma móvil" no)
+CORTE_ES = {"altas": "high", "alta": "high", "hi": "high", "bajas": "low", "baja": "low", "ox": "low"}
 
 
 def genero(texto):
     return {g for g, rx in RE_GENERO.items() if rx.search(texto or "")}
 
 
+@functools.lru_cache(maxsize=400_000)
 def numero_modelo(texto, de_marca=frozenset()):
     """El primer número del modelo, sin medidas ni capacidades: "Xiaomi 18 Pro 12 GB" -> "18"; "Xiaomi 15t 12/256"
     -> "15"; "Galaxy Tab A11+" -> "11". None si no hay."""
@@ -2586,6 +2615,14 @@ def es_palabra_comun(t):
     return bool(idx) and not any(c.isdigit() for c in t) and len(idx.get(t, ())) > PALABRA_COMUN
 
 
+@functools.lru_cache(maxsize=400_000)
+def _rasgos(texto):
+    """Lo que mismo_producto mira de un título, calculado una vez (los títulos de la copia se repiten en cada
+    comparación: sin esto, 1 s por producto con 100.000 hilos)."""
+    return (marca_y_modelo(texto), es_accesorio_de(texto), frozenset(genero(texto)), frozenset(familias_de(texto)),
+            bool(RE_JUEGO.search(texto)), frozenset(tokens(texto)), bool(RE_RECOPILACION.search(texto)))
+
+
 def marca_y_modelo(texto, marca=None):
     """-> (palabras de la marca, palabras del modelo, códigos de modelo, tipos de producto)."""
     limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", texto or ""))
@@ -2594,10 +2631,11 @@ def marca_y_modelo(texto, marca=None):
                     flags=re.I)
     limpio = re.sub(r"(\d)\s+(gb|tb|mah|hz|mhz|mm|cm|w|ml|kg)\b", r"\1\2", limpio, flags=re.I)
     limpio = re.sub(r"\b([a-z]+\d+)\+", r"\1 plus", limpio, flags=re.I)  # "Tab A11+" -> "Tab A11 plus" (no "7+ años")
+    limpio = re.sub(r"\bcode in a box\b|\bciab\b", " ", limpio, flags=re.I)  # formato de venta, no el juego
     rx = rx_marcas()
-    marcas = set(rx.findall(limpio.lower())) if rx else set()
+    marcas = set(rx.findall(sin_tildes(limpio.lower()))) if rx else set()  # Lancome = Lancôme
     if marca:
-        marcas.add(marca.lower())
+        marcas.add(sin_tildes(marca.lower()))
     for t in tokens(limpio) & set(MARCA_DE_GAMA):  # "POCO M7" es Xiaomi aunque el título no lo diga
         marcas.add(MARCA_DE_GAMA[t])
     de_marca = set().union(*(tokens(m) for m in marcas)) if marcas else set()
@@ -2611,24 +2649,25 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     mismo tipo; mismo código si los dos lo tienen; misma marca si los dos la dicen; los números del modelo del hilo
     están en el producto (S25 ≠ S24, 256 GB ≠ 128 GB); la misma variante (Pro, Max, Ultra...); y la mayor parte del
     modelo del hilo coincide. Un hilo que solo dice marca y tipo ("Calvin Klein jeans mujer") no es un producto."""
-    if RE_RECOPILACION.search(titulo or ""):
+    nombre, titulo = nombre or "", titulo or ""
+    (mm_b, acc_b, gb_, fb, juego_b, tok_b, recop_b) = _rasgos(titulo)
+    if recop_b:
         return False  # una recopilación ("50" a 341 € / 65" a 549 €") no es un producto
-    ma, mo_a, ca, ta = marca_y_modelo(nombre, marca)
-    mb, mo_b, cb, tb = marca_y_modelo(titulo)
+    (mm_a, acc_a, ga_, fa, juego_a, tok_a, _) = _rasgos(nombre)
+    ma, mo_a, ca, ta = marca_y_modelo(nombre, marca) if marca else mm_a
+    mb, mo_b, cb, tb = mm_b
     if ta and tb and not (ta & tb):
         return False
-    if es_accesorio_de(nombre) != es_accesorio_de(titulo):
+    if acc_a != acc_b:
         return False  # un accesorio y el producto
-    ga_, gb_ = genero(nombre), genero(titulo)
     if ga_ and gb_ and not (ga_ & gb_):
         return False  # la de hombre no es la de mujer
-    fa, fb = familias_de(nombre), familias_de(titulo)
     if fa and fb and not (fa & fb):
         return False  # auriculares frente a móvil, tablet frente a móvil, juego frente a consola
-    if RE_JUEGO.search(nombre or "") and not RE_JUEGO.search(titulo or "") and familia_de(titulo or "") == "consolas":
+    if juego_a and not juego_b and "consolas" in fb and len(fb) == 1:
         return False
     colores = (COLORES - {"color"}) | COLORES_EXTRA
-    colores_a, colores_b = tokens(nombre or "") & colores, tokens(titulo or "") & colores
+    colores_a, colores_b = tok_a & colores, tok_b & colores
     if colores_a and colores_b and not (colores_a & colores_b):
         return False  # Seductive Noir ≠ Seductive Blue; el mismo producto en otro color es otra oferta
     # Un "2X16GB" o un "DDR5" no es un código de modelo: son medidas o tipos (Lexar DDR5 = DDR4 por "2X16GB").
@@ -2643,9 +2682,11 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     if not (ma and mb and ma & mb):
         return False
     misma_marca = True
-    if (mo_a & VARIANTES) != (mo_b & VARIANTES) or (mo_b & CORTES and (mo_a & CORTES) != (mo_b & CORTES)):
-        return False  # Buds 6 ≠ Buds 6 Pro; Find N5 ≠ Find X8 Pro; Chuck Taylor High ≠ OX
-    na, nb = numero_modelo(nombre, ma), numero_modelo(titulo, mb)
+    corte_a = {CORTE_ES.get(t, t) for t in tok_a if CORTE_ES.get(t, t) in CORTES}
+    corte_b = {CORTE_ES.get(t, t) for t in tok_b if CORTE_ES.get(t, t) in CORTES}
+    if (mo_a & VARIANTES) != (mo_b & VARIANTES) or (corte_a and corte_b and corte_a != corte_b):
+        return False  # Buds 6 ≠ Buds 6 Pro; Find N5 ≠ Find X8 Pro; Chuck Taylor High (altas) ≠ OX (bajas)
+    na, nb = numero_modelo(nombre, frozenset(ma)), numero_modelo(titulo, frozenset(mb))
     if na and nb and na != nb:
         return False  # Xiaomi 18 Pro frente a Xiaomi 15T
     # Lo que se repite en más de 1.000 títulos de la copia describe, no identifica ("switch", "acero", "ultra").
@@ -2668,6 +2709,13 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     mo_a = {t for t in mo_a if not RE_UNIDAD.match(t)}
     mo_b = {t for t in mo_b if not RE_UNIDAD.match(t)}
     idx = _INDICE.get("idx") or {}
+    if idx:
+        # Cada uno con su propio nombre de submodelo ("Chuck Taylor ... Move Platform" frente a "... Wedge Platform"):
+        # una palabra poco frecuente en cada lado que el otro no tiene = modelos distintos.
+        def raras(m, otro):
+            return {t for t in m - otro if not any(c.isdigit() for c in t) and len(idx.get(t, ())) < 150}
+        if raras(mo_a, mo_b) and raras(mo_b, mo_a):
+            return False
     if idx and not any(c.isdigit() for t in mo_b for c in t) and all(len(idx.get(t, ())) > 100 for t in mo_b):
         return False  # solo palabras corrientes ("adidas Originals bermuda", "Figuras Funko Pop"): no es un producto
     if mo_b and all(any(c.isdigit() for c in t) for t in mo_b) and idx \
@@ -2751,10 +2799,12 @@ def estado_chollometro(p, copia=None):
     # aunque los títulos no se parezcan.
     por_enlace = (copia.get("por_clave") or {}).get(clave_producto(p.get("url"))) or set()
     grupo = ("elcorteingles", "hipercor")  # comparten stock: para Chollometro son la misma tienda (regla 6)
+    iguales = []
     for h in hilos_candidatos(p["nombre"], copia, por_enlace):
         enlace = h["id"] in por_enlace
         if not enlace and not mismo_post(p["nombre"], h["titulo"], p.get("marca")):
             continue
+        iguales.append(h)
         if h["temp"] >= CM_HOT and (hot is None or h["temp"] > hot["temp"]) \
                 and (enlace or mismo_producto_hot(p["nombre"], h["titulo"], p.get("marca"))):
             hot = h
@@ -2777,6 +2827,10 @@ def estado_chollometro(p, copia=None):
                 misma.append(h["precio"])
         else:
             otros.append(h["precio"])
+    # Los hilos de este mismo producto, para el aviso (Zeta, 18/11/2026: los enlaces con su precio, no una búsqueda).
+    p["_iguales"] = [{"fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "precio": h["precio"],
+                      "temp": round(h["temp"] or 0), "tienda": h["tienda"], "agotado": bool(h["caducado"]),
+                      "url": enlace_hilo(h)} for h in sorted(iguales, key=lambda h: -(h["publicado"] or 0))[:4]]
     if hot:
         p["_cm_hot"] = {"temp": round(hot["temp"]), "precio": hot["precio"], "titulo": hot["titulo"][:80],
                         "dias": int((datetime.now().timestamp() - hot["publicado"]) // 86400),
@@ -3121,6 +3175,17 @@ def descuento_real(p, mejor, dias_min=14):
 
 RE_PALABRA_RELLENO = re.compile(r"^(?:textil|ropa|calzado|zapatos|complementos|accesorios|mujer|hombre|unisex|"
                                 r"ni[ñn][oa]s?|adultos?|junior|de|para|con|sin|y|el|la|los|las|en)$", re.I)
+
+
+def lineas_iguales(p):
+    """Los hilos de Chollometro de este mismo producto (estado_chollometro los deja en p["_iguales"]), uno por línea
+    con fecha, precio, grados, tienda y enlace. Sin hilos, lo dice."""
+    iguales = p.get("_iguales")
+    if not iguales:
+        return "Hilos en Chollometro: ninguno de este producto en la copia"
+    return "\n".join(f"Hilo: {h['fecha']} · {h['precio']:g} € · {h['temp']}° · {h['tienda']}"
+                     f"{' · agotado' if h['agotado'] else ''}\n{h['url']}" if h.get("precio") else
+                     f"Hilo: {h['fecha']} · {h['temp']}° · {h['tienda']}\n{h['url']}" for h in iguales)
 
 
 def enlace_busqueda_chollometro(nombre, marca=None):
@@ -4927,11 +4992,11 @@ def mensaje_candidato(n, p):
     elif p.get("cupon_posible"):
         resenas += f"\nPosible cupón: {p['cupon_posible']}"
     if p.get("tallas_aviso"):
-        resenas += "\n⚠️ Tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
+        resenas += "\nOjo, tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
     if p.get("_detectado"):
-        resenas += f"\n🕒 Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}"
+        resenas += f"\nDetectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}"
     return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
-            f"{idealo}\nChollometro: {ch}\nBúsqueda manual: {enlace_busqueda_chollometro(p['nombre'], p.get('marca'))}\n"
+            f"{idealo}\nChollometro: {ch}\n{lineas_iguales(p)}\n"
             f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
             f"{p.get('url') or ''}")
 
@@ -5043,8 +5108,8 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
         texto = (f"🔎 Casi chollo · {p['tienda']}\n{p['nombre']}\n{p['precio']:g} € (antes {p['precio_antes']:g} €, "
                  f"-{d:.0%} según la tienda)\nRechazado solo por no tener contraste: sin precio de mercado ni "
                  f"histórico. El \"antes\" no está comprobado: míralo tú.\n"
-                 f"🕒 Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
-                 f"Búsqueda en Chollometro: {enlace_busqueda_chollometro(p['nombre'], p.get('marca'))}\n{enlace_limpio(p.get('url')) or ''}")
+                 f"Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
+                 f"{lineas_iguales(p)}\n{enlace_limpio(p.get('url')) or ''}")
         if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
             enviados += 1

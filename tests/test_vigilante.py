@@ -1723,9 +1723,14 @@ class Rondas(Base):
         p = {"tienda": "mediamarkt.es", "nombre": "JBL Charge 5 Negro", "precio": 99.0, "precio_antes": 179.0,
              "idealo": 149.0, "ch": "no", "url": "https://x.es/jbl", "estado": "bajada", "gratis": True,
              "dto_real": 0.336, "ref_real": "mercado", "_cm_hot": {"temp": 850, "precio": 110.0, "dias": 90}}
+        p["_iguales"] = [{"fecha": "10/03/2026", "precio": 110.0, "temp": 850, "tienda": "Amazon", "agotado": True,
+                          "url": "https://www.chollometro.com/ofertas/jbl-charge-5-1"}]
         texto = v.mensaje_candidato(7, p)
         self.assertFalse(re.search(r"[\U0001F300-\U0001FAFF☀-➿⬇]", texto), texto)
-        self.assertIn("https://www.chollometro.com/search?q=JBL+Charge+5", texto)
+        # 18/11/2026 (Zeta): los hilos encontrados con su precio, no el enlace de búsqueda manual
+        self.assertIn("Hilo: 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
+                      texto)
+        self.assertNotIn("search?q=", texto)
         self.assertIn("referencia de la tienda: 179 €", texto)
         self.assertIn("Descuento real: -34 % sobre mercado", texto)
 
@@ -4460,8 +4465,8 @@ class PestanasTelegram(unittest.TestCase):
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 2, "-60 % y -30 % de una familia que se calienta")
             self.assertEqual([h for _, h in enviados], ["cat:radar", "cat:radar"])
             self.assertIn("Freidora A", enviados[0][0])
-            self.assertIn("🕒 Detectado ? · descartado ", enviados[0][0])
-            self.assertIn("🕒 Detectado 18/11 11:05 · avisado ",
+            self.assertIn("Detectado ? · descartado ", enviados[0][0])
+            self.assertIn("Detectado 18/11 11:05 · avisado ",
                           v.mensaje_candidato(1, {"tienda": "t.es", "nombre": "x", "precio": 5, "_detectado": "18/11 11:05"}))
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 0, "el mismo producto, una vez por semana")
             con.close()
