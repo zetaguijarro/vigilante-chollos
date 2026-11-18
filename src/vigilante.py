@@ -1027,6 +1027,7 @@ def camel_lote(con, cfg, productos):
                 salida[i] = camel_de_html(html)
                 con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (
                     f"camel:{asin}", json.dumps({"t": datetime.now().isoformat(timespec="minutes"), "h": salida[i]})))
+                con.commit()
     except Exception as e:  # sin navegador: sigue el resto del contraste
         log(f"camelcamelcamel: {str(e)[:100]}")
     con.commit()
@@ -1554,7 +1555,16 @@ def _columna_nueva(con, sql):
 
 def bd():
     DATOS.mkdir(exist_ok=True)
-    con = sqlite3.connect(DB, timeout=30)  # varias categorías pueden coincidir
+    # Zeta (18/11/2026): "los registros se tienen que guardar, hay que garantizarlo". Varias rondas, las cargas de
+    # Chollometro y `destinos` escriben a la vez. WAL: los lectores no bloquean a los escritores y cada escritura
+    # espera su turno (hasta 3 min) en vez de fallar con "database is locked"; synchronous NORMAL es seguro con WAL.
+    con = sqlite3.connect(DB, timeout=180)
+    con.execute("PRAGMA busy_timeout=180000")
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass  # otra conexión lo está cambiando a la vez: ya estará en WAL en la siguiente
+    con.execute("PRAGMA synchronous=NORMAL")
     con.executescript("""
         CREATE TABLE IF NOT EXISTS vistos (clave TEXT PRIMARY KEY, precio REAL, minimo REAL, visto TEXT);
         CREATE TABLE IF NOT EXISTS sembradas (tienda TEXT PRIMARY KEY);
@@ -1935,6 +1945,7 @@ def mejor_precio_idealo(con, p):
     if mejor is not False:
         con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                     (clave_idealo(p), mejor, datetime.now().isoformat(timespec="minutes")))
+        con.commit()
     return mejor or None
 
 
@@ -7561,6 +7572,7 @@ def ronda(categoria, solo=None):
                 if mejor:
                     con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                                 (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
+                    con.commit()
                     precios_idealo[i] = mejor
         pendientes = [i for i in pendientes if i not in precios_idealo]
     if pendientes and (_IDEALO_BLOQUEADO[0] or idealo_en_pausa()) and f.get("idealo_navegador", True):
@@ -7571,6 +7583,7 @@ def ronda(categoria, solo=None):
             if mejor:
                 con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
+                con.commit()
                 precios_idealo[i] = mejor
         pendientes = [i for i in pendientes if i not in precios_idealo]
     with ThreadPoolExecutor(max_workers=3) as ex:
@@ -7579,6 +7592,7 @@ def ronda(categoria, solo=None):
             if mejor is not False:
                 con.execute("INSERT OR REPLACE INTO idealo VALUES (?,?,?)",
                             (clave_idealo(lote[i]), mejor, datetime.now().isoformat(timespec="minutes")))
+                con.commit()
             precios_idealo[i] = mejor or None
     finales, casi = [], []  # casi: buena pinta pero sin contraste (pestaña Radar, 18/11/2026)
     if lote and copia is None:  # copia local al día (ya cargada en el paso 2b si había productos)

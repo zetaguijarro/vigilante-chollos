@@ -4452,6 +4452,42 @@ class DestinoDeHilos(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(v.destinos_cm(), (0, 0), "ya mirados")
 
+    def test_escrituras_a_la_vez_no_se_pierden(self):
+        """18/11/2026 (Zeta): "los registros se tienen que guardar". Con otra conexión escribiendo (una ronda, la carga de
+        Chollometro, `destinos`), la escritura espera su turno en vez de fallar con "database is locked"."""
+        import threading
+        con = v.bd()
+        self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+        self.assertGreaterEqual(con.execute("PRAGMA busy_timeout").fetchone()[0], 120000)
+        con.close()
+        largo = v.bd()
+        largo.execute("INSERT OR REPLACE INTO meta VALUES ('a', '1')")  # abre una transacción de escritura
+        lector = v.bd()  # los lectores no esperan en WAL
+        self.assertEqual(lector.execute("SELECT COUNT(*) FROM cm").fetchone()[0], 5)
+        lector.close()
+        resultado = []
+
+        def otra_ronda():
+            c = v.bd()
+            try:
+                c.execute("INSERT OR REPLACE INTO meta VALUES ('b', '2')")
+                c.commit()
+                resultado.append("guardado")
+            except Exception as e:
+                resultado.append(f"ERROR {e}")
+            finally:
+                c.close()
+        hilo = threading.Thread(target=otra_ronda)
+        hilo.start()
+        time.sleep(1.5)
+        largo.commit()  # la primera termina; la segunda entra
+        largo.close()
+        hilo.join(20)
+        self.assertEqual(resultado, ["guardado"])
+        con = v.bd()
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM meta WHERE k IN ('a','b')").fetchone()[0], 2)
+        con.close()
+
     def test_vigilancia_amazon_por_grupos(self):
         """18/11/2026 (Zeta): los ASIN que ya triunfaron, en grupos por categoría y tipo, mirados por turnos."""
         con = v.bd()
