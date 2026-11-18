@@ -530,6 +530,28 @@ class PrecargaHistorial(unittest.TestCase):
         finally:
             v.aviso_precarga = orig
 
+    def test_410_pasada_la_primera_pagina_es_el_final_del_listado(self):
+        # 18/11/2026: Destacados acaba en la 334; la 335 da "410 Gone". No es un bloqueo: sin botón Seguir.
+        from urllib.error import HTTPError
+        avisos = []
+        orig = v.aviso_precarga
+        v.aviso_precarga = lambda texto, seguir=False: avisos.append((texto, seguir))
+
+        def red(url, timeout=20, reintentos=1):
+            n = int(url.split("page=")[1]) if "page=" in url else 1
+            if n > 3:
+                raise HTTPError(url, 410, "Gone", {}, None)
+            return cm_html([hilo(f"d {n}-{i}", "Amazon", 10 + i, temp=250, dias=n) for i in range(3)]), url
+        v.descargar = red
+        try:
+            with redirect_stdout(io.StringIO()):
+                v.precargar_chollometro(0, 100, desde="2025-01-01")
+        finally:
+            v.aviso_precarga = orig
+        self.assertFalse(any(s for _, s in avisos), avisos)
+        self.assertTrue(any("fin del listado" in t for t, _ in avisos))
+        self.assertFalse((self.tmp / v.SEGUIR).exists())
+
     def test_si_acaba_bien_no_queda_nada_que_seguir(self):
         self.red(ultima=3)
         (self.tmp / v.SEGUIR).write_text("{}")

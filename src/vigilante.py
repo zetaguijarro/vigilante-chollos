@@ -2790,7 +2790,11 @@ def _precargar(dias_nuevos, paginas_portada, pausa, desde, listado, inicio, fin,
                 html, _ = descargar(_pagina(base, n))
             except Exception as e:
                 log(f"precarga chollometro {base} p{n}: {e}")
-                if base == portada:
+                if base == portada and n > inicio and getattr(e, "code", None) in (404, 410):
+                    # 18/11/2026: Destacados acaba en la 334 y la 335 da "410 Gone". Es el final del listado, no un
+                    # bloqueo: sin botón Seguir (volvería a fallar en la misma página).
+                    aviso_precarga(f"  {listado}: la página {n} ya no existe ({e.code}), fin del listado")
+                elif base == portada:
                     parada = n
                     aviso_precarga(f"  {listado}: la página {n} falla ({str(e)[:60]}), paro. Si es un bloqueo, "
                                    "espera unas horas antes de pulsar Seguir.", seguir=True)
