@@ -5840,7 +5840,8 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
     token, chat = token_telegram(), str(cfg.get("entrega", {}).get("chat_id", ""))
     if not (token and chat):
         return 0
-    buenos = [(d, p) for p in casi if (d := _casi_con_pinta(p)) is not None]
+    buenos = [(d, p) for p in casi if (d := _casi_con_pinta(p)) is not None
+              and not ya_publicado_igual_o_mas_barato(p.get("ch"), p["precio"])]  # +8 % sobre un hilo vigente: ni al Radar
     hace = (datetime.now() - timedelta(days=CASI_REPETIR_DIAS)).isoformat(timespec="minutes")
     enviados = 0
     for d, p in sorted(buenos, key=lambda x: -x[0]):
@@ -7241,6 +7242,9 @@ def ahorro_suficiente(p, mejor, cat_cfg, f):
     return ref - p["precio"] >= cat_cfg.get("ahorro_min_eur", f.get("ahorro_min_eur", 0))
 
 
+CM_MAS_CARO = 0.08  # un precio un 8 % o más por encima de un hilo vigente de otra tienda se descarta
+
+
 def ya_publicado_igual_o_mas_barato(ch, precio):
     """'otra:X' o 'misma:X' con X <= precio: alguien ya lo publicó igual o más barato en Chollometro.
     Misma tienda: regla de duplicados de Chollometro, solo vale si baja más de un 5 % y más de 1 €
@@ -7253,7 +7257,10 @@ def ya_publicado_igual_o_mas_barato(ch, precio):
         return False
     if ch.startswith("misma:"):
         return not (precio < x * 0.95 and x - precio > 1)
-    return False  # guía del 18/11/2026: otra tienda no es duplicado (El Corte Inglés/Hipercor ya cuentan como misma)
+    # Otra tienda: no es duplicado (guía del 18/11/2026; El Corte Inglés/Hipercor ya cuentan como misma), pero si ya hay
+    # un hilo vigente de otra tienda un 8 % o más más barato que esto, no vale ni como candidata ni en Radar (Zeta,
+    # 19/11/2026: "si la diferencia con lo que tenemos bajado en local es de un +8 %, no las pongas ni en el radar").
+    return precio >= x * (1 + CM_MAS_CARO) - 0.005
 
 
 def normalizar_nota(v):

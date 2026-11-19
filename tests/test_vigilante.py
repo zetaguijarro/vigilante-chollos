@@ -1989,7 +1989,7 @@ class Rondas(Base):
     def test_ya_publicado_igual_o_mas_barato(self):
         # Caso real: Endzone en GOG a 1,99 € con Chollometro ya a 1,06 €: Hermes siempre lo descartaba.
         # Guía del 18/11/2026: otra tienda no es duplicado (antes se descartaba el Endzone de GOG a 1,99 €).
-        self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:1.06", 1.99))
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("otra:1.06", 1.99), "ya a 1,06 €: un 88 % más caro")
         self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:2", 1.99))
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:6", 0.99), "ahora más barato: sí")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("no", 5))
@@ -1998,6 +1998,10 @@ class Rondas(Base):
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("misma:56.99", 49.90), "baja un 12 % y 7 €")
         self.assertTrue(v.ya_publicado_igual_o_mas_barato("misma:10", 9.20), "baja un 8 % pero menos de 1 €")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:56.99", 54.90), "otra tienda: no es duplicado")
+        # Zeta (19/11/2026): un hilo vigente de otra tienda un 8 % o más más barato descarta también el Radar
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("otra:100", 108.0), "+8 %: fuera")
+        self.assertTrue(v.ya_publicado_igual_o_mas_barato("otra:100", 130.0))
+        self.assertFalse(v.ya_publicado_igual_o_mas_barato("otra:100", 107.0), "+7 %: aún vale")
         self.assertFalse(v.ya_publicado_igual_o_mas_barato("?", 5))
         self.preparar()
         self.ronda()
@@ -4685,6 +4689,12 @@ class PestanasTelegram(unittest.TestCase):
             self.assertIn("Detectado 18/11 11:05 · avisado ",
                           v.mensaje_candidato(1, {"tienda": "t.es", "nombre": "x", "precio": 5, "_detectado": "18/11 11:05"}))
             self.assertEqual(v.avisar_casi_chollos(con, cfg, casi), 0, "el mismo producto, una vez por semana")
+            # Zeta (19/11/2026): un hilo vigente de otra tienda un 8 % o más más barato: ni al Radar
+            caro = [{"tienda": "t.es", "nombre": "Cosori Freidora Z", "precio": 40, "precio_antes": 100, "url": "https://t.es/z",
+                     "ch": "otra:36"}]
+            self.assertEqual(v.avisar_casi_chollos(con, cfg, caro), 0, "40 € frente a 36 € en Chollometro: un 11 % más caro")
+            caro[0]["ch"] = "otra:38"
+            self.assertEqual(v.avisar_casi_chollos(con, cfg, caro), 1, "40 € frente a 38 €: un 5 %, sí")
             con.close()
         finally:
             v.token_telegram, v.enviar_telegram = orig
