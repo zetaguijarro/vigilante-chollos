@@ -1638,6 +1638,15 @@ def bd():
     # Vigilancia de Amazon (Zeta, 18/11/2026): los ASIN que ya llegaron a 200° en Chollometro, por grupo y tipo.
     con.execute("""CREATE TABLE IF NOT EXISTS vigilancia (asin TEXT PRIMARY KEY, grupo TEXT, tipo TEXT, exito REAL,
         temp REAL, hilos INTEGER, ultimo INTEGER, nombre TEXT, mirado TEXT)""")
+    # Referencias de la tienda (Zeta, 19/11/2026: "guárdalo también"): el PVPR / precio tachado / "antes" que enseña
+    # la tienda y su "mínimo de 30 días", una fila SOLO cuando cambian. Aparte de `precios` para no mezclar el
+    # historial de precio de venta (habitual_propio) con el de la referencia. tipo: etiqueta de Amazon
+    # (mediano, mas_bajo, recomendado) cuando la hay.
+    con.execute("""CREATE TABLE IF NOT EXISTS referencias (clave TEXT, fecha TEXT, antes REAL, min30 REAL, tipo TEXT,
+                   PRIMARY KEY (clave, fecha)) WITHOUT ROWID""")
+    for col, tipo in (("antes", "REAL"), ("min30", "REAL"), ("tipo", "TEXT")):
+        if col not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
+            _columna_nueva(con, f"ALTER TABLE vistos ADD COLUMN {col} {tipo}")
     if "desde" not in {c[1] for c in con.execute("PRAGMA table_info(vistos)")}:
         # Desde cuándo se sigue el precio de cada producto (histórico propio). Las filas viejas
         # empiezan a contar ahora: no se sabe cuándo se vieron por primera vez.
@@ -1768,6 +1777,13 @@ def historial(texto, maximo=10):
     con.close()
 
 
+def _distinto(a, b):
+    """Dos importes (o None) distintos, con 0,5 céntimos de margen."""
+    if a is None or b is None:
+        return (a is None) != (b is None)
+    return abs(a - b) >= 0.005
+
+
 def novedad(con, tienda, p):
     """'nuevo' | 'bajada' (por debajo de su mínimo visto) | None. Guarda el precio."""
     clave = clave_vista(tienda, p)
@@ -1777,13 +1793,22 @@ def novedad(con, tienda, p):
                    (clave, tienda, p["nombre"][:200], p.get("ean") or None, p.get("url") or None)).rowcount == 1:
         con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
     # INSERT OR IGNORE: seguro aunque otra categoría lea la misma tienda a la vez.
-    cur = con.execute("INSERT OR IGNORE INTO vistos (clave, precio, minimo, visto, desde) VALUES (?,?,?,?,?)",
-                      (clave, p["precio"], p["precio"], ahora, ahora))
+    antes, min30 = p.get("precio_antes") or None, p.get("min30") or None
+    tipo = p.get("ref_tienda") or None
+    tipo = tipo[:40] if isinstance(tipo, str) else None
+    cur = con.execute("INSERT OR IGNORE INTO vistos (clave, precio, minimo, visto, desde, antes, min30, tipo) "
+                      "VALUES (?,?,?,?,?,?,?,?)", (clave, p["precio"], p["precio"], ahora, ahora, antes, min30, tipo))
     if cur.rowcount == 1:
+        if antes or min30:
+            con.execute("INSERT OR REPLACE INTO referencias VALUES (?,?,?,?,?)", (clave, ahora, antes, min30, tipo))
         p["_seguido_dias"] = 0
         return "nuevo"
-    previo, minimo, desde = con.execute("SELECT precio, minimo, desde FROM vistos WHERE clave=?",
-                                        (clave,)).fetchone()
+    previo, minimo, desde, antes_ant, min30_ant, tipo_ant = con.execute(
+        "SELECT precio, minimo, desde, antes, min30, tipo FROM vistos WHERE clave=?", (clave,)).fetchone()
+    if _distinto(antes, antes_ant) or _distinto(min30, min30_ant) or (antes and tipo != tipo_ant):
+        # cambió la referencia de la tienda (o desapareció: se acabó la rebaja): se apunta
+        con.execute("INSERT OR REPLACE INTO referencias VALUES (?,?,?,?,?)", (clave, ahora, antes, min30, tipo))
+        con.execute("UPDATE vistos SET antes=?, min30=?, tipo=? WHERE clave=?", (antes, min30, tipo, clave))
     p["_precio_previo"] = previo
     if previo is None or abs(previo - p["precio"]) >= 0.005:
         con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
@@ -1915,6 +1940,7 @@ def limpiar(con):
     # Historial de precios: 400 días (por el índice de fecha, barato). Productos sin precios ni vistos: una vez al día.
     hace_400 = (datetime.now() - timedelta(days=400)).isoformat(timespec="minutes")
     con.execute("DELETE FROM precios WHERE fecha < ?", (hace_400,))
+    con.execute("DELETE FROM referencias WHERE fecha < ?", (hace_400,))
     hoy = datetime.now().strftime("%Y-%m-%d")
     if (con.execute("SELECT v FROM meta WHERE k='limpieza_productos'").fetchone() or [None])[0] != hoy:
         con.execute("DELETE FROM productos WHERE clave NOT IN (SELECT clave FROM vistos) "

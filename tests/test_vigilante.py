@@ -4452,6 +4452,44 @@ class DestinoDeHilos(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(v.destinos_cm(), (0, 0), "ya mirados")
 
+    def test_guarda_el_pvpr_y_el_minimo_de_30_dias(self):
+        """19/11/2026 (Zeta: "guárdalo también"): el PVPR/tachado y el mínimo de 30 días de la tienda, una fila solo
+        cuando cambian, aparte del historial del precio de venta."""
+        con = v.bd()
+        p = {"nombre": "Cafetera X", "precio": 50.0, "precio_antes": 100.0, "min30": 80.0, "url": "https://t.es/a", "ean": None}
+        v.novedad(con, "t.es", p)
+        clave = v.clave_vista("t.es", p)
+        filas = lambda: con.execute("SELECT antes, min30, tipo FROM referencias WHERE clave=? ORDER BY fecha", (clave,)).fetchall()
+
+        def pasa_una_hora():  # las filas llevan la fecha al minuto: se envejecen para que no se pisen entre sí
+            for tabla in ("precios", "referencias"):
+                for fila in con.execute(f"SELECT * FROM {tabla}").fetchall():
+                    nueva = (datetime.fromisoformat(fila[1]) - timedelta(hours=1)).isoformat(timespec="minutes")
+                    con.execute(f"UPDATE {tabla} SET fecha=? WHERE clave=? AND fecha=?", (nueva, fila[0], fila[1]))
+        self.assertEqual(filas(), [(100.0, 80.0, None)])
+        pasa_una_hora()
+        v.novedad(con, "t.es", {**p})  # sin cambios: no hay fila nueva
+        self.assertEqual(len(filas()), 1)
+        v.novedad(con, "t.es", {**p, "precio": 45.0})  # baja el precio de venta, la referencia no cambia
+        self.assertEqual(len(filas()), 1)
+        self.assertEqual(len(con.execute("SELECT * FROM precios WHERE clave=?", (clave,)).fetchall()), 2)
+        pasa_una_hora()
+        v.novedad(con, "t.es", {**p, "precio": 45.0, "precio_antes": 120.0})  # cambia el PVPR
+        self.assertEqual(filas()[-1], (120.0, 80.0, None))
+        self.assertEqual(len(con.execute("SELECT * FROM precios WHERE clave=?", (clave,)).fetchall()), 2,
+                         "el historial de precio de venta no se mezcla con el de la referencia")
+        # se acaba la rebaja: se apunta que ya no hay referencia
+        pasa_una_hora()
+        v.novedad(con, "t.es", {**p, "precio": 45.0, "precio_antes": None, "min30": None})
+        self.assertEqual(filas()[-1], (None, None, None))
+        # Amazon: la etiqueta del tachado
+        amz = {"nombre": "Pañales", "precio": 60.99, "precio_antes": 91.99, "url": "https://www.amazon.es/dp/B000000001",
+               "ean": None, "ref_tienda": "mediano"}
+        v.novedad(con, "amazon.es", amz)
+        self.assertEqual(con.execute("SELECT antes, tipo FROM referencias WHERE clave=?",
+                                     (v.clave_vista("amazon.es", amz),)).fetchall(), [(91.99, "mediano")])
+        con.close()
+
     def test_escrituras_a_la_vez_no_se_pierden(self):
         """18/11/2026 (Zeta): "los registros se tienen que guardar". Con otra conexión escribiendo (una ronda, la carga de
         Chollometro, `destinos`), la escritura espera su turno en vez de fallar con "database is locked"."""
