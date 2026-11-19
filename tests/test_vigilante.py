@@ -5096,6 +5096,38 @@ class TituloZalando(unittest.TestCase):
         self.assertEqual(list(v.nombres_zalando_tarjetas(h).values()), ["24 DAYS OF CLINIQUE - Calendario"])
 
 
+class AntiguedadDelModelo(unittest.TestCase):
+    """Zeta, 19/11/2026: "me das modelos muy antiguos que no puedo poner" -> corte de 2 años en móviles, tablets,
+    portátiles y televisores; lo que no se reconoce no se corta."""
+
+    def test_anio_por_el_nombre(self):
+        casos = {"Apple iPhone 14 Plus 128GB Midnight": 2022, "SAMSUNG Smartphone Samsung Galaxy S22 Ultra 12GB/256GB": 2022,
+                 "SAMSUNG Galaxy A51, Prism Crush Black": 2020, "Samsung Galaxy S25 Ultra": 2025, "Samsung Galaxy A56 5G": 2025,
+                 "Xiaomi Redmi Note 13 Pro": 2024, "POCO X7 Pro": 2025, "Google Pixel 9": 2024, "Samsung Galaxy Z Flip6": 2024,
+                 "Samsung TV QLED 55\" QE55Q80D": 2024, "LG OLED65C54LA": 2025, "Samsung Galaxy Tab S9 FE": 2023,
+                 "Portátil MSI i7-13620H RTX 4060 16GB": 2023, "Portátil Acer Ryzen 7 5700U": 2021,
+                 "Kindle Paperwhite (2024)": 2024, "Lavadora Bosch 9 kg": None}
+        for nombre, anio in casos.items():
+            self.assertEqual(v.anio_modelo(nombre), anio, nombre)
+
+    def test_corte_a_los_dos_anios(self):
+        cfg = {"filtros_codigo": {"antiguedad_max_anios": 2}}
+        antes = lambda n: v.demasiado_antiguo({"nombre": n}, cfg)
+        self.assertTrue(antes("SAMSUNG Smartphone Samsung Galaxy S22 Ultra 12GB/256GB 5G Móvil"))
+        self.assertTrue(antes("SAMSUNG Galaxy A51, Prism Crush Black, Móvil Android, 128 GB"))
+        self.assertTrue(antes("Apple iPhone 14 Plus 128GB Móvil"))
+        self.assertFalse(antes("Apple iPhone 16 128GB Móvil"))  # 2024: justo dos años
+        self.assertFalse(antes("Móvil Marca Rara X1 256GB"))  # sin año reconocible: pasa
+        self.assertFalse(antes("Lavadora Bosch 9 kg 2020"))  # solo móviles, tablets, portátiles y televisores
+        p = {"nombre": "Samsung Galaxy S25 Ultra Móvil"}
+        self.assertFalse(v.demasiado_antiguo(p, cfg))
+        self.assertEqual(p["_anio"], 2025)
+        self.assertFalse(v.demasiado_antiguo({"nombre": "Apple iPhone 14 Móvil"}, {"filtros_codigo": {"antiguedad_max_anios": None}}))
+
+    def test_excluido_incluye_la_antiguedad(self):
+        self.assertTrue(v.excluido({"nombre": "Samsung Galaxy S20 FE Móvil"}, "mediamarkt.es", {"filtros_codigo": {}}))
+
+
 class VendedorMediaMarkt(unittest.TestCase):
     """Zeta, 19/11/2026: un S22 Ultra a 383 € y un A51 a 119 € de MediaMarkt eran reacondicionados de Foxway ES."""
 

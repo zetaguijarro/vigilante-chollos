@@ -491,3 +491,7 @@ Zeta enseñó una captura de las fichas de Instinct: título en negrita, enlace,
 
 ## MediaMarkt: vendedor marketplace (Zeta, 19/11/2026)
 En la ronda de MediaMarkt salieron un S22 Ultra a 383 € y un A51 a 119 €: reacondicionados de Foxway ES (marketplace). `analizar_ficha` lee en MediaMarkt la frase "Vendido y enviado por X" (solo aparece si la oferta es de un tercero) y `confirmar_en_ficha` descarta si X no es MediaMarkt (`vendedor_mediamarkt`).
+
+## Antigüedad del modelo (Zeta, 19/11/2026)
+Zeta: "me das modelos muy antiguos que no puedo poner". La Guía de ofertas del 19/11 dice "no cortar por edad"; Zeta eligió cortar. `anio_modelo(nombre)` deduce el año de lanzamiento del nombre (iPhone n → 2008+n, Galaxy S22 → 2022, Galaxy A51 → 2020, Redmi Note 13 → 2024, POCO X7 → 2025, Pixel, Z Fold/Flip, Tab S, Samsung y LG por la letra o cifra de la serie, portátiles por el procesador Intel/Ryzen y la RTX, o un año explícito en el título). `demasiado_antiguo` (dentro de `excluido`, así cubre candidatas, Radar y envíos) descarta móviles, tablets, portátiles y televisores con más de `filtros_codigo.antiguedad_max_anios` (2) años; lo que no se reconoce no se corta y los avisos llevan "📅 Lanzamiento: ~AAAA". Sin cambiar de la guía: umbrales del Modo Clásico, +15 %/+8 % sobre el mínimo, PrecioReal primero.
+Pendiente de la guía (no hecho): alternativa actual de cada modelo anterior, soporte restante en móviles, CP 28041 para portes y las rutas por tienda.

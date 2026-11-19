@@ -5796,6 +5796,8 @@ def mensaje_candidato(n, p):
     datos = [mercado, hist, f"Chollometro: {ch}"]
     if resenas:
         datos.append("Opiniones: " + " · ".join(resenas))
+    if p.get("_anio"):
+        datos.append(f"Lanzamiento: ~{p['_anio']} ({datetime.now().year - p['_anio']} años)")
     h = p.get("_cm_hot")
     if h and h.get("precio"):
         datos.append(f"Ya fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)")
@@ -5805,7 +5807,7 @@ def mensaje_candidato(n, p):
     avisos.append("Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)")
     if p.get("_detectado"):
         avisos.append(f"Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}")
-    emojis = {"Mercado": "📊", "Histórico": "📉", "Chollometro": "🔎", "Opiniones": "⭐", "Ya fue chollo": "🔥"}
+    emojis = {"Mercado": "📊", "Histórico": "📉", "Chollometro": "🔎", "Opiniones": "⭐", "Ya fue chollo": "🔥", "Lanzamiento": "📅"}
     vinetas = []
     for x in datos:
         etiqueta = x.split(":")[0].split(" (")[0]
@@ -7467,10 +7469,103 @@ def normalizar_nota(v):
     return v
 
 
+# Antigüedad del modelo (Zeta, 19/11/2026: "me das modelos muy antiguos que no puedo poner"). El año de lanzamiento se
+# deduce del nombre (serie y número de generación); lo que no se reconoce no se corta ("antigüedad no confirmada").
+ANTIGUEDAD_FAMILIAS = ("moviles", "tablets", "portatiles", "televisores")
+RE_AN_IPHONE = re.compile(r"\biphone\s*(\d{1,2})\b", re.I)
+RE_AN_GALAXY_S = re.compile(r"\bgalaxy\s*s\s?(\d{1,2})\b(?!\s*(?:\d|mm))", re.I)
+RE_AN_GALAXY_A = re.compile(r"\bgalaxy\s*a\s?(\d)(\d)\b", re.I)
+RE_AN_GALAXY_Z = re.compile(r"\bz\s*(?:fold|flip)\s*(\d)\b", re.I)
+RE_AN_TAB_S = re.compile(r"\bgalaxy\s*tab\s*s\s?(\d{1,2})\b", re.I)
+RE_AN_REDMI_NOTE = re.compile(r"\bredmi\s*note\s*(\d{2})\b", re.I)
+RE_AN_POCO = re.compile(r"\bpoco\s*[xfm](\d)\b", re.I)
+RE_AN_XIAOMI = re.compile(r"\bxiaomi\s*(1\d)\b", re.I)
+RE_AN_PIXEL = re.compile(r"\bpixel\s*(\d{1,2})\b", re.I)
+RE_AN_INTEL = re.compile(r"\bi[3579][- ]?(\d{4,5})[a-z]{0,2}\b", re.I)
+RE_AN_RYZEN = re.compile(r"\bryzen\s*[3579]\s*(\d{4})", re.I)
+RE_AN_RTX = re.compile(r"\brtx\s*(\d)0\d{2}\b", re.I)
+RE_AN_ANIO = re.compile(r"(?<![\d.,])(20[12]\d)(?![\d.,]|\s*(?:mah|hz|gb|mm|w\b))", re.I)
+AN_SAMSUNG_TV = {"T": 2020, "A": 2021, "B": 2022, "C": 2023, "D": 2024, "F": 2025, "H": 2026}
+
+
+def anio_modelo(nombre):
+    """Año de lanzamiento aproximado de un móvil, tablet, portátil o televisor por su nombre, o None si no se reconoce.
+    iPhone 14 -> 2022; Galaxy S22 -> 2022; Galaxy A51 -> 2020; Redmi Note 13 -> 2024; Samsung QN90D -> 2024;
+    portátil: el más reciente entre procesador (i7-13620H -> 2023, Ryzen 7 7735HS -> 2023) y gráfica (RTX 4060 -> 2022)."""
+    t = nombre or ""
+    m = RE_AN_IPHONE.search(t)
+    if m:
+        return 2008 + int(m.group(1)) if int(m.group(1)) >= 11 else 2017
+    m = RE_AN_GALAXY_S.search(t)
+    if m:
+        n = int(m.group(1))
+        return 2000 + n if n >= 20 else 2009 + n
+    m = RE_AN_GALAXY_A.search(t)
+    if m:
+        return (2018 if m.group(1) == "0" else 2019) + int(m.group(2))
+    m = RE_AN_GALAXY_Z.search(t)
+    if m:
+        return 2018 + int(m.group(1))
+    m = RE_AN_TAB_S.search(t)
+    if m:
+        n = int(m.group(1))
+        return 2020 if n <= 7 else 2014 + n
+    m = RE_AN_REDMI_NOTE.search(t)
+    if m:
+        return 2011 + int(m.group(1))
+    m = RE_AN_POCO.search(t)
+    if m:
+        return 2018 + int(m.group(1))
+    m = RE_AN_XIAOMI.search(t)
+    if m:
+        return min(2010 + int(m.group(1)), 2025)
+    m = RE_AN_PIXEL.search(t)
+    if m:
+        return 2015 + int(m.group(1))
+    tv = codigo_tv(t)
+    if tv:
+        marca, _, serie = tv
+        if marca == "samsung" and serie[-1:].isalpha():
+            return AN_SAMSUNG_TV.get(serie[-1])
+        if marca == "lg" and re.fullmatch(r"[A-Z]\d", serie):
+            return 2020 + int(serie[1])
+    años = []
+    m = RE_AN_INTEL.search(t)
+    if m:
+        d = m.group(1)
+        años.append(2010 + int(d[:2] if len(d) == 5 else d[:1]))
+    if re.search(r"\bcore\s*ultra\b", t, re.I):
+        años.append(2024)
+    m = RE_AN_RYZEN.search(t)
+    if m:
+        años.append(2016 + int(m.group(1)[0]))
+    m = RE_AN_RTX.search(t)
+    if m:
+        años.append({2: 2018, 3: 2020, 4: 2022, 5: 2025}.get(int(m.group(1)), 0) or 0)
+    años = [a for a in años if a]
+    if años:
+        return max(años)
+    m = RE_AN_ANIO.search(t)
+    return int(m.group(1)) if m else None
+
+
+def demasiado_antiguo(p, cfg):
+    """True si el modelo (móvil, tablet, portátil o televisor) tiene más de `antiguedad_max_anios` años (2 por defecto,
+    decisión de Zeta del 19/11/2026). Un año que no se reconoce no corta. Deja el año en p["_anio"]."""
+    if familia_de(p.get("nombre")) not in ANTIGUEDAD_FAMILIAS:
+        return False
+    anio = anio_modelo(p.get("nombre"))
+    if not anio:
+        return False
+    p["_anio"] = anio
+    maximo = cfg.get("filtros_codigo", {}).get("antiguedad_max_anios", 2)
+    return maximo is not None and datetime.now().year - anio > maximo
+
+
 def excluido(p, tienda, cfg):
     palabras = cfg.get("filtros_codigo", {}).get("excluir", [])
     texto = f"{tienda} {p['nombre']}".lower()
-    return any(re.search(rf"(?<!\w){re.escape(x.lower())}(?!\w)", texto) for x in palabras)
+    return any(re.search(rf"(?<!\w){re.escape(x.lower())}(?!\w)", texto) for x in palabras) or demasiado_antiguo(p, cfg)
 
 
 # ------------------------------------------------------- sesiones (login)

@@ -41,6 +41,7 @@
   ]
  },
  "filtros_codigo": {
+  "antiguedad_max_anios": 2,
   "min_bajo_mercado": 0.05,
   "descuento_min_real": 0.3,
   "precio_max_eur": null,
