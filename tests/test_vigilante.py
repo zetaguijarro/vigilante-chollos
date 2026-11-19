@@ -3000,7 +3000,7 @@ class ModoTelegram(Base):
         self.assertIn("V decidir N --precio", comprueba)
         self.assertIn("V muro N", comprueba)
         self.assertIn("comprueba-chollo", (CONF.parent / "scripts" / "instalar_en_hermes.sh").read_text(encoding="utf-8"))
-        self.assertEqual(json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["entrega"]["redaccion"], "hermes")
+        self.assertEqual(json.loads((CONF / "tiendas.json").read_text(encoding="utf-8"))["entrega"]["redaccion"], "plantilla", "Zeta, 19/11/2026: la redacción por código, sin Hermes")
 
     def test_boton_para_verificar(self):
         # Un botón "Verificar #N" debajo de CADA aviso (Zeta: "si no, es un lío"). Lo atiende el plugin
@@ -4854,6 +4854,25 @@ class EmparejamientoPorTipo(unittest.TestCase):
         final, c = v.mejor_cupon(con, "aliexpress.com", 130.0, ahora=hoy)
         self.assertEqual((final, c["codigo"]), (110.0, "ATOLLSES20 / CHOLLOES20 / AEES20"))
         con.close()
+
+    def test_plantilla_de_redaccion_sin_hermes(self):
+        """19/11/2026 (Zeta: "¿no puedes formatear la ficha sin llamar a Hermes?"): título y descripción por código, a partir
+        del nombre de la tienda, sin publicidad, sin código interno de modelo y sin precios."""
+        r = v.plantilla_redaccion({"nombre": 'TV QLED 65&quot; - Samsung The Frame TQ65LS03HAUXXC, QLED 4K, NQ4 AI Gen2 Processor, '
+                                             'Smart TV, Negro TV 65-70 pulgadas al mejor precio solo en MediaMarkt'})
+        self.assertNotIn("TQ65LS03HAUXXC", r["titulo"])
+        self.assertNotIn("MediaMarkt", r["titulo"] + r["descripcion"])
+        self.assertTrue(r["titulo"].startswith('TV QLED 65" - Samsung The Frame'))
+        self.assertTrue(r["descripcion"].startswith("📺 **Características**" + chr(10) + "• TV QLED 65" + chr(34)))
+        self.assertIn(chr(10) + "• QLED 4K" + chr(10), r["descripcion"])
+        self.assertLessEqual(len(r["titulo"]), 140)
+        # Con especificaciones de la ficha, esas mandan
+        r = v.plantilla_redaccion({"nombre": "Xiaomi Redmi Buds 6 Pro", "specs": ["Autonomía: 36 h", "Bluetooth: 5.3"]})
+        self.assertEqual(r["descripcion"], "📋 **Características**" + chr(10) + "• Autonomía: 36 h" + chr(10) + "• Bluetooth: 5.3")
+        # Ropa: con sus tallas
+        r = v.plantilla_redaccion({"nombre": "Camiseta Nike Club", "tallas": ["M", "L", "XL"]})
+        self.assertIn("tallas M, L, XL", r["titulo"])
+        self.assertIn("📏 **Tallas disponibles**", r["descripcion"])
 
     def test_pccomtracker_sin_precio_oficial(self):
         """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""

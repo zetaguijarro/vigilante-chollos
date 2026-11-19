@@ -6899,21 +6899,57 @@ def bloques_de_codigo(item, d):
                           "cupon": item.get("cup")}}
 
 
+EMOJI_FAMILIA = {"televisores": "📺", "portatiles": "💻", "monitores": "🖥️", "moviles": "📱", "tablets": "📱", "audio": "🎧",
+                 "consolas": "🎮", "videojuegos": "🎮", "relojes": "⌚", "aspiracion": "🧹", "cocina_pequena": "🍳",
+                 "gran_electro": "🏠", "calzado": "👟", "ropa": "👕", "juguetes": "🧸", "lego": "🧱", "componentes": "🧩",
+                 "perfumes": "🌸", "higiene": "🧴", "herramientas": "🔧", "muebles": "🪑", "menaje": "🍽️"}
+RE_PUBLI_TIENDA = re.compile(r"\s*\|?\s*(?:TV|Smart TV)?[^|]{0,40}?\bal mejor precio\b.*$|\s*\|\s*(?:MediaMarkt|PcComponentes|Amazon\.es)\b.*$"
+                             r"|\b(?:comprar|compra)\b[^.]{0,40}\ben (?:MediaMarkt|PcComponentes|Amazon)\b.*$", re.I)
+RE_CODIGO_INTERNO = re.compile(r"^[A-Z]{1,4}\d{2,}[A-Z0-9/-]{4,}$|^\d{6,}$")
+
+
+def _limpia_nombre(texto):
+    t = unescape(texto or "").replace("&quot;", '"')
+    t = RE_PUBLI_TIENDA.sub("", t)
+    return " ".join(t.split()).strip(" ,;-")
+
+
 def plantilla_redaccion(r):
-    """Título y descripción sin IA (0 tokens): correctos y sosos. Para `redaccion: plantilla` o sin Hermes.
-    Descripción en bloques: encabezado con emoji y **negrita** pegado a sus viñetas, una línea entre bloques."""
-    titulo = (r.get("nombre") or "")[:120]
+    """Título y descripción sin IA (0 tokens), Zeta (19/11/2026: "¿no puedes formatearlo sin llamar a Hermes?").
+    Título: el nombre de la tienda sin publicidad ni código interno de modelo, hasta 140 caracteres. Descripción en
+    bloques (encabezado con emoji y **negrita** pegado a sus viñetas, una línea entre bloques): las especificaciones de
+    la ficha si las hay; si no, las partes del propio nombre ("QLED 4K, Smart TV, Negro"), que son datos del producto
+    y no inventan nada. Sin precios ni tienda."""
+    nombre = _limpia_nombre(r.get("nombre"))
+    palabras = [w for w in nombre.split(" ") if not RE_CODIGO_INTERNO.match(w.strip(",;"))]
+    titulo = " ".join(palabras).replace(" ,", ",")[:140].rstrip(" ,-")
     if r.get("tallas"):
         titulo = f"{titulo}, tallas {', '.join(r['tallas'][:8])}"[:140]
+    emoji = EMOJI_FAMILIA.get(familia_de(nombre), "📋")
     bloques = []
-    specs = [x for x in (r.get("specs") or [])[:10] if x]
+    specs = [_limpia_nombre(x) for x in (r.get("specs") or [])[:10] if x]
     if specs:
         bloques.append("📋 **Características**\n" + "\n".join(f"• {x}" for x in specs))
-    elif r.get("resumen"):
-        bloques.append("📋 **Características**\n• " + str(r["resumen"]).strip())
+    else:
+        partes = [x.strip() for x in re.split(r",\s+(?![^()]*\))", nombre) if x.strip()]
+        if partes:
+            tipo, resto = partes[0], partes[1:]  # "TV QLED 65" - Samsung The Frame TQ65LS03HAUXXC"
+            lista = []
+            if " - " in tipo:
+                producto, modelo = tipo.split(" - ", 1)
+                lista.append(producto.strip())
+                modelo = " ".join(w for w in modelo.split() if not RE_CODIGO_INTERNO.match(w))
+                if modelo:
+                    lista.append(modelo)
+            else:
+                lista.append(tipo)
+            lista += [x[:70] for x in resto if not RE_CODIGO_INTERNO.match(x)]
+            bloques.append(f"{emoji} **Características**\n" + "\n".join(f"• {x}" for x in lista[:10]))
+        elif r.get("resumen"):
+            bloques.append("📋 **Características**\n• " + _limpia_nombre(r["resumen"]))
     if r.get("tallas"):
         bloques.append("📏 **Tallas disponibles**\n• " + ", ".join(r["tallas"][:15]))
-    return {"titulo": titulo, "descripcion": "\n\n".join(bloques) or (r.get("nombre") or "")}
+    return {"titulo": titulo, "descripcion": "\n\n".join(bloques) or nombre}
 
 
 def a_html_telegram(texto):
