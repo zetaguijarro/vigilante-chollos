@@ -4835,6 +4835,26 @@ class EmparejamientoPorTipo(unittest.TestCase):
         finally:
             v.leer_ficha = orig
 
+    def test_aliexpress_black_friday_cupones_y_paypal(self):
+        """19/11/2026 (Zeta, hilo 2075847): cupones por tramos de cesta y descuento al pagar con PayPal, que se suma."""
+        cfg = {"pagos": {"aliexpress.com": {"paypal": [[99, 9], [199, 20], [299, 40]], "hasta": "2026-12-03"}}}
+        hoy = datetime(2026, 11, 20)
+        self.assertEqual(v.promo_pago(cfg, "aliexpress.com", 101.0, hoy), "Pagando con PayPal: -9 € (desde 99 €) → 92 €")
+        self.assertIn("-20 € (desde 199 €)", v.promo_pago(cfg, "aliexpress.com", 250.0, hoy))
+        self.assertIn("-40 € (desde 299 €) → 460 €", v.promo_pago(cfg, "aliexpress.com", 500.0, hoy))
+        self.assertIsNone(v.promo_pago(cfg, "aliexpress.com", 98.0, hoy), "por debajo del mínimo")
+        self.assertIsNone(v.promo_pago(cfg, "aliexpress.com", 200.0, datetime(2026, 12, 4)), "la promoción acabó")
+        self.assertIsNone(v.promo_pago(cfg, "miravia.es", 200.0, hoy), "solo AliExpress")
+        # Los códigos alias del hilo y los de la página de cupones: gana el de más códigos al mismo descuento
+        con = v.bd()
+        v.guardar_cupones(con, "aliexpress.com", [{"codigo": "ATOLLSES20", "descuento": 20.0, "tipo": "€", "minimo": 119.0}],
+                          hasta="2026-12-03")
+        v.guardar_cupones(con, "aliexpress.com", [{"codigo": "ATOLLSES20 / CHOLLOES20 / AEES20", "descuento": 20.0, "tipo": "€",
+                                                   "minimo": 119.0}], hasta="2026-12-03", hilo=2075847)
+        final, c = v.mejor_cupon(con, "aliexpress.com", 130.0, ahora=hoy)
+        self.assertEqual((final, c["codigo"]), (110.0, "ATOLLSES20 / CHOLLOES20 / AEES20"))
+        con.close()
+
     def test_pccomtracker_sin_precio_oficial(self):
         """18/11/2026: Philips 48OLED770 "a 609 €" era el precio de Amazon; PcComponentes no lo vendía."""
         html = ('<h1>Philips OLED 48OLED770</h1><p>Sin precio oficial de PcComponentes</p><a href="/goto/amazon?url='

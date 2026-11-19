@@ -307,6 +307,13 @@
    "mediamarkt.es": 10
   }
  },
+ "pagos": {
+  "aliexpress.com": {
+   "paypal": [[99, 9], [199, 20], [299, 40]],
+   "hasta": "2026-12-03",
+   "_nota": "Black Friday y Cyber Monday de AliExpress (19/11 a 3/12/2026): descuento al pagar con PayPal, se suma a los cupones. Hilo de Chollometro 2075847 (Zeta, 19/11/2026)."
+  }
+ },
  "vigilancia_amazon": {"por_ronda": 0, "_nota": "18/11/2026: apagada por Zeta (rondas normales). Para encenderla, por_ronda 20 (o con Keepa)."},
  "catalogo_por_tienda": {
   "privalia.com": {

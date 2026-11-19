@@ -2453,7 +2453,7 @@ def guardar_cupones(con, tienda, cupones, hasta=None, sello="", hilo=None):
 def cupones_activos(con, tienda, ahora=None):
     hoy = (ahora or datetime.now()).date().isoformat()
     filas = con.execute("SELECT codigo, descuento, tipo, minimo, hasta, sello FROM cupones WHERE tienda = ? "
-                        "AND (hasta IS NULL OR hasta >= ?)", (tienda, hoy)).fetchall()
+                        "AND (hasta IS NULL OR hasta >= ?) ORDER BY LENGTH(codigo) DESC", (tienda, hoy)).fetchall()
     return [dict(zip(("codigo", "descuento", "tipo", "minimo", "hasta", "sello"), f)) for f in filas]
 
 
@@ -2614,6 +2614,21 @@ def aplicar_cupon(con, tienda, p, cupones=None):
     if posible[1]:
         p["cupon_posible"] = f"{texto_cupon(posible[1])}: {eur(posible[0])} si el producto entra"
     return False
+
+
+def promo_pago(cfg, tienda, precio, ahora=None):
+    """Descuento al pagar con un método concreto (AliExpress + PayPal, Black Friday 2026: 9 € desde 99 €, 20 € desde
+    199 €, 40 € desde 299 €; hilo de Chollometro 2075847). Se suma al cupón. Es una condición (hay que elegir PayPal),
+    así que NO cambia el precio del aviso: se enseña aparte. -> "Pagando con PayPal: -20 € (desde 199 €) → X €" o None."""
+    cfg_t = ((cfg or {}).get("pagos") or {}).get(tienda) or {}
+    hoy = (ahora or datetime.now()).date().isoformat()
+    if not cfg_t or (cfg_t.get("hasta") and cfg_t["hasta"] < hoy):
+        return None
+    tramos = [(minimo, dto) for minimo, dto in cfg_t.get("paypal", []) if precio >= minimo]
+    if not tramos:
+        return None
+    minimo, dto = max(tramos)
+    return f"Pagando con PayPal: -{dto:g} € (desde {minimo:g} €) → {eur(round(precio - dto, 2))}"
 
 
 def firma_cupones(con, tienda):
@@ -5643,6 +5658,9 @@ def mensaje_candidato(n, p):
         socio += f" con {p['cupon']} (sin cupón: {p['precio_sin_cupon']:g} €)"
     elif p.get("cupon_posible"):
         resenas += f"\nPosible cupón: {p['cupon_posible']}"
+    pago = promo_pago(cargar_config(), p.get("tienda"), p["precio"])
+    if pago:
+        resenas += f"\n{pago}"
     if p.get("tallas_aviso"):
         resenas += "\nOjo, tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
     if p.get("_detectado"):
@@ -6867,6 +6885,9 @@ def bloques_de_codigo(item, d):
         codigos.append(f"🏷️ Cupón aplicado en el precio: {item['cup']}")
     for c in ficha.get("cupones") or []:
         codigos.append(f"🏷️ Posible código visto en la ficha, sin probar: {c}")
+    pago = promo_pago(cargar_config(), item.get("t"), precio)
+    if pago:
+        codigos.append(f"💳 {pago}. Se suma al cupón; hay que elegir PayPal al pagar.")
     codigos = codigos or ["Sin códigos de descuento visibles."]
     precios += [f"⚠️ {a}." for a in avisos if a.startswith(("Promoción", "Tallas", "Sin foto"))]
     return {"precios": "\n".join(precios), "info": "\n".join(info), "enlace": item.get("u", ""),
