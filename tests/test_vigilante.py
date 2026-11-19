@@ -4503,6 +4503,30 @@ class DestinoDeHilos(unittest.TestCase):
                                      (v.clave_vista("amazon.es", amz),)).fetchall(), [(91.99, "mediano")])
         con.close()
 
+    def test_enviar_pendientes_busca_en_chollometro_antes(self):
+        """19/11/2026 (Zeta: "la 267 ya estaba en Chollometro, expirada"): antes de enviar, además de la copia, el buscador."""
+        con = v.bd()
+        p = {"nombre": "Secadora Samsung Bespoke AI DV90DB8845GHU3", "tienda": "mediamarkt.es", "precio": 767.77,
+             "precio_antes": 929.0, "url": "https://www.mediamarkt.es/es/product/x", "estado": "nuevo", "base": "samsung dv90db8845ghu3",
+             "idealo": 929.0, "ean": None, "imagen_url": None, "ch": "no"}
+        con.execute("INSERT INTO lista (fecha, base, precio, datos, enviado) VALUES (?,?,?,?,0)",
+                    (datetime.now().isoformat(timespec="minutes"), p["base"], p["precio"],
+                     json.dumps({**v.compacto(p), "cat": "tecnologia", "_p": p})))
+        con.commit()
+        buscadas, enviados = [], []
+        orig = v.token_telegram, v.enviar_telegram, v.buscar_en_chollometro, v.actualizar_chollometro
+        v.token_telegram = lambda: "t"
+        v.enviar_telegram = lambda token, chat, texto, *a, **k: enviados.append(texto) or True
+        v.buscar_en_chollometro = lambda con_, p_: buscadas.append(p_["nombre"]) or 1
+        v.actualizar_chollometro = lambda con_: None
+        try:
+            v.enviar_pendientes(con, {"chat_id": "1"})
+        finally:
+            v.token_telegram, v.enviar_telegram, v.buscar_en_chollometro, v.actualizar_chollometro = orig
+        self.assertEqual(buscadas, ["Secadora Samsung Bespoke AI DV90DB8845GHU3"], "buscó en Chollometro antes de enviar")
+        self.assertEqual(len(enviados), 1)
+        con.close()
+
     def test_escrituras_a_la_vez_no_se_pierden(self):
         """18/11/2026 (Zeta): "los registros se tienen que guardar". Con otra conexión escribiendo (una ronda, la carga de
         Chollometro, `destinos`), la escritura espera su turno en vez de fallar con "database is locked"."""

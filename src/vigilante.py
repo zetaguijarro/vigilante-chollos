@@ -5585,6 +5585,14 @@ def enviar_pendientes(con, entrega):
     cupo = freno_telegram(con, token, chat, len(pendientes))
     copia = None
     if pendientes[:cupo]:
+        # Zeta (19/11/2026): la #267 ya estaba en Chollometro, expirada, y no salió porque solo se miraba la copia.
+        # Antes de enviar, también el buscador (caché de 6 h por consulta, 2 s entre búsquedas): trae hilos viejos o
+        # poco calientes que la copia no tiene. Como mucho 15 por tanda.
+        buscadas = 0
+        for n, datos in pendientes[:cupo]:
+            p = json.loads(datos).get("_p")
+            if p and buscadas < 15 and buscar_en_chollometro(con, p) is not None:
+                buscadas += 1
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
     for n, datos in pendientes[:cupo]:
