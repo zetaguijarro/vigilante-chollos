@@ -5075,6 +5075,26 @@ class ReglasDuplicadosChollometro(unittest.TestCase):
             self.assertEqual(v.estado_chollometro(dict(p), con_idx), v.estado_chollometro(dict(p), sin_idx), p["nombre"])
 
 
+class TituloZalando(unittest.TestCase):
+    """Zeta, 19/11/2026: en Zalando el título salía de la dirección ("Whitecore Blackgum") o del texto de la foto."""
+
+    HTML = (
+        '<li><article><a href="https://www.zalando.es/adidas-originals-samba-og-zapatillas-white-ad115b0aa-a11.html">'
+        '<img alt="Zapatilla blanca de cuero"></a><header><h3><span>adidas Originals</span>'
+        '<span>SAMBA OG - Zapatillas - footwear white/core black/gum</span></h3></header></article></li>'
+        '<li><a href="https://www.zalando.es/guia-abrigo/"><h3><span>El segundo acto</span><span>GAP vuelve</span></h3></a></li>')
+
+    def test_nombre_de_la_tarjeta_con_marca_y_tipo(self):
+        nombres = v.nombres_zalando_tarjetas(self.HTML)
+        self.assertEqual(list(nombres.values()),
+                         ["adidas Originals SAMBA OG - Zapatillas - footwear white/core black/gum"])  # sin el artículo editorial
+
+    def test_marca_ya_en_el_nombre_no_se_repite(self):
+        h = ('<a href="https://www.zalando.es/clinique-24-days-adviento-cll31g012-s11.html"></a><h3><span>Clinique</span>'
+             '<span>24 DAYS OF CLINIQUE - Calendario</span></h3>')
+        self.assertEqual(list(v.nombres_zalando_tarjetas(h).values()), ["24 DAYS OF CLINIQUE - Calendario"])
+
+
 class TextoPredictivo(unittest.TestCase):
     """Zeta, 19/11/2026: "si no es igual a un 80 % no es el mismo". Comparación por texto entero con palabras parecidas."""
 

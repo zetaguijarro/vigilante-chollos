@@ -1084,10 +1084,13 @@ def extraer(html, base_url, extra_json=()):
             productos = [principal]  # el carrusel de recomendados no es de esta página
         return productos
     productos = _extraer(html, base_url, extra_json)
+    tarjetas_zal = nombres_zalando_tarjetas(html) if "zalando." in host else {}
+    if "zalando." in host:  # sin enlace de producto ("Envíos y devoluciones gratuitos*" con 25,90 €) no es un producto
+        productos = [p for p in productos if RE_ZALANDO_SLUG.search(p.get("url") or "")]
     for p in productos:
         if not p.get("marca"):
             p["marca"] = marca_de_tarjeta(html, p.get("nombre"))
-        nombre = nombre_zalando(p.get("url")) if "zalando." in host else None
+        nombre = (tarjetas_zal.get(p.get("url")) or nombre_zalando(p.get("url"))) if "zalando." in host else None
         p["nombre"] = nombre or nombre_con_marca_de_ficha(p)
     return productos
 
@@ -1160,6 +1163,25 @@ def nombre_con_marca_de_ficha(p):
 
 
 RE_ZALANDO_SLUG = re.compile(r"zalando\.[a-z.]+/([a-z0-9-]+?)-[a-z0-9]{9}-[a-z0-9]{3}\.html", re.I)
+
+
+RE_ZAL_ENLACE = re.compile(r'href="(https://www\.zalando\.[a-z.]+/[a-z0-9-]+?-[a-z0-9]{9}-[a-z0-9]{3}\.html)')
+RE_ZAL_H3 = re.compile(r"<h3[^>]*>\s*<span[^>]*>([^<]+)</span>\s*<span[^>]*>([^<]+)</span>\s*</h3>")
+
+
+def nombres_zalando_tarjetas(html):
+    """Zalando (Zeta, 19/11/2026: "no se coge bien el título"): cada tarjeta lleva su título en un <h3> con dos <span>,
+    la marca y el nombre tal como los pone la tienda ("adidas Originals" / "SAMBA OG - Zapatillas - white/black").
+    -> {enlace de producto: "Marca NOMBRE - Tipo - color"}. El enlace es el último de producto antes del <h3>."""
+    nombres = {}
+    for m in RE_ZAL_H3.finditer(html or ""):
+        antes = html[max(0, m.start() - 3000):m.start()]
+        enlaces = RE_ZAL_ENLACE.findall(antes[antes.rfind("</li>") + 1:])  # solo los de su propia tarjeta
+        if not enlaces:
+            continue  # un artículo editorial ("La guía del abrigo"), no un producto
+        marca, nombre = " ".join(unescape(m.group(1)).split()), " ".join(unescape(m.group(2)).split())
+        nombres.setdefault(enlaces[-1], nombre if marca.lower() in nombre.lower() else f"{marca} {nombre}")
+    return nombres
 
 
 def nombre_zalando(url):

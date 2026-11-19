@@ -482,3 +482,6 @@ Zeta: "mejora la búsqueda en Chollometro por texto predictivo; si no es igual a
 
 ## Aviso de candidata con formato (Zeta, 19/11/2026)
 "Me cuesta distinguir título, precio y descripción": `mensaje_candidato` sale ahora en HTML de Telegram: cabecera `#N · tienda` y título en negrita, precio aparte (con la referencia y el descuento debajo), un bloque de datos con la etiqueta en negrita (Mercado, Histórico, Chollometro, Hilo...), un bloque de avisos y el enlace al final, todo separado por líneas en blanco. Sin emojis. `enviar_telegram` cuenta el límite de 1024 de la foto sin las etiquetas.
+
+## Título de Zalando (Zeta, 19/11/2026)
+El nombre salía de la dirección ("Samba Unisex Zapatillas Footwear Whitecore Blackgum") o del texto de la foto. Cada tarjeta lleva su título real en un `<h3>` con dos `<span>` (marca y nombre): `nombres_zalando_tarjetas` lo lee ("adidas Originals SAMBA OG UNISEX - Zapatillas - footwear white/core black/clear granit"); la dirección queda de respaldo. Los productos sin enlace de producto (p. ej. "Envíos y devoluciones gratuitos*") se descartan. Medido en 3 portadas: 423 productos, todos con título de tarjeta.
