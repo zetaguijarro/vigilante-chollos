@@ -3782,6 +3782,19 @@ class Catalogo(Base):
         c = self.ronda()
         self.assertEqual([x["n"] for x in c], ["JBL Live 770NC"], "un producto nuevo de la campaña es candidato")
 
+    def test_listados_enormes_cada_cuarta_lectura_desde_la_pagina_11(self):
+        """19/11/2026 (Zeta: "haz la 1"): MediaMarkt tiene 1.203 televisores y 1.361 juegos PS5; cada cuarta lectura de
+        la tienda se leen también sus páginas desde la 11. El resto de tandas empieza en la página 1."""
+        con = v.bd()
+        v.guardar_catalogo({"a.es": ["https://a.es/tv.html", "https://a.es/juegos.html", "https://a.es/otra.html"]})
+        cfg = {"catalogo_por_tienda": {"a.es": {"cada_min": 0, "por_ronda": 1, "profundas": {
+            "cada": 4, "desde": 11, "urls": ["https://a.es/tv.html", "https://a.es/juegos.html?x=1"]}}}}
+        lecturas = [[u for _, u in v.catalogo_turno(con, cfg, ["a.es"])] for _ in range(8)]
+        self.assertEqual([len(l) for l in lecturas], [1, 1, 1, 3, 1, 1, 1, 3], "cada cuarta lectura trae las dos profundas")
+        self.assertEqual(lecturas[3][1:], ["https://a.es/tv.html?page=11", "https://a.es/juegos.html?x=1&page=11"])
+        self.assertTrue(all("page=" not in u for l in lecturas[:3] for u in l))
+        con.close()
+
     def test_varias_por_ronda_y_turno_circular(self):
         con = v.bd()
         v.guardar_catalogo({"a.es": ["u1", "u2", "u3", "u4", "u5"]})

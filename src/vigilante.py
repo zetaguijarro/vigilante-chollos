@@ -4713,7 +4713,8 @@ def leer_todas(tiendas, navegador, urls, categoria, cfg, apis=(), catalogo=()):
     cat_nav = [(t, u) for t, u in catalogo if t in navegador]
     with ThreadPoolExecutor(max_workers=6) as ex:
         normales = ex.map(lambda t: leer_tienda(t, urls, categoria, None, paginas_de(cfg, t)), tiendas)
-        de_cat = ex.map(lambda tu: leer_tienda(tu[0], urls, categoria, None, int(pc.get("descarga", 5)), tu[1]),
+        de_cat = ex.map(lambda tu: leer_tienda(tu[0], urls, categoria, None,
+                                               int((pc.get("por_tienda") or {}).get(tu[0], pc.get("descarga", 5))), tu[1]),
                         cat_desc)
         de_api = ex.map(leer_api, [a for a in apis if a in FUENTES_API or a.startswith(("rss:", "tg:"))])
         nav = []
@@ -4882,6 +4883,16 @@ def catalogo_turno(con, cfg, tiendas):
             if len(elegidas) == cuantas:
                 break
         salida += [(t, u) for u in elegidas]
+        # Listados enormes (MediaMarkt: 1.203 televisores, 1.361 juegos PS5): cada `cada` lecturas de la tienda se
+        # leen también sus páginas desde `desde` (Zeta, 19/11/2026). El resto de tandas empieza en la página 1.
+        prof = por_tienda.get(t, {}).get("profundas")
+        if prof and prof.get("urls"):
+            fila = con.execute("SELECT v FROM meta WHERE k=?", (f"cat_profundo:{t}",)).fetchone()
+            n = (int(fila[0]) if fila else 0) + 1
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"cat_profundo:{t}", str(n)))
+            if n % max(1, int(prof.get("cada", 4))) == 0:
+                desde = int(prof.get("desde", 11))
+                salida += [(t, f"{u}{'&' if '?' in u else '?'}page={desde}") for u in prof["urls"]]
     con.commit()
     return salida
 

@@ -302,7 +302,10 @@
  "catalogo_cada_min": 60,
  "paginas_catalogo": {
   "descarga": 5,
-  "navegador": 3
+  "navegador": 3,
+  "por_tienda": {
+   "mediamarkt.es": 10
+  }
  },
  "vigilancia_amazon": {"por_ronda": 0, "_nota": "18/11/2026: apagada por Zeta (rondas normales). Para encenderla, por_ronda 20 (o con Keepa)."},
  "catalogo_por_tienda": {
@@ -314,6 +317,14 @@
   "mediamarkt.es": {
    "cada_min": 10,
    "por_ronda": 4,
+   "profundas": {
+    "cada": 4,
+    "desde": 11,
+    "urls": [
+     "https://www.mediamarkt.es/es/category/televisores-399.html",
+     "https://www.mediamarkt.es/es/category/juegos-ps5-8533.html"
+    ]
+   },
    "niveles": 2,
    "max": 40,
    "urls": [
