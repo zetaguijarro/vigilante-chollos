@@ -2010,6 +2010,24 @@ class Rondas(Base):
         c = self.ronda()  # guía del 18/11/2026: publicado en otra tienda no es duplicado
         self.assertEqual([x["ch"] for x in c], ["otra:33"])
 
+    def test_expirados_tambien_son_precio_historico(self):
+        """19/11/2026 (Zeta: "los expirados también cuentan, son precio histórico"): un 8 % o más por encima del hilo más
+        barato de este producto en Chollometro, vigente o expirado, no sale ni como candidata ni en Radar."""
+        ahora = int(time.time())
+        hilos = [{"id": 1, "titulo": "Sony WH-1000XM5 auriculares inalámbricos con cancelación de ruido", "precio": 250.0,
+                  "tienda": "Amazon", "host": "amazon.es", "temp": 400, "publicado": ahora - 86400 * 90, "caducado": 1},
+                 {"id": 2, "titulo": "Sony WF-1000XM5 auriculares", "precio": 120.0, "tienda": "Amazon", "host": "amazon.es",
+                  "temp": 300, "publicado": ahora - 86400 * 3, "caducado": 0}]
+        copia = {"hilos": hilos, "fresca": True, "por_clave": {}, "idx": v._indice_copia(hilos)}
+        p = {"nombre": "Sony WH-1000XM5 auriculares inalámbricos", "tienda": "mediamarkt.es", "precio": 280.0}
+        ch = v.estado_chollometro(p, copia)
+        self.assertEqual(p["_cm_min"], 250.0, "el expirado cuenta; el WF-1000XM5 es otro producto")
+        self.assertTrue(v.fuera_por_chollometro({**p, "ch": ch}), "280 € es un 12 % más que 250 €")
+        p2 = {"nombre": "Sony WH-1000XM5 auriculares inalámbricos", "tienda": "mediamarkt.es", "precio": 265.0}
+        v.estado_chollometro(p2, copia)
+        self.assertFalse(v.fuera_por_chollometro({**p2, "ch": "no"}), "265 € es un 6 %: aún vale")
+        self.assertFalse(v.fuera_por_chollometro({"ch": "no", "precio": 280.0, "_cm_min": None}))
+
     def test_ahorro_minimo_en_euros(self):
         # Caso real: cuchillo Arcos a 10,99 € con el mercado a 11,96 €: 1 € de ahorro no es chollo.
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))

@@ -3216,6 +3216,25 @@ def estado_chollometro(p, copia=None):
         p["_cm_hot"] = {"temp": round(hot["temp"]), "precio": hot["precio"], "titulo": hot["titulo"][:80],
                         "dias": int((datetime.now().timestamp() - hot["publicado"]) // 86400),
                         "caducado": bool(hot["caducado"])}
+    # Precio histórico en Chollometro (Zeta, 19/11/2026: "los expirados también cuentan, son precio histórico"): el más
+    # bajo de los hilos de este mismo producto (por marca y modelo, no por parecido), vigentes o expirados.
+    # Estricto a propósito: un falso positivo aquí descarta en silencio una oferta buena. Con código de modelo, el hilo
+    # tiene que llevar ese código (o su raíz, sin la región); sin él, coincidir al 90 % o más.
+    # Un "8700F" o un "8745HX" es el procesador, no el producto: no sirve de código de modelo.
+    codigos = [c for c in codigos_modelo(p["nombre"]) if not re.fullmatch(r"\d{3,5}[A-Za-z]{0,3}", c)]
+
+    def mismo_historico(h):
+        if h["id"] in por_enlace:
+            return True
+        t = re.sub(r"[^A-Z0-9]", "", (h["titulo"] or "").upper())
+        raices = [re.sub(r"[^A-Z0-9]", "", c.upper()) for c in codigos]
+        if raices:
+            return any(r and (r in t or (len(r) >= 9 and r[:-3] in t)) for r in raices)
+        return coincidencia(p["nombre"], h["titulo"], p.get("marca")) >= 90
+
+    historicos = [h["precio"] for h in iguales if h["precio"] and h["precio"] >= p["precio"] * 0.4
+                  and mismo_historico(h)]
+    p["_cm_min"] = min(historicos) if historicos else None
     if None in misma:
         return "misma"
     if misma:
@@ -5600,7 +5619,7 @@ def enviar_pendientes(con, entrega):
         p = d.pop("_p", None) or {}
         if p:
             ch = estado_chollometro(p, copia)
-            if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, p.get("precio") or 0):
+            if fuera_por_chollometro(p, ch, p.get("precio") or 0):
                 con.execute("UPDATE lista SET enviado=2 WHERE id=?", (n,))  # 2 = publicada por otro
                 con.commit()
                 continue
@@ -5841,7 +5860,7 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
     if not (token and chat):
         return 0
     buenos = [(d, p) for p in casi if (d := _casi_con_pinta(p)) is not None
-              and not ya_publicado_igual_o_mas_barato(p.get("ch"), p["precio"])]  # +8 % sobre un hilo vigente: ni al Radar
+              and not fuera_por_chollometro(p)]  # +8 % sobre un hilo de Chollometro (también expirado): ni al Radar
     hace = (datetime.now() - timedelta(days=CASI_REPETIR_DIAS)).isoformat(timespec="minutes")
     enviados = 0
     for d, p in sorted(buenos, key=lambda x: -x[0]):
@@ -6503,8 +6522,10 @@ def dossier_items(ids, ficha_manual=None):
                     buscar_en_chollometro(con, {"nombre": c["n"], "tienda": c["t"]})
                 try:
                     ahora = item["ficha"].get("precio_ahora")
-                    c_ch = estado_chollometro({"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]})
+                    p_cm = {"nombre": c["n"], "tienda": c["t"], "precio": ahora or c["p"]}
+                    c_ch = estado_chollometro(p_cm)
                     item["ch_ahora"] = c_ch
+                    item["cm_min"] = p_cm.get("_cm_min")  # el hilo más barato de este producto, vigente o expirado
                     item["antecedentes"] = antecedentes_chollometro(c["n"])
                     item["mejor_cm"] = mejor_chollometro(c["n"])
                     item["minimo_propio"] = minimo_con_fecha(con, clave_vista(c["t"], {"url": c.get("u"),
@@ -6677,9 +6698,11 @@ def decidir_item(item, cfg=None):
     if ficha.get("stock") == "no":
         return fin("descartado", "la ficha lo da por agotado", memoria="caducada")
     ch = item.get("ch_ahora") or item.get("ch")
-    if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, precio):
+    if fuera_por_chollometro({"_cm_min": item.get("cm_min")}, ch, precio):
         return fin("descartado", f"ya está en Chollometro ({ch}) y ahora cuesta {precio:g} €: misma tienda solo si "
-                                 f"baja más de un 5 % y más de 1 €; otra tienda, si ahora es más barato", memoria="dudosa")
+                                 f"baja más de un 5 % y más de 1 €; otra tienda o hilo expirado, si no está un 8 % o más "
+                                 f"por encima de su precio" + (f" (el más barato: {item['cm_min']:g} €)" if item.get("cm_min") else ""),
+                   memoria="dudosa")
     ok_amz, motivo_amz = amazon_vende_o_envia(ficha)
     if ok_amz is False:
         return fin("descartado", motivo_amz, memoria="dudosa")
@@ -7242,6 +7265,17 @@ def ahorro_suficiente(p, mejor, cat_cfg, f):
     return ref - p["precio"] >= cat_cfg.get("ahorro_min_eur", f.get("ahorro_min_eur", 0))
 
 
+def fuera_por_chollometro(p, ch=None, precio=None):
+    """True si el producto no debe salir: ya publicado (misma tienda), o un 8 % o más por encima de un hilo de otra
+    tienda vigente o de cualquier hilo de este producto, vigente o expirado (precio histórico en Chollometro)."""
+    ch = p.get("ch") if ch is None else ch
+    precio = p["precio"] if precio is None else precio
+    if ch == "misma" or ya_publicado_igual_o_mas_barato(ch, precio):
+        return True
+    minimo = p.get("_cm_min")
+    return bool(minimo and precio >= minimo * (1 + CM_MAS_CARO) - 0.005)
+
+
 CM_MAS_CARO = 0.08  # un precio un 8 % o más por encima de un hilo vigente de otra tienda se descarta
 
 
@@ -7703,7 +7737,7 @@ def ronda(categoria, solo=None):
         quedan, fuera = [], Counter()
         for p in previos:
             p["ch"] = estado_chollometro(p, copia)  # también deja _cm_hot (demanda probada)
-            if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
+            if fuera_por_chollometro(p):
                 fuera["ya publicado"] += 1
             elif not p.get("error_precio") and not p.get("gratis") and (techo := ya_salio_mas_barato(p)):
                 fuera["ya salió más barato"] += 1
@@ -7842,7 +7876,7 @@ def ronda(categoria, solo=None):
                 ref = {**ref, "fuente_corta": "habitual en PcComponentes (PCComTracker)"}
                 ref.pop("tienda_url", None)
                 p["_hist"], p["ch"] = ref, estado_chollometro(p, copia)
-                if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
+                if fuera_por_chollometro(p):
                     continue
             if ref.get("tienda_url") and raiz(p["tienda"]) not in urlparse(p.get("url") or "").netloc:
                 p["url"] = ref["tienda_url"]  # el aviso lleva a la tienda, no al comparador
@@ -7961,7 +7995,7 @@ def ronda(categoria, solo=None):
     nav_tiendas, nav_ctx = None, None  # Chrome normal para confirmar precios de comparador, solo si hace falta
     recientes = avisos_recientes(con, f.get("repetido_horas", 24)) if revisar else []
     for p in revisar:
-        if p["ch"] == "misma" or ya_publicado_igual_o_mas_barato(p["ch"], p["precio"]):
+        if fuera_por_chollometro(p):
             continue  # Hermes los descartaba siempre: "Chollometro ya tiene la misma oferta"
         if p.get("estado") != "vuelve" and \
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
