@@ -21,6 +21,7 @@ Uso (desde la raíz del proyecto: python src/vigilante.py ...):
 
 Solo usa la librería estándar de Python: no hay que instalar nada.
 """
+import difflib
 import functools
 import gzip
 import json
@@ -3004,6 +3005,81 @@ def marca_y_modelo(texto, marca=None):
     return de_marca, modelo, codigos_modelo(texto or ""), tipos_producto(texto or "")
 
 
+SIMILITUD_MINIMA = 0.8  # Zeta, 19/11/2026: "si no es igual a un 80 % no es el mismo"
+
+
+def _palabra_parecida(x, y):
+    """Texto predictivo: dos palabras del modelo se dan por la misma si son iguales, una empieza por la otra
+    ("auricul" ~ "auriculares") o difieren en una errata ("sennheiser" ~ "senheiser"). Lo que lleva cifras (códigos,
+    capacidades, números de serie) tiene que ser exacto: S24 no se parece a S25."""
+    if x == y:
+        return True
+    if len(x) < 5 or len(y) < 5 or any(c.isdigit() for c in x + y):
+        return False
+    if x.startswith(y) or y.startswith(x):
+        return True
+    return abs(len(x) - len(y)) <= 2 and difflib.SequenceMatcher(None, x, y).ratio() >= 0.85
+
+
+def palabras_comunes_difusas(mo_a, mo_b):
+    """Cuántas palabras de mo_b están (iguales o parecidas) en mo_a. Primero las exactas; con las que sobran, el
+    parecido, sin usar dos veces la misma palabra de mo_a."""
+    exactas = mo_a & mo_b
+    resto_a, resto_b = sorted(mo_a - exactas), sorted(mo_b - exactas)
+    for t in resto_b:
+        for u in resto_a:
+            if _palabra_parecida(t, u):
+                resto_a.remove(u)
+                exactas = exactas | {t}
+                break
+    return len(exactas)
+
+
+_STOP_TEXTO = frozenset("de del la el los las con para y e en por un una unos al a o desde espana envio oferta cupon "
+                        "precio solo pack nuevo nueva new the and of for with by".split())
+_UNIDADES_TEXTO = {"litro": "l", "litros": "l", "lt": "l", "kilo": "kg", "kilos": "kg", "gramo": "g", "gramos": "g",
+                   "gr": "g", "pulgada": "in", "pulgadas": "in", "unidades": "ud", "uds": "ud", "un": "ud",
+                   "capsulas": "cap"}
+_RE_UNIDAD_TEXTO = re.compile(r"(\d)\s*(litros?|lt|l|kilos?|kg|gramos?|gr|g|ml|cl|gb|tb|mb|cm|mm|w|hz|mah|pulgadas?|"
+                              r"uds?|unidades|latas|capsulas)\b")
+_PLATAFORMAS = frozenset({"ps5", "ps4", "xbox", "pc", "switch", "steam"})
+_DISTINTIVAS = VARIANTES | {"sin", "lactosa", "zero", "light", "gluten", "decaf", "descafeinado"}
+
+
+def _palabras_texto(s):
+    """Palabras de un título entero, normalizadas: sin tildes, medidas pegadas a su cifra ("5 Litros" = "5L"), sin relleno."""
+    s = sin_tildes((s or "").lower()).replace(",", ".")
+    s = _RE_UNIDAD_TEXTO.sub(lambda m: m.group(1) + _UNIDADES_TEXTO.get(m.group(2), m.group(2)), s)
+    s = re.sub(r"(\d+)x(\d+)", r"\1 \2", s)
+    return {t for t in re.findall(r"[a-z0-9]+(?:\.[0-9]+)?", s) if t not in _STOP_TEXTO and (len(t) > 1 or t.isdigit())}
+
+
+def mismo_texto(nombre, titulo):
+    """Texto predictivo (Zeta, 19/11/2026: "si no es igual a un 80 % no es el mismo"): los dos títulos enteros
+    comparten el 80 % de sus palabras (iguales o parecidas, sobre la media de largos), con las mismas cifras, sin que
+    cada uno traiga una palabra propia que lo distinga (Loxa frente a El Cerro) ni variantes o plataformas
+    distintas. Sirve para productos de marcas que no conocemos, donde la comparación por marca y modelo no llega."""
+    ta, tb = _palabras_texto(nombre), _palabras_texto(titulo)
+    if len(ta) < 3 or len(tb) < 3:
+        return False
+    comunes = palabras_comunes_difusas(ta, tb)
+    if comunes / ((len(ta) + len(tb)) / 2) < SIMILITUD_MINIMA:
+        return False
+    num = lambda t: {x for x in t if any(c.isdigit() for c in x)}
+    na, nb = num(ta), num(tb)
+    if not (na <= nb or nb <= na):
+        return False  # 5L frente a 15L, 20 cm frente a 24 cm
+    solo_a, solo_b = ta - tb, tb - ta
+    if (solo_a | solo_b) & _DISTINTIVAS and ((solo_a & _DISTINTIVAS) != (solo_b & _DISTINTIVAS)):
+        return False  # "sin lactosa", "pro"...: lo trae uno solo
+    pa, pb = ta & _PLATAFORMAS, tb & _PLATAFORMAS
+    if pa and pb and not (pa & pb):
+        return False
+    letras = lambda t: {x for x in t if x.isalpha() and len(x) >= 4}
+    return not (letras(solo_a) and letras(solo_b) and
+                not any(_palabra_parecida(x, y) for x in letras(solo_a) for y in letras(solo_b)))
+
+
 def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     """¿El hilo de Chollometro (titulo, corto) es este producto (nombre, de la tienda)? Por marca y modelo:
     mismo tipo; mismo código si los dos lo tienen; misma marca si los dos la dicen; los números del modelo del hilo
@@ -3045,7 +3121,7 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     # Sin marca en los dos lados no se empareja por título (solo por enlace): "silla de oficina ergonómica" o
     # "almohada de El Corte Inglés" casaban con cualquier hilo que dijera lo mismo (18/11/2026).
     if not (ma and mb and ma & mb):
-        return False
+        return mismo_texto(nombre, titulo)  # marca que no conocemos ("Loxa"): solo si el texto es casi el mismo
     misma_marca = True
     corte_a = {CORTE_ES.get(t, t) for t in tok_a if CORTE_ES.get(t, t) in CORTES}
     corte_b = {CORTE_ES.get(t, t) for t in tok_b if CORTE_ES.get(t, t) in CORTES}
@@ -3106,15 +3182,17 @@ def mismo_producto(nombre, titulo, marca=None, cobertura=0.7):
     faltan = {t for t in mo_b if any(c.isdigit() for c in t)} - mo_a
     if any(forma(n) == forma(x) for n in faltan for x in numeros_a - mo_b):
         return False  # el producto dice otro número del mismo tipo: otro modelo o capacidad
-    comunes = mo_a & mo_b
     # El porcentaje, sobre el más corto de los dos: un título de tienda corto ("POCO M7 6GB 128GB") frente a un hilo
     # largo lleno de especificaciones ("Snapdragon 685, 144Hz, 7000mAh...") también es el mismo producto.
+    # Con texto predictivo (palabras parecidas) y un mínimo del 80 % (SIMILITUD_MINIMA).
     sin_numero = mo_b - faltan  # si la tienda no da el número del hilo (set de LEGO), cuenta el resto
     if faltan:
         base = max(1, min(len(sin_numero), len(mo_a)))
-        return len(comunes) >= 2 and len(comunes) / base >= max(cobertura, 0.75)
+        n = palabras_comunes_difusas(mo_a, sin_numero)
+        return (n >= 2 and n / base >= max(cobertura, 0.75)) or mismo_texto(nombre, titulo)
     base = max(1, min(len(mo_b), len(mo_a)))
-    return len(comunes) >= (1 if misma_marca else 2) and len(comunes) / base >= cobertura
+    n = palabras_comunes_difusas(mo_a, mo_b)
+    return (n >= (1 if misma_marca else 2) and n / base >= cobertura) or mismo_texto(nombre, titulo)
 
 
 def coincidencia(nombre, titulo, marca=None):
@@ -3126,7 +3204,7 @@ def coincidencia(nombre, titulo, marca=None):
     mo_a, mo_b = limpiar(mo_a), limpiar(mo_b)
     if not mo_a or not mo_b:
         return 0
-    return round(100 * len(mo_a & mo_b) / min(len(mo_a), len(mo_b)))
+    return round(100 * palabras_comunes_difusas(mo_a, mo_b) / min(len(mo_a), len(mo_b)))
 
 
 def mismo_post(nombre, titulo, marca=None):
@@ -3230,7 +3308,7 @@ def estado_chollometro(p, copia=None):
         raices = [re.sub(r"[^A-Z0-9]", "", c.upper()) for c in codigos]
         if raices:
             return any(r and (r in t or (len(r) >= 9 and r[:-3] in t)) for r in raices)
-        return coincidencia(p["nombre"], h["titulo"], p.get("marca")) >= 90
+        return coincidencia(p["nombre"], h["titulo"], p.get("marca")) >= 100 * SIMILITUD_MINIMA
 
     historicos = [h["precio"] for h in iguales if h["precio"] and h["precio"] >= p["precio"] * 0.4
                   and mismo_historico(h)]

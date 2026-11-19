@@ -5072,5 +5072,33 @@ class ReglasDuplicadosChollometro(unittest.TestCase):
             self.assertEqual(v.estado_chollometro(dict(p), con_idx), v.estado_chollometro(dict(p), sin_idx), p["nombre"])
 
 
+class TextoPredictivo(unittest.TestCase):
+    """Zeta, 19/11/2026: "si no es igual a un 80 % no es el mismo". Comparación por texto entero con palabras parecidas."""
+
+    def test_palabras_parecidas(self):
+        self.assertTrue(v._palabra_parecida("auricul", "auriculares"))  # prefijo (texto predictivo)
+        self.assertTrue(v._palabra_parecida("auriculares", "auricular"))
+        self.assertTrue(v._palabra_parecida("sennheiser", "senheiser"))  # errata
+        self.assertFalse(v._palabra_parecida("s24", "s25"))  # con cifras, exacto
+        self.assertFalse(v._palabra_parecida("cerro", "loxa"))
+
+    def test_marca_desconocida_mismo_texto(self):
+        # Loxa no es una marca de la lista: antes no se emparejaba ni con el mismo título.
+        a = "Loxa Aceite de oliva Virgen extra 5 Litros"
+        self.assertTrue(v.mismo_producto(a, "Loxa Aceite de oliva Virgen extra 5L"))
+        self.assertTrue(v.mismo_producto(a, a))
+
+    def test_mismo_texto_rechaza_otra_marca_cifra_o_variante(self):
+        a = "Loxa Aceite de oliva Virgen extra 5 Litros"
+        self.assertFalse(v.mismo_texto(a, "Aceite de oliva Virgen extra El Cerro 5 Litros"))  # otra marca
+        self.assertFalse(v.mismo_texto(a, "Loxa Aceite de oliva Virgen extra 15 Litros"))  # otra cantidad
+        self.assertFalse(v.mismo_texto("Central Lechera Asturiana Leche Semidesnatada Brik 6x1L",
+                                       "Central Lechera Asturiana Leche Sin Lactosa Semidesnatada Brik 6x1L"))
+        self.assertFalse(v.mismo_texto("Halo Campaign Evolved PS5 Edicion Estandar", "Halo Campaign Evolved Xbox Edicion Estandar"))
+
+    def test_coincidencia_cuenta_palabras_parecidas(self):
+        self.assertGreaterEqual(v.coincidencia("Sennheiser Momentum 4 Wireless", "Senheiser Momentum 4 Wireless"), 80)
+
+
 if __name__ == "__main__":
     unittest.main()
