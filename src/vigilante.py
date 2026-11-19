@@ -6133,6 +6133,8 @@ def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
     ok_amz, motivo_amz = amazon_vende_o_envia(ficha)
     if ok_amz is False:
         return False, motivo_amz
+    if ficha.get("vendedor_tercero"):
+        return False, f"MediaMarkt solo como marketplace: lo vende {ficha['vendedor_tercero']}"
     # Reglas de publicación de Chollometro (docs/REGLAS_CHOLLOMETRO.md): las rechazan sin discusión.
     if ficha.get("una_unidad"):
         return False, "solo queda una unidad (Chollometro no la acepta)"
@@ -6238,6 +6240,19 @@ def oferta_amazon(html, plano_compra=None):
     return {"vende": vende, "envia": envia, "vendedor_id": vendedor}
 
 
+RE_MM_VENDIDO = re.compile(r"Vendido y enviado por\s+(.{2,40}?)(?:\s{2,}|\s(?:Devoluci|Entrega|Env[ií]o|Garant|Ver |Más|Con ))")
+
+
+def vendedor_mediamarkt(plano):
+    """MediaMarkt solo pone "Vendido y enviado por <vendedor>" cuando la oferta es de un marketplace (Foxway ES,
+    reacondicionados...); lo que vende la propia MediaMarkt no lleva esa frase. -> nombre del tercero o None
+    (Zeta, 19/11/2026: S22 Ultra a 383 € y A51 a 119 € eran reacondicionados de Foxway)."""
+    m = RE_MM_VENDIDO.search(plano or "")
+    if not m or "mediamarkt" in m.group(1).lower():
+        return None
+    return m.group(1).strip()
+
+
 def analizar_ficha(html, final, datos=()):
     plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I)
     plano = " ".join(plano.split())
@@ -6265,6 +6280,10 @@ def analizar_ficha(html, final, datos=()):
         o = oferta_amazon(html)
         if o is not None:
             f["amazon_oferta"] = o
+    if "mediamarkt." in urlparse(final or "").netloc:
+        t = vendedor_mediamarkt(plano)
+        if t:
+            f["vendedor_tercero"] = t
     if RE_UNA_UNIDAD.search(plano):
         f["una_unidad"] = True
     if RE_NO_ENVIA_ES.search(plano):

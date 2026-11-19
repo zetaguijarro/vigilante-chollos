@@ -5096,6 +5096,27 @@ class TituloZalando(unittest.TestCase):
         self.assertEqual(list(v.nombres_zalando_tarjetas(h).values()), ["24 DAYS OF CLINIQUE - Calendario"])
 
 
+class VendedorMediaMarkt(unittest.TestCase):
+    """Zeta, 19/11/2026: un S22 Ultra a 383 € y un A51 a 119 € de MediaMarkt eran reacondicionados de Foxway ES."""
+
+    def test_vendedor_de_marketplace(self):
+        plano = "Galaxy S22 Ultra Blanco 382,98 € Vendido y enviado por Foxway ES Devoluciones gratuitas 30 días"
+        self.assertEqual(v.vendedor_mediamarkt(plano), "Foxway ES")
+        self.assertIsNone(v.vendedor_mediamarkt("Galaxy S24 Vendido y enviado por MediaMarkt Entrega en 24 h"))
+        self.assertIsNone(v.vendedor_mediamarkt("Galaxy S24 Otros vendedores lo ofrecen por 400 €"))  # lo vende MediaMarkt
+
+    def test_confirmar_en_ficha_rechaza_al_tercero(self):
+        orig = v.leer_ficha
+        v.leer_ficha = lambda url, nav=None: {"precio_ahora": 100.0, "titulo": "Samsung Galaxy A51", "vendedor_tercero": "Foxway ES"}
+        try:
+            ok, motivo = v.confirmar_en_ficha({"nombre": "Samsung Galaxy A51", "precio": 100.0, "tienda": "mediamarkt.es",
+                                               "url": "https://www.mediamarkt.es/es/product/_a51-1.html"})
+        finally:
+            v.leer_ficha = orig
+        self.assertFalse(ok)
+        self.assertIn("Foxway ES", motivo)
+
+
 class TextoPredictivo(unittest.TestCase):
     """Zeta, 19/11/2026: "si no es igual a un 80 % no es el mismo". Comparación por texto entero con palabras parecidas."""
 

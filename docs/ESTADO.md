@@ -488,3 +488,6 @@ El nombre salía de la dirección ("Samba Unisex Zapatillas Footwear Whitecore B
 
 ## Avisos de Telegram con el estilo de Instinct (Zeta, 19/11/2026)
 Zeta enseñó una captura de las fichas de Instinct: título en negrita, enlace, línea de precio y viñetas con un emoji por dato. `mensaje_candidato` (candidata con botón Verificar) y los avisos del Radar salen así, en HTML: cabecera `#N · tienda` y título, enlace, `precio. Referencia de la tienda…`, y viñetas: 💰 descuento real, 📊 mercado, 📉 histórico, 🔎 Chollometro, 🔥 ya fue chollo, 🔗 hilos con su enlace, ⚠️ sin verificar, 🕒 detectado/avisado. Sigue en un solo mensaje (con foto y botón); la ficha final de 5 mensajes no cambia.
+
+## MediaMarkt: vendedor marketplace (Zeta, 19/11/2026)
+En la ronda de MediaMarkt salieron un S22 Ultra a 383 € y un A51 a 119 €: reacondicionados de Foxway ES (marketplace). `analizar_ficha` lee en MediaMarkt la frase "Vendido y enviado por X" (solo aparece si la oferta es de un tercero) y `confirmar_en_ficha` descarta si X no es MediaMarkt (`vendedor_mediamarkt`).
