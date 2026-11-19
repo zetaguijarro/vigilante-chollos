@@ -5124,6 +5124,14 @@ class AntiguedadDelModelo(unittest.TestCase):
         self.assertEqual(p["_anio"], 2025)
         self.assertFalse(v.demasiado_antiguo({"nombre": "Apple iPhone 14 Móvil"}, {"filtros_codigo": {"antiguedad_max_anios": None}}))
 
+    def test_moda_infantil_sigue_fuera(self):
+        """Zeta, 19/11/2026: "seguimos descartando la moda infantil". Zalando la etiqueta "Primaria y colegio"."""
+        for n in ("Nike Kawa Slide - Primaria y colegio Sandalias y Flip-Flops", "Camiseta Nike Boys", "Vans Old Skool - Zapatillas - Niño",
+                  "Nike Downshifter 13 - Zapatillas - Preescolar PS", "Zapatillas Junior Puma"):
+            self.assertTrue(v.RE_INFANTIL.search(n), n)
+        for n in ("Nike Air Force 1 07 - Zapatillas - white", "Zapatillas Nike Pegasus 41 - Mujer", "Sudadera adidas Hombre"):
+            self.assertFalse(v.RE_INFANTIL.search(n), n)
+
     def test_excluido_incluye_la_antiguedad(self):
         self.assertTrue(v.excluido({"nombre": "Samsung Galaxy S20 FE Móvil"}, "mediamarkt.es", {"filtros_codigo": {}}))
 

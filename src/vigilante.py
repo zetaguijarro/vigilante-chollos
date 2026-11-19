@@ -3884,7 +3884,7 @@ RE_SIN_PRECIO_OFICIAL = re.compile(r"sin precio oficial", re.I)
 # Tallas de niño en ropa y calzado (Spartoo: "Zapatos Niña ... V Inf", "AC+ PS"). Desde el 17/11/2026 también
 # júnior/GS/teen: reglas de formato de Zeta ("ropa y calzado infantil/junior quedan fuera de las próximas tandas").
 RE_INFANTIL = re.compile(r"(?<!\w)(?:niñ[oa]s?|nin[oa]s?|beb[eé]s?|infantil|inf|ps|td|toddler|baby|kids?|"
-                         r"preescolar|pre-?school|j[uú]nior|jr|gs|youth|teen)(?!\w)", re.I)
+                         r"preescolar|pre-?school|j[uú]nior|jr|gs|youth|teen|primaria|colegio|escolar|boys|girls|infant)(?!\w)", re.I)
 PRECIO_SOSPECHOSO = 0.4  # por debajo del 40 % del mercado o del mínimo histórico: error de lectura
 
 
