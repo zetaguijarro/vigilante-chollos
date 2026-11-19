@@ -1770,19 +1770,20 @@ class Rondas(Base):
         p["_iguales"] = [{"fecha": "10/03/2026", "precio": 110.0, "temp": 850, "tienda": "Amazon", "agotado": True,
                           "url": "https://www.chollometro.com/ofertas/jbl-charge-5-1"}]
         texto = v.mensaje_candidato(7, p)
-        self.assertFalse(re.search(r"[\U0001F300-\U0001FAFF☀-➿⬇]", texto), texto)
+        # 19/11/2026 (Zeta): como las fichas de Instinct, una viñeta con su emoji por dato
+        self.assertIn("• 📊 <b>Mercado:</b> 149 € (otras tiendas)", texto)
         # 18/11/2026 (Zeta): los hilos encontrados con su precio, no el enlace de búsqueda manual
-        self.assertIn("<b>Hilo:</b> 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
+        self.assertIn("• 🔗 <b>Hilo:</b> 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
                       texto)
         # 19/11/2026 (Zeta): título, precio y datos se distinguen (HTML: cabecera y título en negrita, precio aparte)
         self.assertTrue(texto.startswith("<b>#7 · "), texto)
-        self.assertIn("<b>JBL Charge 5 Negro</b>\n\n<b>Precio: 99 €</b>", texto)
+        self.assertIn("<b>JBL Charge 5 Negro</b>\n\nhttps://x.es/jbl\n\n<b>99 €</b>", texto)  # título, enlace y precio
         self.assertNotIn("search?q=", texto)
         p["_iguales"][0]["coincide"] = "coincide 92 %"
         self.assertIn("Amazon · agotado · coincide 92 %", v.mensaje_candidato(7, p))
         self.assertEqual(v.coincidencia("Sony WH-CH720N Azul Auriculares", "Sony WH-CH720N Auriculares Bluetooth"), 100)
         self.assertIn("Referencia de la tienda: 179 €", texto)
-        self.assertIn("Descuento real: -34 % sobre mercado", texto)
+        self.assertIn("<b>Descuento real:</b> -34 % sobre mercado", texto)
 
     def test_etiquetas_honestas(self):
         # Instrucciones de lectura, paso 7: lo no comprobado se dice.
@@ -3077,7 +3078,7 @@ class ModoTelegram(Base):
         chat, texto, foto = self.enviados[0]
         self.assertEqual(chat, "456808276")
         self.assertIn("#1 · mediamarkt.es", texto)
-        self.assertIn("<b>Precio: 34.99 €</b>\nReferencia de la tienda: 79.99 €, -56 %", texto)
+        self.assertIn("<b>34.99 €</b>. Referencia de la tienda: 79.99 €, -56 %.", texto)
         self.assertIn("<b>Mercado:</b> 45 €", texto)
         self.assertEqual(json.loads(self.teclados[0])["inline_keyboard"][0][0]["callback_data"], "vg:verifica:1")
         self.assertTrue(foto.endswith("/img.jpg"))

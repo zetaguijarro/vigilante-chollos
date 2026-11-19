@@ -5805,15 +5805,30 @@ def mensaje_candidato(n, p):
     avisos.append("Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)")
     if p.get("_detectado"):
         avisos.append(f"Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}")
-    hilos = "\n".join(_negrita_etiqueta(x) if x.startswith("Hilo: ") else escape(x)
-                      for x in lineas_iguales(p).split("\n"))
+    emojis = {"Mercado": "📊", "Histórico": "📉", "Chollometro": "🔎", "Opiniones": "⭐", "Ya fue chollo": "🔥"}
+    vinetas = []
+    for x in datos:
+        etiqueta = x.split(":")[0].split(" (")[0]
+        vinetas.append(f"• {emojis.get(etiqueta, '•')} {_negrita_etiqueta(x)}")
+    for h in (p.get("_iguales") or []):  # hilos de Chollometro de este producto, con su enlace
+        precio_h = f" · {h['precio']:g} €" if h.get("precio") else ""
+        extra = (" · agotado" if h.get("agotado") else "") + (f" · {h['coincide']}" if h.get("coincide") else "")
+        vinetas.append(f"• 🔗 <b>Hilo:</b> {escape(h['fecha'])}{precio_h} · {h['temp']}° · {escape(h['tienda'])}{escape(extra)}\n"
+                       f"{escape(h['url'])}")
+    if not p.get("_iguales"):
+        vinetas.append("• 🔗 " + _negrita_etiqueta("Hilos en Chollometro: ninguno de este producto en la copia"))
+    for x in precio_extra:
+        vinetas.insert(0, f"• {'💰' if x.startswith('Descuento') else '🎟️'} {_negrita_etiqueta(x)}")
+    for x in avisos:
+        emoji = "🕒" if x.startswith("Detectado") else "⚠️"
+        vinetas.append(f"• {emoji} {_negrita_etiqueta(x) if x.startswith('Ojo') else escape(x)}")
+    # Como las fichas de Instinct (Zeta, 19/11/2026): título, enlace, precio y las viñetas con un emoji cada una.
+    precio_linea = f"<b>{p['precio']:g} €</b>{escape(socio)}" + (f". {escape(antes)}." if antes else ".")
     bloques = [
         f"<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}\n<b>{escape(p['nombre'])}</b>",
-        "\n".join([f"<b>Precio: {p['precio']:g} €</b>{escape(socio)}"]
-                  + ([escape(antes)] if antes else []) + [escape(x) for x in precio_extra]),
-        "\n".join(_negrita_etiqueta(x) for x in datos) + "\n" + hilos,
-        "\n".join(escape(x) for x in avisos),
         escape(p.get("url") or ""),
+        precio_linea,
+        "\n".join(vinetas),
     ]
     return "\n\n".join(b for b in bloques if b.strip())
 
@@ -5990,13 +6005,19 @@ def avisar_casi_chollos(con, cfg, casi, maximo=CASI_POR_RONDA):
         fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
         if fila and fila[0] >= hace:
             continue
-        texto = (f"🔎 Casi chollo · {p['tienda']}\n{p['nombre']}\n{p['precio']:g} € (antes {p['precio_antes']:g} €, "
-                 f"-{d:.0%} según la tienda)\nSin precio de mercado ni histórico. "
-                 + (f"En la ficha: {_texto_rebaja(p['_rebaja_ficha'])}.\n" if p.get("_rebaja_ficha")
-                    else "El \"antes\" no está comprobado: míralo tú.\n")
-                 + f"Detectado {p.get('_detectado') or '?'} · descartado {datetime.now():%d/%m %H:%M}\n"
-                 f"{lineas_iguales(p)}\n{enlace_limpio(p.get('url')) or ''}")
-        if enviar_telegram(token, chat, texto, p.get("imagen_url"), hilo="cat:radar"):
+        # Mismo estilo que las fichas de Instinct (Zeta, 19/11/2026): título, enlace, precio y viñetas con emoji.
+        vinetas = ["• 📊 <b>Mercado:</b> sin precio de mercado ni histórico"]
+        vinetas.append("• 🏷️ <b>En la ficha:</b> " + escape(_texto_rebaja(p["_rebaja_ficha"])) if p.get("_rebaja_ficha")
+                       else "• ⚠️ El «antes» de la tienda no está comprobado: míralo tú")
+        for h in (p.get("_iguales") or []):
+            vinetas.append(f"• 🔗 <b>Hilo:</b> {escape(h['fecha'])} · {h['precio'] or 0:g} € · {h['temp']}° · "
+                           f"{escape(h['tienda'])}{' · agotado' if h.get('agotado') else ''}" + "\n" + escape(h["url"]))
+        vinetas.append(f"• 🕒 Detectado {escape(p.get('_detectado') or '?')} · descartado {datetime.now():%d/%m %H:%M}")
+        texto = ("\n".join([f"<b>🔎 Casi chollo · {escape(p['tienda'])}</b>" + "\n" + f"<b>{escape(p['nombre'])}</b>"])
+                 + "\n\n" + escape(enlace_limpio(p.get("url")) or "") + "\n\n"
+                 + f"<b>{p['precio']:g} €</b>. Referencia de la tienda: {p['precio_antes']:g} € (-{d:.0%})." + "\n\n"
+                 + "\n".join(vinetas))
+        if enviar_telegram(token, chat, texto, p.get("imagen_url"), html=True, hilo="cat:radar"):
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (clave, datetime.now().isoformat(timespec="minutes")))
             enviados += 1
     con.commit()

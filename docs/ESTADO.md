@@ -485,3 +485,6 @@ Zeta: "mejora la búsqueda en Chollometro por texto predictivo; si no es igual a
 
 ## Título de Zalando (Zeta, 19/11/2026)
 El nombre salía de la dirección ("Samba Unisex Zapatillas Footwear Whitecore Blackgum") o del texto de la foto. Cada tarjeta lleva su título real en un `<h3>` con dos `<span>` (marca y nombre): `nombres_zalando_tarjetas` lo lee ("adidas Originals SAMBA OG UNISEX - Zapatillas - footwear white/core black/clear granit"); la dirección queda de respaldo. Los productos sin enlace de producto (p. ej. "Envíos y devoluciones gratuitos*") se descartan. Medido en 3 portadas: 423 productos, todos con título de tarjeta.
+
+## Avisos de Telegram con el estilo de Instinct (Zeta, 19/11/2026)
+Zeta enseñó una captura de las fichas de Instinct: título en negrita, enlace, línea de precio y viñetas con un emoji por dato. `mensaje_candidato` (candidata con botón Verificar) y los avisos del Radar salen así, en HTML: cabecera `#N · tienda` y título, enlace, `precio. Referencia de la tienda…`, y viñetas: 💰 descuento real, 📊 mercado, 📉 histórico, 🔎 Chollometro, 🔥 ya fue chollo, 🔗 hilos con su enlace, ⚠️ sin verificar, 🕒 detectado/avisado. Sigue en un solo mensaje (con foto y botón); la ficha final de 5 mensajes no cambia.
