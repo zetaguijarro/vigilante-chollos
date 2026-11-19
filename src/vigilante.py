@@ -5703,7 +5703,7 @@ def enviar_pendientes(con, entrega):
                 continue
             p["ch"] = d["ch"] = ch
         if enviar_telegram(token, chat, mensaje_candidato(n, p or {}), (p or {}).get("imagen_url"),
-                           boton_verificar(n), hilo=f"cat:{d.get('cat')}"):  # pestaña de su categoría
+                           boton_verificar(n), html=True, hilo=f"cat:{d.get('cat')}"):  # pestaña de su categoría
             con.execute("UPDATE lista SET enviado=1, datos=? WHERE id=?", (json.dumps(d, ensure_ascii=False), n))
         con.commit()
 
@@ -5715,15 +5715,26 @@ def boton_verificar(n):
     return json.dumps({"inline_keyboard": [[{"text": f"Verificar #{n}", "callback_data": f"vg:verifica:{n}"}]]})
 
 
+def _negrita_etiqueta(linea):
+    """"Mercado: 140 €" -> "<b>Mercado:</b> 140 €" (HTML de Telegram, el resto escapado)."""
+    etiqueta, sep, resto = linea.partition(": ")
+    if sep and len(etiqueta) <= 24:
+        return f"<b>{escape(etiqueta)}:</b> {escape(resto)}"
+    return escape(linea)
+
+
 def mensaje_candidato(n, p):
-    # Sin emojis (regla de Instinct). El "antes" de la tienda se etiqueta como suyo, no como descuento real.
+    """Aviso de candidata antes de validar, en HTML de Telegram (Zeta, 19/11/2026: "me cuesta distinguir título,
+    precio y descripción"): cabecera, título en negrita, precio aparte, y los datos en bloques con la etiqueta en
+    negrita (comparación, Chollometro, avisos). Sin emojis (regla de Instinct)."""
+    # El "antes" de la tienda se etiqueta como suyo, no como descuento real.
     d = f", -{round(100 * (1 - p['precio'] / p['precio_antes']))} %" if p.get("precio_antes") else ""
-    antes = f" (referencia de la tienda: {p['precio_antes']:g} €{d})" if p.get("precio_antes") else ""
+    antes = f"Referencia de la tienda: {p['precio_antes']:g} €{d}" if p.get("precio_antes") else ""
     # Etiquetas honestas (instrucciones de lectura, paso 7): lo comprobado y lo que NO se ha comprobado.
     mp = p.get("_mercado_propio")
-    idealo = (f"Mercado: {p['idealo']:g} € en {mp['tienda']} (visto por el vigilante)" if p.get("idealo") and mp
-              else f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
-              else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
+    mercado = (f"Mercado: {p['idealo']:g} € en {mp['tienda']} (visto por el vigilante)" if p.get("idealo") and mp
+               else f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
+               else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
     if p.get("_hist"):
         h = p["_hist"]
         origen = (h.get("fuente_corta") or ("PcComponentes, según PCComTracker" if p.get("_pcct_otra") else "comparador"))
@@ -5734,46 +5745,55 @@ def mensaje_candidato(n, p):
         hist = f"Histórico propio: mínimo {p['_min_previo']:g} € en {p['_seguido_dias']} días"
     else:
         hist = "Histórico: sin verificar"
-    idealo = f"{idealo}\n{hist}"
     ch = {"no": "no aparece en la copia local, duplicado sin revisar",
           "?": "duplicado sin revisar"}.get(p.get("ch"), p.get("ch", "").replace(":", " a ") + " €")
     baja = " · bajada" if p.get("estado") == "bajada" else ""
-    resenas = ""
-    if p.get("valoracion") is not None or p.get("resenas") is not None:
-        partes = []
-        if p.get("valoracion") is not None:
-            partes.append(f"nota {p['valoracion']:g}")
-        if p.get("resenas") is not None:
-            partes.append(f"{p['resenas']} reseñas/ventas")
-        resenas = "\n" + " · ".join(partes)
+    precio_extra = []
     socio = " (precio socio)" if p.get("socio") else ""
     if p.get("error_precio") and p.get("_min_previo"):
         baja = f" · posible error de precio (antes {p['_min_previo']:g} €)"
     if p.get("gratis"):
         baja += " · GRATIS"
-    if p.get("dto_real"):
-        resenas += f"\nDescuento real: -{round(p['dto_real'] * 100)} % sobre {p['ref_real']}"
-    h = p.get("_cm_hot")
-    if h and h.get("precio"):
-        resenas += f"\nYa fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)"
     if p.get("promo") and p.get("precio_suelto"):
         socio += (f" por unidad comprando {p.get('unidades', 2)} ({p['precio_suelto']:g} € la unidad suelta; "
                   f"{p['promo']})")
     if p.get("cupon") and p.get("precio_sin_cupon"):
         socio += f" con {p['cupon']} (sin cupón: {p['precio_sin_cupon']:g} €)"
     elif p.get("cupon_posible"):
-        resenas += f"\nPosible cupón: {p['cupon_posible']}"
+        precio_extra.append(f"Posible cupón: {p['cupon_posible']}")
     pago = promo_pago(cargar_config(), p.get("tienda"), p["precio"])
     if pago:
-        resenas += f"\n{pago}"
+        precio_extra.append(pago)
+    if p.get("dto_real"):
+        precio_extra.append(f"Descuento real: -{round(p['dto_real'] * 100)} % sobre {p['ref_real']}")
+    resenas = []
+    if p.get("valoracion") is not None:
+        resenas.append(f"nota {p['valoracion']:g}")
+    if p.get("resenas") is not None:
+        resenas.append(f"{p['resenas']} reseñas/ventas")
+    datos = [mercado, hist, f"Chollometro: {ch}"]
+    if resenas:
+        datos.append("Opiniones: " + " · ".join(resenas))
+    h = p.get("_cm_hot")
+    if h and h.get("precio"):
+        datos.append(f"Ya fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)")
+    avisos = []
     if p.get("tallas_aviso"):
-        resenas += "\nOjo, tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado"
+        avisos.append("Ojo, tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado")
+    avisos.append("Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)")
     if p.get("_detectado"):
-        resenas += f"\nDetectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}"
-    return (f"#{n} · {p['tienda']}{baja}\n{p['nombre']}\n{p['precio']:g} €{socio}{antes}{resenas}\n"
-            f"{idealo}\nChollometro: {ch}\n{lineas_iguales(p)}\n"
-            f"Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)\n"
-            f"{p.get('url') or ''}")
+        avisos.append(f"Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}")
+    hilos = "\n".join(_negrita_etiqueta(x) if x.startswith("Hilo: ") else escape(x)
+                      for x in lineas_iguales(p).split("\n"))
+    bloques = [
+        f"<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}\n<b>{escape(p['nombre'])}</b>",
+        "\n".join([f"<b>Precio: {p['precio']:g} €</b>{escape(socio)}"]
+                  + ([escape(antes)] if antes else []) + [escape(x) for x in precio_extra]),
+        "\n".join(_negrita_etiqueta(x) for x in datos) + "\n" + hilos,
+        "\n".join(escape(x) for x in avisos),
+        escape(p.get("url") or ""),
+    ]
+    return "\n\n".join(b for b in bloques if b.strip())
 
 
 def token_telegram():
@@ -5972,7 +5992,8 @@ def enviar_telegram(token, chat_id, texto, foto=None, teclado=None, html=False, 
         extra["parse_mode"] = "HTML"
     if hilo:
         extra["message_thread_id"] = str(hilo)
-    if foto and len(texto) <= 1024:
+    visible = re.sub(r"<[^>]+>", "", texto) if html else texto  # el límite de 1024 cuenta el texto, no las etiquetas
+    if foto and len(visible) <= 1024:
         try:
             if _post(base + "sendPhoto", {"chat_id": chat_id, "photo": foto, "caption": texto, **extra}).get("ok"):
                 return True

@@ -1772,13 +1772,16 @@ class Rondas(Base):
         texto = v.mensaje_candidato(7, p)
         self.assertFalse(re.search(r"[\U0001F300-\U0001FAFF☀-➿⬇]", texto), texto)
         # 18/11/2026 (Zeta): los hilos encontrados con su precio, no el enlace de búsqueda manual
-        self.assertIn("Hilo: 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
+        self.assertIn("<b>Hilo:</b> 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
                       texto)
+        # 19/11/2026 (Zeta): título, precio y datos se distinguen (HTML: cabecera y título en negrita, precio aparte)
+        self.assertTrue(texto.startswith("<b>#7 · "), texto)
+        self.assertIn("<b>JBL Charge 5 Negro</b>\n\n<b>Precio: 99 €</b>", texto)
         self.assertNotIn("search?q=", texto)
         p["_iguales"][0]["coincide"] = "coincide 92 %"
         self.assertIn("Amazon · agotado · coincide 92 %", v.mensaje_candidato(7, p))
         self.assertEqual(v.coincidencia("Sony WH-CH720N Azul Auriculares", "Sony WH-CH720N Auriculares Bluetooth"), 100)
-        self.assertIn("referencia de la tienda: 179 €", texto)
+        self.assertIn("Referencia de la tienda: 179 €", texto)
         self.assertIn("Descuento real: -34 % sobre mercado", texto)
 
     def test_etiquetas_honestas(self):
@@ -1786,13 +1789,13 @@ class Rondas(Base):
         p = {"tienda": "x.es", "nombre": "Sofá Kivik", "precio": 99.0, "precio_antes": 199.0, "ch": "no",
              "url": "https://x.es/sofa", "estado": "bajada"}
         texto = v.mensaje_candidato(3, p)
-        for frase in ("Mercado: sin comparar con otras tiendas", "Histórico: sin verificar",
+        for frase in ("<b>Mercado:</b> sin comparar con otras tiendas", "<b>Histórico:</b> sin verificar",
                       "duplicado sin revisar", "Sin verificar: envío, stock y tallas"):
             self.assertIn(frase, texto)
         p.update({"_min_previo": 129.0, "_seguido_dias": 21, "idealo": 140.0})
         texto = v.mensaje_candidato(3, p)
-        self.assertIn("Histórico propio: mínimo 129 € en 21 días", texto)
-        self.assertIn("Mercado: 140 € (otras tiendas)", texto)
+        self.assertIn("<b>Histórico propio:</b> mínimo 129 € en 21 días", texto)
+        self.assertIn("<b>Mercado:</b> 140 € (otras tiendas)", texto)
         self.assertNotIn("mínimo histórico", texto.lower())
 
     def test_ficha_con_fotos_referencia_y_tallas(self):
@@ -3034,7 +3037,7 @@ class ModoTelegram(Base):
         self.ronda()
         self.assertEqual(len(self.enviados), 2)
         for (_, texto, _), teclado in zip(self.enviados, self.teclados):
-            n = re.match(r"#(\d+)", texto).group(1)
+            n = re.match(r"<b>#(\d+)", texto).group(1)
             boton = json.loads(teclado)["inline_keyboard"]
             self.assertEqual(boton, [[{"text": f"Verificar #{n}", "callback_data": f"vg:verifica:{n}"}]])
         plugin = RAIZ / "hermes" / "plugins" / "vigilante-botones" / "__init__.py"
@@ -3074,8 +3077,8 @@ class ModoTelegram(Base):
         chat, texto, foto = self.enviados[0]
         self.assertEqual(chat, "456808276")
         self.assertIn("#1 · mediamarkt.es", texto)
-        self.assertIn("34.99 € (referencia de la tienda: 79.99 €, -56 %)", texto)
-        self.assertIn("Mercado: 45 €", texto)
+        self.assertIn("<b>Precio: 34.99 €</b>\nReferencia de la tienda: 79.99 €, -56 %", texto)
+        self.assertIn("<b>Mercado:</b> 45 €", texto)
         self.assertEqual(json.loads(self.teclados[0])["inline_keyboard"][0][0]["callback_data"], "vg:verifica:1")
         self.assertTrue(foto.endswith("/img.jpg"))
         n = sqlite3.connect(v.DB).execute("SELECT COUNT(*) FROM cupo").fetchone()[0]
@@ -3089,7 +3092,7 @@ class ModoTelegram(Base):
         # Una tienda "cambia sus enlaces": 12 productos nuevos de golpe (la tanda deja pasar 15).
         self.red.tiendas["mediamarkt"] += [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(12)]
         self.ronda()
-        candidatos = [t for _, t, _ in self.enviados if t.startswith("#")]
+        candidatos = [t for _, t, _ in self.enviados if t.startswith("<b>#")]
         avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
         self.assertEqual(len(candidatos), 5, "solo hasta el límite por hora")
         self.assertEqual(len(avisos), 1, "un único aviso")
@@ -3107,7 +3110,7 @@ class ModoTelegram(Base):
         con.execute("UPDATE lista SET fecha=? WHERE enviado=1", (datetime.now().strftime("%Y-%m-%dT00:00"),))
         con.commit()
         self.ronda()
-        candidatos = [t for _, t, _ in self.enviados if t.startswith("#")]
+        candidatos = [t for _, t, _ in self.enviados if t.startswith("<b>#")]
         avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
         self.assertEqual(len(candidatos), 8)
         self.assertEqual(len(avisos), 2)

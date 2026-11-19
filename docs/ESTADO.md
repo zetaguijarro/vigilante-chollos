@@ -479,3 +479,6 @@ Zeta: "mejora la búsqueda en Chollometro por texto predictivo; si no es igual a
 - El histórico (`_cm_min`, regla del +8 %) sin código de modelo pasa de 90 % a 80 %.
 - Medido con 632 pares reales hilo–producto (mismo enlace en `cm_destino`): reconocía el 47 %, ahora el 60 %. Sobre 800 productos al azar: +68 emparejamientos (5 %), ninguno perdido; unos 5 dudosos (pack consola+juego frente a consola sola).
 - Probado y descartado: exigir el 80 % también en la vía de marca y modelo (perdía emparejamientos reales: Dickies, OnePlus Nord Buds 3R, Xiaomi Pad 8).
+
+## Aviso de candidata con formato (Zeta, 19/11/2026)
+"Me cuesta distinguir título, precio y descripción": `mensaje_candidato` sale ahora en HTML de Telegram: cabecera `#N · tienda` y título en negrita, precio aparte (con la referencia y el descuento debajo), un bloque de datos con la etiqueta en negrita (Mercado, Histórico, Chollometro, Hilo...), un bloque de avisos y el enlace al final, todo separado por líneas en blanco. Sin emojis. `enviar_telegram` cuenta el límite de 1024 de la foto sin las etiquetas.
