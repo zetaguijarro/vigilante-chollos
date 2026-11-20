@@ -43,6 +43,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, parse_qsl, quote, quote_plus, unquote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 from http.cookiejar import CookieJar
 import rutas as _rutas
+import extraccion as _extraccion
 import threading
 import ssl
 from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -1085,10 +1086,22 @@ def extraer(html, base_url, extra_json=()):
             productos = [principal]  # el carrusel de recomendados no es de esta página
         return productos
     productos = _extraer(html, base_url, extra_json)
-    tarjetas_zal = nombres_zalando_tarjetas(html) if "zalando." in host else {}
+    # Extracción declarativa (config/extraccion.json, revisión del 20/11/2026): si la tienda tiene reglas, el título y la
+    # marca salen de ellas; el extractor genérico solo pone precio y enlace.
+    reglas = _extraccion.reglas_de(host[4:] if host.startswith("www.") else host)
+    declarados = {t["url"]: t for t in _extraccion.tarjetas(html, base_url, reglas)} if reglas else {}
+    if reglas and reglas.get("solo_tarjetas") and declarados:
+        # Lo que no está en una tarjeta de producto es otra cosa (Toys R Us: "Calzado Infantil 2-10 años" era una categoría).
+        productos = [p for p in productos if p.get("url") in declarados]
+    tarjetas_zal = nombres_zalando_tarjetas(html) if "zalando." in host and not declarados else {}
     if "zalando." in host:  # sin enlace de producto ("Envíos y devoluciones gratuitos*" con 25,90 €) no es un producto
         productos = [p for p in productos if RE_ZALANDO_SLUG.search(p.get("url") or "")]
     for p in productos:
+        d = declarados.get(p.get("url"))
+        if d:
+            p["nombre"] = _extraccion.nombre_con_marca(d["titulo"], d["marca"])
+            p["marca"] = p.get("marca") or d["marca"]
+            continue
         if not p.get("marca"):
             p["marca"] = marca_de_tarjeta(html, p.get("nombre"))
         nombre = (tarjetas_zal.get(p.get("url")) or nombre_zalando(p.get("url"))) if "zalando." in host else None

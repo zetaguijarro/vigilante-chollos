@@ -1,0 +1,17 @@
+{
+ "_nota": "Extracción declarativa por tienda (src/extraccion.py). tarjeta: selector de cada producto; enlace: selector@atributo del enlace a la ficha; titulo y marca: selectores (\":N\" = el N-ésimo, desde 0). Solo corrigen nombre y marca de lo que ya encuentra el extractor genérico. solo_tarjetas: descarta lo que no esté en una tarjeta de producto (enlaces de categoría, banners).",
+ "zalando.es": {
+  "tarjeta": "article",
+  "enlace": "a@href",
+  "marca": "h3 span:0",
+  "titulo": "h3 span:1",
+  "solo_tarjetas": true
+ },
+ "toysrus.es": {
+  "tarjeta": "div.product-item",
+  "enlace": "a.name@href",
+  "marca": ".product-brand",
+  "titulo": "a.name",
+  "solo_tarjetas": true
+ }
+}
