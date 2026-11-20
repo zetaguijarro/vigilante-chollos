@@ -1,6 +1,7 @@
 """Contrastes auditables. No hace red ni decide umbrales por su cuenta."""
 import hashlib
 import json
+import busqueda_contraste as _busqueda
 from datetime import datetime, timedelta
 
 
@@ -48,6 +49,7 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
     Los equivalentes se conservan aparte y jamás producen precio de mercado.
     """
     fecha = ahora or datetime.now().isoformat(timespec='seconds')
+    limite = p.get("_max_fichas", 2)
     intentos, refs, vistas, tiendas = [], [], set(), set()
     consultas_p = p.get('_consultas_contraste') or [p.get('ean') or p['nombre']]
     for fuente in fuentes:
@@ -61,7 +63,7 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
                 continue
             for pista in pistas:
                 url = pista.get('url')
-                if not url or url in vistas or len(vistas) >= 2:
+                if not url or url in vistas or len(vistas) >= limite:
                     continue
                 if not coincide(p, pista) and pista.get('tipo') != 'equivalente':
                     continue
@@ -90,8 +92,15 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
                         r['condiciones_pendientes'] = True
                 envio = r.get('envio_importe')
                 r['total'] = round(r['precio'] + envio, 2) if isinstance(r.get('precio'), (int, float)) and isinstance(envio, (int, float)) else None
-                if r.get('tipo') == 'equivalente':
-                    r['resultado'] = valorar_equivalente(p, r)
+                if r.get('tipo') == 'equivalente' or pista.get('tipo') == 'equivalente':
+                    r['tipo'] = 'equivalente'
+                    r.update(_busqueda.comparar(p, r))
+                    if (r.get('estado_producto', 'nuevo') != p.get('estado_producto', 'nuevo')
+                            or r.get('stock') != 'si' or not r.get('vendedor')
+                            or not isinstance(r.get('precio'), (int, float)) or r['precio'] <= 0
+                            or r.get('condiciones_pendientes')):
+                        r.update(resultado='equivalente no medido: condiciones no verificadas',
+                                 equivalencia_verificada=False)
                 elif not coincide(p, r) or misma_tienda(p.get('tienda', ''), r.get('tienda', '')):
                     r['resultado'] = 'otro producto o propia tienda'
                 elif r.get('estado_producto', 'nuevo') != p.get('estado_producto', 'nuevo'):
@@ -102,9 +111,9 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
                 else:
                     r['resultado'] = 'referencia alternativa'
                 refs.append(r)
-            if len(vistas) >= 2:
+            if len(vistas) >= limite:
                 break
-        if len(vistas) >= 2:
+        if len(vistas) >= limite:
             break
     validas = [r for r in refs if r['resultado'] == 'referencia alternativa']
     return {'estado': 'referencia alternativa' if validas else 'no medido',
