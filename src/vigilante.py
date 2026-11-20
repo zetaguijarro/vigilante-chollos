@@ -3296,7 +3296,7 @@ def _mismo_post_antiguo(nombre, titulo):
     return len(comunes) >= min(3, corto) and len(comunes) / corto >= 0.75
 
 
-def estado_chollometro(p, copia=None):
+def estado_chollometro(p, copia=None, excluir=()):
     """Estado del producto en Chollometro, por la copia local (sin buscar: /search está prohibido):
     'misma'      misma tienda y precio parecido, reciente o activo -> se descarta
     'misma:X'    misma tienda a otro precio -> decide Zeta
@@ -3319,6 +3319,8 @@ def estado_chollometro(p, copia=None):
     grupo = ("elcorteingles", "hipercor")  # comparten stock: para Chollometro son la misma tienda (regla 6)
     iguales = []
     for h in hilos_candidatos(p["nombre"], copia, por_enlace):
+        if h["id"] in excluir:
+            continue  # abierto y comprobado: es otro producto
         enlace = h["id"] in por_enlace
         if not enlace and not mismo_post(p["nombre"], h["titulo"], p.get("marca")):
             continue
@@ -3346,7 +3348,7 @@ def estado_chollometro(p, copia=None):
         else:
             otros.append(h["precio"])
     # Los hilos de este mismo producto, para el aviso (Zeta, 18/11/2026: los enlaces con su precio, no una búsqueda).
-    p["_iguales"] = [{"fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "precio": h["precio"],
+    p["_iguales"] = [{"id": h["id"], "fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "precio": h["precio"],
                       "temp": round(h["temp"] or 0), "tienda": h["tienda"], "agotado": bool(h["caducado"]),
                       "url": enlace_hilo(h),
                       "coincide": "mismo enlace" if h["id"] in por_enlace
@@ -3782,6 +3784,81 @@ RE_PALABRA_RELLENO = re.compile(r"^(?:textil|ropa|calzado|zapatos|complementos|a
                                 r"ni[ñn][oa]s?|adultos?|junior|de|para|con|sin|y|el|la|los|las|en)$", re.I)
 
 
+CM_ABRIR_DUDOSOS = 3      # hilos dudosos que se abren por candidata (Zeta, 20/11/2026)
+CM_ABRIR_POR_TANDA = 30   # y como mucho por tanda de envío
+RE_CAPACIDAD_HILO = re.compile(r"(?<![0-9])([0-9]{2,4}) ?(GB|TB)(?![A-Z])", re.I)
+
+
+def hilo_dudoso(h):
+    """Un hilo que se emparejó por parecido (no por el mismo enlace) y no al 100 %: hay que abrirlo para saber si es
+    el mismo producto."""
+    c = h.get("coincide") or ""
+    if c == "mismo enlace":
+        return False
+    m = re.search(r"([0-9]+) %", c)
+    return not m or int(m.group(1)) < 100
+
+
+def _plano_cm(html):
+    plano = re.sub(r"<script(?![^>]*application/json)[^>]*>.*?</script>|<style[^>]*>.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I)
+    return " ".join(unescape(plano).split())
+
+
+def comprobar_hilo(p, h, html):
+    """Abre el hilo (título, descripción y lo que trae la página) y lo clasifica frente al producto, como pide el método de
+    búsqueda de Zeta: 'exacto' (su código de modelo o EAN está en el hilo, sin otra capacidad), 'variante' (mismo
+    modelo y otra capacidad), 'distinto' (el producto tiene código y el hilo no lo nombra ni pasa la comparación por
+    marca y modelo) o 'posible' (no se puede decidir). -> (clase, motivo)."""
+    nombre = p.get("nombre") or ""
+    texto = _plano_cm(html)
+    compacto = re.sub(r"[^A-Z0-9]", "", texto.upper())
+    titulo = (hilos_chollometro(html) or [{}])[0].get("titulo") or h.get("titulo") or ""
+    codigos = [c for c in lista_codigos(nombre)]
+    ean = str(p.get("ean") or "")
+    nombrado = [c for c in codigos if re.sub(r"[^A-Z0-9]", "", c.upper()) in compacto]
+    if ean and len(ean) >= 8 and ean in texto:
+        nombrado.append(ean)
+    caps_p = {(int(a), b.upper()) for a, b in RE_CAPACIDAD_HILO.findall(nombre)}
+    caps_h = {(int(a), b.upper()) for a, b in RE_CAPACIDAD_HILO.findall(titulo)}
+    if nombrado:
+        if caps_p and caps_h and not (caps_p & caps_h):
+            return "variante", f"mismo modelo ({nombrado[0]}), otra capacidad: {sorted(caps_h)}"
+        return "exacto", f"el hilo nombra {nombrado[0]}"
+    if titulo and mismo_producto(nombre, titulo, p.get("marca")) and coincidencia(nombre, titulo, p.get("marca")) >= 80:
+        return "exacto", "mismo producto por marca y modelo (título del hilo)"
+    if codigos:
+        return "distinto", f"el hilo no nombra {codigos[0]}"
+    return "posible", "sin código de modelo para confirmarlo"
+
+
+def comprobar_dudosos(con, p, maximo=CM_ABRIR_DUDOSOS):
+    """Abre hasta `maximo` hilos dudosos de p["_iguales"] (caché de 24 h por hilo, 2 s entre hilos) y anota en cada uno
+    su clase. -> ids de los hilos que resultaron ser otro producto."""
+    distintos, abiertos = set(), 0
+    for h in p.get("_iguales") or []:
+        if abiertos >= maximo or h.get("id") is None or not hilo_dudoso(h):
+            continue
+        clave = f"cm_hilo:{h['id']}:{modelo_base(p.get('nombre') or '')[:60]}"
+        hecho, valor = _cache_busqueda(con, clave, 24)
+        if hecho:
+            clase, _, motivo = (valor or "posible|").partition("|")
+        else:
+            try:
+                html, _ = descargar(h["url"])
+                clase, motivo = comprobar_hilo(p, h, html)
+            except Exception as e:
+                clase, motivo = "sin_leer", str(e)[:60]
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                        (clave, f"{datetime.now().isoformat(timespec='minutes')}|{clase}|{motivo}"))
+            con.commit()
+            time.sleep(2)
+            abiertos += 1
+        h["comprobado"] = f"{clase}: {motivo}"
+        if clase == "distinto":
+            distintos.add(h["id"])
+    return distintos
+
+
 def lineas_iguales(p):
     """Los hilos de Chollometro de este mismo producto (estado_chollometro los deja en p["_iguales"]), uno por línea
     con fecha, precio, grados, tienda y enlace. Sin hilos, lo dice."""
@@ -3795,8 +3872,9 @@ def lineas_iguales(p):
     def linea(h):
         precio = f" · {h['precio']:g} €" if h.get("precio") else ""
         extra = (" · agotado" if h.get("agotado") else "") + (f" · {h['coincide']}" if h.get("coincide") else "")
+        extra += f" · abierto: {h['comprobado']}" if h.get("comprobado") else ""
         return f"Hilo: {h['fecha']}{precio} · {h['temp']}° · {h['tienda']}{extra}\n{h['url']}"
-    return "\n".join(linea(h) for h in iguales)
+    return "\n".join(linea(h) for h in iguales if not (h.get("comprobado") or "").startswith("distinto"))
 
 
 def enlace_busqueda_chollometro(nombre, marca=None):
@@ -5901,7 +5979,7 @@ def enviar_pendientes(con, entrega):
     hoy = datetime.now().strftime("%Y-%m-%d")
     pendientes = con.execute("SELECT id, datos FROM lista WHERE enviado=0 AND fecha>=? ORDER BY id", (hoy,)).fetchall()
     cupo = freno_telegram(con, token, chat, len(pendientes))
-    copia, consultas = None, {}
+    copia, consultas, abiertos_tanda = None, {}, 0
     if pendientes[:cupo]:
         # Zeta (19/11/2026): la #267 ya estaba en Chollometro, expirada, y no salió porque solo se miraba la copia.
         # Antes de enviar, también el buscador (caché de 6 h por consulta, 2 s entre búsquedas): trae hilos viejos o
@@ -5921,6 +5999,16 @@ def enviar_pendientes(con, entrega):
             p["_busquedas"] = consultas[n]  # para decir en el aviso qué se buscó si no aparece nada
         if p:
             ch = estado_chollometro(p, copia)
+            if abiertos_tanda < CM_ABRIR_POR_TANDA and any(hilo_dudoso(h) for h in p.get("_iguales") or []):
+                antes = sum(1 for h in p.get("_iguales") or [] if h.get("comprobado"))
+                distintos = comprobar_dudosos(con, p)
+                abiertos_tanda += sum(1 for h in p.get("_iguales") or [] if h.get("comprobado")) - antes
+                if distintos:  # abiertos y son otro producto: no cuentan como duplicado ni como precio histórico
+                    comprobados = {h["id"]: h.get("comprobado") for h in p.get("_iguales") or []}
+                    ch = estado_chollometro(p, copia, excluir=distintos)
+                    for h in p.get("_iguales") or []:
+                        if comprobados.get(h["id"]):
+                            h["comprobado"] = comprobados[h["id"]]
             if fuera_por_chollometro(p, ch, p.get("precio") or 0):
                 con.execute("UPDATE lista SET enviado=2 WHERE id=?", (n,))  # 2 = publicada por otro
                 con.commit()

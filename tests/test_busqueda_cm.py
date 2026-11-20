@@ -63,5 +63,51 @@ class Busqueda(unittest.TestCase):
                          "los agotados también se guardan: son antecedentes")
 
 
+class HilosDudosos(unittest.TestCase):
+    """Zeta, 20/11/2026: "abre 2 o 3 hilos dudosos por candidata"."""
+    P = {"nombre": "Samsung Galaxy S25 256GB Azul", "tienda": "mediamarkt.es"}
+
+    def pagina(self, titulo, descripcion):
+        sys.path.insert(0, str(RAIZ / "tests"))
+        from test_vigilante import cm_html, hilo
+        return cm_html([hilo(titulo, "Amazon", 700.0)]) + f"<div class='desc'>{descripcion}</div>"
+
+    def test_clasifica_exacto_variante_distinto_y_posible(self):
+        p = {"nombre": "Auriculares Sony WH-1000XM5 Negro", "tienda": "x.es"}
+        clase, _ = v.comprobar_hilo(p, {}, self.pagina("Sony auriculares cancelación de ruido", "Modelo WH1000XM5, negro"))
+        self.assertEqual(clase, "exacto", "el código está en la descripción aunque escrito sin guion")
+        clase, _ = v.comprobar_hilo(p, {}, self.pagina("Sony WH-1000XM4", "Modelo anterior WH-1000XM4"))
+        self.assertEqual(clase, "distinto")
+        m = {"nombre": "Xiaomi Redmi Note 14 Pro 23117RA68G 256GB", "tienda": "x.es"}
+        clase, motivo = v.comprobar_hilo(m, {}, self.pagina("Redmi Note 14 Pro 128GB", "Ref. 23117RA68G"))
+        self.assertEqual(clase, "variante", motivo)
+        sin_codigo = {"nombre": "Cafetera italiana de aluminio 6 tazas", "tienda": "x.es"}
+        self.assertEqual(v.comprobar_hilo(sin_codigo, {}, self.pagina("Cafetera de aluminio", "6 tazas"))[0], "posible")
+
+    def test_solo_se_abren_los_dudosos_y_como_mucho_tres(self):
+        self.assertFalse(v.hilo_dudoso({"coincide": "mismo enlace"}))
+        self.assertFalse(v.hilo_dudoso({"coincide": "coincide 100 %"}))
+        self.assertTrue(v.hilo_dudoso({"coincide": "coincide 85 %"}))
+        tmp = Path(tempfile.mkdtemp())
+        orig = (v.DATOS, v.DB, v.descargar, v.time.sleep)
+        v.DATOS, v.DB = tmp, tmp / "v.db"
+        v.time.sleep = lambda s: None
+        pedidas = []
+        v.descargar = lambda url, **k: (pedidas.append(url) or self.pagina("Sony WH-1000XM4", "WH-1000XM4"), url)
+        try:
+            con = v.bd()
+            p = {"nombre": "Auriculares Sony WH-1000XM5 Negro", "tienda": "x.es",
+                 "_iguales": [{"id": i, "coincide": "coincide 80 %", "url": f"https://www.chollometro.com/ofertas/x-{i}",
+                               "fecha": "01/11/2026", "precio": 200.0, "temp": 300, "tienda": "Amazon"} for i in range(5)]}
+            distintos = v.comprobar_dudosos(con, p)
+            self.assertEqual(len(pedidas), 3, "como mucho 3 por candidata")
+            self.assertEqual(distintos, {0, 1, 2})
+            self.assertNotIn("x-0", v.lineas_iguales(p), "un hilo comprobado como distinto no sale en el aviso")
+            v.comprobar_dudosos(con, p)
+            self.assertEqual(len(pedidas), 5, "caché de 24 h: los ya abiertos no se vuelven a pedir; sí los 2 que faltaban")
+        finally:
+            v.DATOS, v.DB, v.descargar, v.time.sleep = orig
+
+
 if __name__ == "__main__":
     unittest.main()
