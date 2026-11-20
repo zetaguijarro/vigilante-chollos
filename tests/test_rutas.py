@@ -139,6 +139,45 @@ class Hubs(unittest.TestCase):
             v.DATOS, r.time.sleep, v.leer_tienda = orig
 
 
+class HubsComoLaRonda(unittest.TestCase):
+    """20/11/2026, primera ronda real: MediaMarkt con Chrome daba 1-5 productos (por descarga, 12 por página) y
+    Carrefour con el Chrome normal daba 403 en todas las candidatas."""
+
+    def test_modo_de_lectura_de_cada_tienda(self):
+        cfg = {"categorias": {"x": {"tiendas": ["mediamarkt.es"], "navegador": ["carrefour.es", "miravia.es"]}},
+               "navegador_normal": {"tiendas": ["miravia.es"]}}
+        orig = v.tiendas_navegador_normal
+        v.tiendas_navegador_normal = lambda c: ["miravia.es"]
+        try:
+            self.assertEqual(r.modo_lectura(v, cfg, "mediamarkt.es"), "descarga")
+            self.assertEqual(r.modo_lectura(v, cfg, "miravia.es"), "normal")
+            self.assertEqual(r.modo_lectura(v, cfg, "carrefour.es"), "perfil")
+        finally:
+            v.tiendas_navegador_normal = orig
+
+    def test_un_403_para_la_tienda_sin_insistir(self):
+        tmp = Path(tempfile.mkdtemp())
+        orig = (v.DATOS, r.time.sleep, v.leer_tienda)
+        v.DATOS = tmp
+        r.time.sleep = lambda s: None
+        pedidas = []
+
+        def leer(tienda, urls, cat, nav, pags, url):
+            pedidas.append(url)
+            return tienda, url, [], "HTTP 403 en navegador"
+        v.leer_tienda = leer
+
+        class Nav:
+            def leer(self, url, completo=False):
+                return Hubs.HUB, "https://www.mediamarkt.es/es/campaign/black-friday", []
+        try:
+            v.guardar_catalogo({})
+            r.descubrir_hub(con_memoria(), v, "mediamarkt.es", "https://www.mediamarkt.es/es/campaign/black-friday", Nav())
+            self.assertEqual(len(pedidas), 1, "tras un 403 no se prueba la siguiente candidata")
+        finally:
+            v.DATOS, r.time.sleep, v.leer_tienda = orig
+
+
 class SembrarSinRetiradas(unittest.TestCase):
     def test_una_ruta_retirada_hace_poco_no_se_vuelve_a_sembrar(self):
         tmp = Path(tempfile.mkdtemp())

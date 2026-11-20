@@ -130,9 +130,35 @@ def enlaces_candidatos(v, html, base, tienda):
     return salida
 
 
+RE_BLOQUEO = re.compile(r"403|429|antibot|captcha|reto", re.I)
+
+
+def modo_lectura(v, cfg, tienda):
+    """Cómo lee la ronda esta tienda: 'descarga', 'normal' (Chrome normal: Miravia, AliExpress) o 'perfil' (Chrome del
+    perfil del vigilante). El hub y sus candidatas se leen igual que la ronda (20/11/2026: MediaMarkt con Chrome daba 1-5
+    productos y por descarga da 12 por página; Carrefour con el Chrome normal daba 403)."""
+    if tienda in v.tiendas_navegador_normal(cfg):
+        return "normal"
+    if any(tienda in c.get("navegador", []) for c in cfg.get("categorias", {}).values()):
+        return "perfil"
+    return "descarga"
+
+
+class _Descarga:
+    """Lector con la misma forma que el navegador (`leer` -> html, url final, datos) para las tiendas de descarga."""
+
+    def __init__(self, v):
+        self.v = v
+
+    def leer(self, url, completo=False):
+        html, final = self.v.descargar(url)
+        return html, final, []
+
+
 def descubrir_hub(con, v, tienda, hub, nav, ahora=None):
     """Lee el hub de una tienda, comprueba sus enlaces candidatos y añade al catálogo los que traen productos nuevos.
-    -> [(url, productos, nuevos)] de las rutas añadidas."""
+    `nav` es el lector de la tienda (navegador o `_Descarga`). Un 403, antibot o reto para la tienda en el acto: no se
+    insiste. -> [(url, productos, nuevos)] de las rutas añadidas."""
     crear_tabla(con)
     ahora = ahora or datetime.now().isoformat(timespec="minutes")
     html, final, _ = nav.leer(hub)
@@ -143,12 +169,14 @@ def descubrir_hub(con, v, tienda, hub, nav, ahora=None):
     anadidas = []
     for u in candidatas[:MAX_CANDIDATAS_POR_HUB]:
         time.sleep(3)  # ritmo de lectura humana: nunca ráfagas
-        _, _, productos, error = v.leer_tienda(tienda, {}, None, nav, 1, u)
+        _, _, productos, error = v.leer_tienda(tienda, {}, None, None if isinstance(nav, _Descarga) else nav, 1, u)
         con.execute("INSERT OR IGNORE INTO rutas (tienda, url, origen, desde, estado) VALUES (?,?,?,?,?)",
                     (tienda, u, f"hub:{hub}", ahora, "candidata"))
         if error or len(productos) < MIN_PRODUCTOS_RUTA_NUEVA:
             con.execute("UPDATE rutas SET motivo=? WHERE tienda=? AND url=?",
                         (error or f"solo {len(productos)} productos", tienda, u))
+            if error and RE_BLOQUEO.search(error):
+                break  # bloqueo: no se insiste con más candidatas de esta tienda
             continue
         nuevos = 0
         for p in productos:
@@ -182,17 +210,29 @@ def descubrir_hubs(con, v, cfg, archivo=None, max_tiendas=4):
     if not toca:
         return {}
     resultado = {}
-    with v.NavegadorNormal(cfg) as nav:
-        for tienda in toca:
-            nuevas = []
-            for hub in hubs[tienda]:
+    for modo in ("descarga", "normal", "perfil"):  # cada tienda con su forma de leer, un navegador por tipo como mucho
+        suyas = [t for t in toca if modo_lectura(v, cfg, t) == modo]
+        if not suyas:
+            continue
+        lector = (_Descarga(v) if modo == "descarga" else v.NavegadorNormal(cfg) if modo == "normal" else v.Navegador(cfg))
+        try:
+            nav = lector if modo == "descarga" else lector.__enter__()
+            for tienda in suyas:
+                nuevas = []
+                for hub in hubs[tienda]:
+                    try:
+                        nuevas += descubrir_hub(con, v, tienda, hub, nav)
+                    except Exception as e:
+                        v.log(f"hub {tienda} {hub[:70]}: {str(e)[:100]}")
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"hub_ultimo:{tienda}", ahora.isoformat(timespec="minutes")))
+                con.commit()
+                if nuevas:
+                    resultado[tienda] = nuevas
+                    v.log(f"hub {tienda}: rutas nuevas {[(u[-60:], n) for u, n, _ in nuevas]}")
+        finally:
+            if modo != "descarga":
                 try:
-                    nuevas += descubrir_hub(con, v, tienda, hub, nav)
-                except Exception as e:
-                    v.log(f"hub {tienda} {hub[:70]}: {str(e)[:100]}")
-            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"hub_ultimo:{tienda}", ahora.isoformat(timespec="minutes")))
-            con.commit()
-            if nuevas:
-                resultado[tienda] = nuevas
-                v.log(f"hub {tienda}: rutas nuevas {[(u[-60:], n) for u, n, _ in nuevas]}")
+                    lector.__exit__(None, None, None)
+                except Exception:
+                    pass
     return resultado
