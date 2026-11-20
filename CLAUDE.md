@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 269 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 277 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -33,7 +33,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 ## Decisiones de Zeta (no cambiar sin preguntar)
 
-Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot ni captcha (robots.txt no se mira en ninguna web: desde el 16/11/2026 y, desde el 17/11/2026, tampoco en Chollometro; `respetar_robots` false y `robots_siempre` vacío); formato de 6 mensajes de `docs/FORMATO.md` (desde el 17/11/2026); nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
+Están en `docs/ESTADO.md` ("Decisiones de Zeta"). Las más importantes: no saltarse antibot ni captcha (robots.txt no se mira en ninguna web: desde el 16/11/2026 y, desde el 17/11/2026, tampoco en Chollometro; `respetar_robots` false y `robots_siempre` vacío); formato de 5 mensajes de `docs/FORMATO.md` (6 desde el 17/11/2026; 5 desde el 18/11); nada sin contraste real (mercado, histórico de PCComTracker o histórico propio de 14+ días); viajes apagados desde el 16/11/2026; crear o cambiar tareas programadas solo con autorización explícita.
 
 ## Análisis de Instinct (16/11/2026)
 
@@ -92,3 +92,14 @@ Orden del apartado 5 de `docs/SPEC.md`: resultados de lo publicado (`publicadas`
 
 - Partir `src/vigilante.py` (~3.400 líneas) en módulos. Las pruebas sustituyen funciones del módulo (`v.descargar`, `v.extraer`, `v.Navegador`, `v.enviar_telegram`...), así que hay que hacerlo por fases y ajustar esas sustituciones en cada paso.
 - Cobertura: ~45 % de lo que se calienta en Chollometro es Amazon y AliExpress, y el vigilante apenas los lee. Hecho el 17/11: Miravia y AliExpress con Chrome normal y búsquedas por familia; Amazon con CamelCamelCamel y las etiquetas del tachado. Keepa (de pago) queda como opción si Amazon sigue corto.
+
+## Hecho el 19/11/2026 (detalle en `docs/ESTADO.md`)
+
+- **Comparación con Chollometro:** los hilos expirados cuentan como precio histórico (regla del +8 %, `_cm_min`); palabras parecidas y `mismo_texto` con el 80 % (`SIMILITUD_MINIMA`); búsqueda en Chollometro antes de enviar (`enviar_pendientes`).
+- **Avisos de Telegram** (candidata y Radar) en HTML con el estilo de Instinct: título, enlace, precio y viñetas con emoji (`mensaje_candidato`).
+- **Antigüedad del modelo:** móviles, tablets, portátiles y TV con más de `antiguedad_max_anios` (2) años se descartan (`anio_modelo`, dentro de `excluido`). Moda infantil sigue fuera (también "Primaria y colegio", "Boys", "Girls").
+- **Zalando:** el título sale de la tarjeta (`nombres_zalando_tarjetas`). **MediaMarkt:** se descarta lo vendido por marketplace (`vendedor_mediamarkt`).
+- **Guía de ofertas 19/11:** aplicada salvo alternativa actual, soporte restante, CP 28041 y rutas por tienda.
+- **Trampa al escribir código:** las barras invertidas se corrompen al pasar por heredocs y la herramienta Write (`` pasa a 0x08, `
+` a salto real). Usa Edit, o `chr(92)` en un script.
+- **Rondas parciales:** scripts en el scratchpad que filtran `v.tiendas_de` (solo Miravia y AliExpress, solo MediaMarkt) y llaman a `ronda_grupo`.
