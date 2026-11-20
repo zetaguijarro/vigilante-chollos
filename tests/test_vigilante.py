@@ -112,6 +112,7 @@ class Base(unittest.TestCase):
         for c in cfg["categorias"].values():  # las rondas simuladas no abren el navegador real
             c["navegador"] = []
         cfg["entrega"] = {"modo": "hermes"}  # estas pruebas miran lo que recibe la IA
+        cfg["rutas"] = {"descubrir_hubs": False}  # los hubs abren el Chrome real y leen tiendas de verdad: prueba propia
         # Muchas pruebas usan productos sin precio en Idealo y miran otras reglas (cupos, silencio...):
         # para ellas vale la regla antigua del descuento mínimo. La nueva tiene su propia prueba.
         cfg["filtros_codigo"]["exigir_precio_mercado"] = False

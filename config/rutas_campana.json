@@ -238,5 +238,35 @@
    "https://www.nike.com/es/w/black-friday-ofertas",
    "https://www.nike.com/es/w/black-friday-2phlm"
   ]
- }
+ },
+ "hubs": {
+  "mediamarkt.es": [
+   "https://www.mediamarkt.es/es/campaign/black-friday"
+  ],
+  "carrefour.es": [
+   "https://www.carrefour.es/black-friday"
+  ],
+  "elcorteingles.es": [
+   "https://www.elcorteingles.es/black-friday/"
+  ],
+  "miravia.es": [
+   "https://www.miravia.es/cp/black-friday-2026/"
+  ],
+  "privatesportshop.es": [
+   "https://www.privatesportshop.es/"
+  ],
+  "coolmod.com": [
+   "https://www.coolmod.com/black-friday/"
+  ],
+  "toysrus.es": [
+   "https://www.toysrus.es/BLACK-DAYS/c/black-friday"
+  ],
+  "runningemotion.com": [
+   "https://www.runningemotion.com/es/categoria/black-friday-running"
+  ],
+  "footlocker.es": [
+   "https://www.footlocker.es/es/category/sale/black-friday.html"
+  ]
+ },
+ "_nota_hubs": "Hubs de campaña que Zeta usa como punto de partida (20/11/2026). Una vez al día se lee cada uno y sus enlaces de campaña pasan al catálogo solo si traen productos que el vigilante no tenía (src/rutas.py)."
 }

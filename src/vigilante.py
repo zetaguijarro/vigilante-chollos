@@ -42,6 +42,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, parse_qsl, quote, quote_plus, unquote, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 from http.cookiejar import CookieJar
+import rutas as _rutas
 import threading
 import ssl
 from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -4626,6 +4627,7 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
     """Lee el listado de ofertas (o la URL dada: una categoría del catálogo) y sus páginas siguientes.
     Para en cuanto una página no aporta productos nuevos (así no se piden páginas de más ni se repite
     la última en bucle)."""
+    dada = url is not None  # una ruta del catálogo o de campaña, no la página principal de la tienda
     url = url or url_de(tienda, urls, categoria)
     productos, claves, visitadas, actual = [], set(), set(), url
     try:
@@ -4655,6 +4657,9 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                 if n == 0:
                     raise
                 break  # falla una página siguiente: nos quedamos con lo leído
+            if n == 0 and dada and _rutas.redirige_a_portada(actual, final):
+                # La campaña ya no existe y la tienda manda a la portada: leerla daría productos que no son de la ruta.
+                return tienda, url, [], "redirige a la portada"
             if n == 0:
                 comparador = raiz(tienda) not in urlparse(final).netloc and bool(
                     via_comparador(html, nuevos, tienda, final, estricto=True))
@@ -5034,22 +5039,45 @@ def urls_catalogo():
 RUTAS_CAMPANA = BASE / "config" / "rutas_campana.json"
 
 
-def sembrar_rutas_campana(archivo=None):
+def sembrar_rutas_campana(archivo=None, con=None):
     """Añade al catálogo de cada tienda las rutas de campaña y listados que Zeta usa de verdad (config/rutas_campana.json,
     sacadas de su prompt "Cómo leo cada tienda", 20/11/2026). Sin duplicados: repetirlo no cambia nada. Las tiendas de
     `pendientes_de_alta` no están en ninguna categoría de tiendas.json y solo se nombran. -> {tienda: rutas nuevas}."""
     datos = json.loads((archivo or RUTAS_CAMPANA).read_text(encoding="utf-8"))
     cat = urls_catalogo()
     nuevas = {}
+    propia = con is None
+    con = con or bd()
     for tienda, rutas in datos.get("rutas", {}).items():
         actuales = cat.setdefault(tienda, [])
-        añadir = [r for r in rutas if r not in actuales]
+        # Una ruta que se retiró hace menos de 14 días (vacía, redirigida...) no se vuelve a sembrar.
+        añadir = [r for r in rutas if r not in actuales and not _rutas.retirada_reciente(con, tienda, r)]
         if añadir:
             actuales.extend(añadir)
             nuevas[tienda] = len(añadir)
+    if propia:
+        con.close()
     if nuevas:
         guardar_catalogo(cat)
     return nuevas
+
+
+def informe_rutas():
+    """Lo que da cada ruta (tabla `rutas`): activas por rendimiento, retiradas con su motivo y descubiertas en hubs."""
+    con = bd()
+    _rutas.crear_tabla(con)
+    print("RUTAS ACTIVAS (más candidatas por lectura primero)")
+    for t, u, lec, prod, filt, vac in con.execute(
+            "SELECT tienda, url, lecturas, productos_tot, filtros_tot, vacias_seguidas FROM rutas WHERE estado='activa' "
+            "AND lecturas>0 ORDER BY 1.0*filtros_tot/lecturas DESC, productos_tot DESC LIMIT 40"):
+        print(f"  {t:22} {lec:3} lecturas {prod:5} productos {filt:4} pasan filtros  vacías seguidas {vac}  {u[:70]}")
+    print("RETIRADAS")
+    for t, u, mot, cuando in con.execute("SELECT tienda, url, motivo, retirada FROM rutas WHERE estado='retirada' ORDER BY retirada DESC LIMIT 30"):
+        print(f"  {cuando} {t:22} {mot}  {u[:60]}")
+    print("DESCUBIERTAS EN HUBS")
+    for t, u, mot, cuando in con.execute("SELECT tienda, url, motivo, desde FROM rutas WHERE origen LIKE 'hub:%' ORDER BY desde DESC LIMIT 30"):
+        print(f"  {cuando} {t:22} {mot}  {u[:60]}")
+    con.close()
 
 
 def guardar_catalogo(cat):
@@ -5066,13 +5094,13 @@ def quitar_de_catalogo(tienda, url, motivo):
         log(f"catálogo {tienda}: fuera {url[:90]} ({motivo[:60]})")
 
 
-def orden_catalogo(lista, pesos, max_turnos=4):
+def orden_catalogo(lista, pesos, max_turnos=4, factor=None):
     """Orden de lectura de las categorías de una tienda. Sin pesos, la lista tal cual (turno circular).
     Con pesos, la categoría con más demanda sale más veces por vuelta (hasta `max_turnos` por cada vez
     que sale la de menos demanda), repartida y sin dejar a ninguna sin leer."""
-    if not pesos or len(lista) < 2:
+    if not (pesos or factor) or len(lista) < 2:
         return list(lista)
-    w = {u: peso_de(pesos, urlparse(u).path or u) for u in lista}
+    w = {u: (peso_de(pesos, urlparse(u).path or u) if pesos else 1.0) * (factor or {}).get(u, 1.0) for u in lista}
     # Respecto a la de más peso (18/11/2026): respecto a la de menos, con pesos por volumen casi todas llegaban al
     # tope de 4 y televisores, cafeteras y consolas salían igual.
     maximo = max(w.values())
@@ -5102,7 +5130,8 @@ def catalogo_turno(con, cfg, tiendas):
         lista = cat.get(t) or []
         if not lista:
             continue
-        lista = orden_catalogo(lista, pesos_volumen(con, cfg, t))  # 18/11: por volumen de calientes en esa tienda
+        # 18/11: por volumen de calientes en esa tienda; 20/11: y por lo que da cada ruta (rutas.factor_rutas)
+        lista = orden_catalogo(lista, pesos_volumen(con, cfg, t), factor=_rutas.factor_rutas(con, t, lista))
         cada = int(por_tienda.get(t, {}).get("cada_min", cada_def))
         cuantas = min(len(set(lista)), max(1, int(por_tienda.get(t, {}).get("por_ronda", 1))))
         fila = con.execute("SELECT v FROM meta WHERE k=?", (f"cat_ultimo:{t}",)).fetchone()
@@ -7883,6 +7912,15 @@ def ronda_grupo(grupo):
         except Exception as e:  # una categoría rota no para a las demás
             log(f"{grupo} {categoria}: {str(e)[:150]}")
         volcar_a_historico()
+    if grupo == "navegador" and cargar_config().get("rutas", {}).get("descubrir_hubs", True):
+        try:  # una vez al día por tienda: los enlaces de campaña de su hub, solo si traen productos que no teníamos
+            con_r = bd()
+            try:
+                _rutas.descubrir_hubs(con_r, sys.modules[__name__], cargar_config())
+            finally:
+                con_r.close()
+        except Exception as e:
+            log(f"rutas (hubs): {str(e)[:120]}")
     if grupo == "rapidas" and cargar_config().get("historico", {}).get("enlazar_cada_horas", 24):
         try:  # los hilos de Chollometro nuevos se enlazan con el histórico (como mucho una vez al día)
             import historico
@@ -7969,7 +8007,12 @@ def ronda(categoria, solo=None):
         if (tienda, url_cat) in de_catalogo:
             if error:  # una categoría que no se puede leer no aparta la tienda: sale de su lista de categorías
                 if RE_NO_SE_LEE.search(error) or re.search(r"\b(?:404|410)\b", error):
+                    _rutas.marcar_retirada(con, tienda, url_cat, error[:80])
                     quitar_de_catalogo(tienda, url_cat, error)
+                elif "portada" in error:
+                    motivo = _rutas.registrar_lectura(con, tienda, url_cat, 0, error)
+                    if motivo:
+                        quitar_de_catalogo(tienda, url_cat, motivo)
                 else:
                     log(f"catálogo {tienda} {url_cat[:80]}: {error[:80]}")
                 if rec:
@@ -8078,6 +8121,13 @@ def ronda(categoria, solo=None):
         if exito:
             n_vig_leidos, n_vig_baratos = n_vig_leidos + bool(productos), n_vig_baratos + n_cambios
             continue  # una línea para todos los vigilados, no una por ficha
+        try:  # lo que da cada ruta; si lleva tres lecturas vacías seguidas sale del catálogo
+            motivo = _rutas.registrar_lectura(con, tienda, url_leida, len(productos), None, n_cambios, len(previos) - n_previos,
+                                              origen="catalogo" if (tienda, url_leida) in de_catalogo else "principal")
+            if motivo and url_leida in (urls_catalogo().get(tienda) or []):
+                quitar_de_catalogo(tienda, url_leida, motivo)
+        except Exception as e:
+            log(f"rutas: {str(e)[:100]}")
         if rec:
             con_antes = sum(1 for x in productos if x.get("precio_antes"))
             nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
@@ -8825,6 +8875,8 @@ if __name__ == "__main__":
         reordenar_mapas()
     elif args[:1] == ["mapa"]:
         mapa(*args[1:])
+    elif args == ["rutas", "informe"]:
+        informe_rutas()
     elif args == ["rutas"]:
         nuevas = sembrar_rutas_campana()
         print("rutas de campaña añadidas al catálogo:", nuevas or "ninguna (ya estaban)")

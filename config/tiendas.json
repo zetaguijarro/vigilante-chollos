@@ -40,6 +40,10 @@
    ]
   ]
  },
+ "rutas": {
+  "descubrir_hubs": true,
+  "_nota": "Zeta 20/11/2026: cada ruta apunta lo que da (tabla rutas; vigilante.py rutas informe); sale del catálogo tras 3 lecturas vacías o 2 que redirigen a la portada; una vez al día se leen los hubs de rutas_campana.json y solo entran rutas con productos nuevos."
+ },
  "historico": {
   "guardar_lecturas": true,
   "enlazar_cada_horas": 24,
