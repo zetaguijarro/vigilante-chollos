@@ -44,6 +44,7 @@ from urllib.parse import parse_qs, parse_qsl, quote, quote_plus, unquote, urlenc
 from http.cookiejar import CookieJar
 import rutas as _rutas
 import extraccion as _extraccion
+import contraste as _contraste
 import threading
 import ssl
 from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -2345,6 +2346,119 @@ def precioreal_red(p):
             return False
     return precio_mismo_modelo(p, extraer(html, url))
 
+
+
+def contraste_alternativo(con, p):
+    """Ruta acotada de reserva: evidencia de fichas, persistencia y no medido.
+    No arranca rondas, no contrata servicios y respeta descargar/pausas vigentes.
+    """
+    guardado = _contraste.recuperar(con, p, CACHE_IDEALO_H)
+    if guardado is not None:
+        return guardado
+
+    def coincide(a, b):
+        if a.get("ean") and b.get("ean"):
+            return str(a["ean"]).lstrip("0") == str(b["ean"]).lstrip("0")
+        if configuracion_ambigua(a.get("nombre", "")) or configuracion_ambigua(b.get("nombre", "")):
+            return False
+        return (mismo_modelo(nombre_con_marca(a), b.get("nombre", ""))
+                and mismo_modelo(b.get("nombre", ""), nombre_con_marca(a)))
+
+    def buscar(fuente, consulta):
+        if fuente in ("Web", "Web equivalentes"):
+            pistas = _contraste._busqueda.enlaces_web(consulta, descargar)
+            if fuente == "Web equivalentes":
+                return [dict(x, tipo="equivalente") for x in pistas
+                        if not coincide(p, x) and _contraste._busqueda.categoria(x) == _contraste._busqueda.categoria(p)]
+            return pistas
+        if fuente == "Idealo" and (_IDEALO_BLOQUEADO[0] or idealo_en_pausa()):
+            return []
+        plantilla = PRECIOREAL_BUSQUEDA if fuente == "PrecioReal" else IDEALO_BUSQUEDAS[0]
+        html, final = descargar(plantilla.format(q=quote_plus(consulta)))
+        resultados = extraer(html, final)
+        # Las fichas del comparador son pistas para encontrar la tienda, no evidencia del precio.
+        salida = []
+        fichas_comparador = 0
+        for r in resultados[:6]:
+            if not coincide(p, r):
+                continue
+            host = urlparse(r.get("url") or "").netloc
+            if "precioreal.com" in host or "idealo.es" in host:
+                if fichas_comparador >= 1:
+                    continue
+                fichas_comparador += 1
+                pagina, url = descargar(r["url"])
+                salida.extend(x for x in extraer(pagina, url)
+                              if not any(c in urlparse(x.get("url") or "").netloc
+                                         for c in ("precioreal.com", "idealo.es")))
+            else:
+                salida.append(r)
+        return salida
+
+    def confirmar(url):
+        html, final = descargar(url)
+        f = analizar_ficha(html, final)
+        if f.get("antibot"):
+            return {}
+        # Los estados y vendedores explícitos se conservan, no se deducen del resultado.
+        estado = "nuevo"
+        titulo = f.get("titulo", "")
+        if re.search(r"reacondicionado|refurbished", titulo, re.I):
+            estado = "reacondicionado"
+        elif re.search(r"segunda mano|usado|exposici[oó]n", titulo, re.I):
+            estado = "usado"
+        condiciones = re.findall(r'"itemCondition"\s*:\s*"([^"]+)"', html, re.I)
+        if any(re.search(r"UsedCondition|RefurbishedCondition|DamagedCondition", x, re.I) for x in condiciones):
+            estado = "reacondicionado" if any("refurbished" in x.lower() for x in condiciones) else "usado"
+        disponibilidad = RE_AVAIL.search(html)
+        stock = ("si" if re.search(r"(?:^|/)InStock$", disponibilidad.group(1), re.I) else "no verificado") if disponibilidad else f.get("stock")
+        envio = f.get("envio") or "no verificado"
+        envio_importe = None
+        if not re.search(r"a partir|desde|pedido|superior|compras|m[ií]nimo", envio, re.I):
+            if re.fullmatch(r"(?:env[ií]o\s+)?(?:gratis|gratuito)[.! ]*", envio.strip(), re.I):
+                envio_importe = 0
+            elif (importe := re.search(r"(\d+(?:[.,]\d{1,2})?)\s*€", envio)):
+                envio_importe = a_numero(importe.group(1))
+        return {"nombre": titulo, "ean": f.get("ean"), "url": final,
+                "tienda": urlparse(final).netloc, "precio": f.get("precio_ahora"),
+                "stock": "si" if stock in ("si", "sí") else stock or "no verificado",
+                "vendedor": f.get("vendedor") or f.get("vendedor_tercero"),
+                "variante": f.get("variantes"), "estado_producto": estado, "specs": f.get("specs"),
+                "envio": envio, "envio_importe": envio_importe, "cupon": f.get("cupones")}
+
+    consulta = {**p, "_consultas_contraste": _contraste.consultas(p, consulta_comparador)}
+    resultado = _contraste.resolver(consulta, ("PrecioReal", "Idealo"), buscar, confirmar,
+                                   coincide, lambda a, b: misma_tienda(a, b, ""))
+    if not resultado.get("mercado"):
+        # Una ficha adicional para mismo producto y otra para equivalentes: dos fuentes más.
+        web = _contraste.resolver(dict(consulta, _max_fichas=1), ("Web",), buscar, confirmar,
+                                 coincide, lambda a, b: misma_tienda(a, b, ""))
+        resultado["referencias"].extend(web["referencias"])
+        resultado["intentos"].extend(web["intentos"])
+        if web.get("mercado"):
+            resultado.update(mercado=web["mercado"], estado="referencia alternativa")
+        elif _contraste._busqueda.categoria(p):
+            base = dict(consulta)
+            if not base.get("specs") and p.get("url"):
+                try:
+                    propia = confirmar(p["url"])
+                    if coincide(p, propia):
+                        base["specs"] = propia.get("specs")
+                        resultado["prestaciones_candidata"] = {"url": propia["url"], "nombre": propia["nombre"],
+                                                                  "specs": propia.get("specs")}
+                except Exception as exc:
+                    resultado["intentos"].append({"fuente": "ficha candidata", "url": p["url"],
+                                                  "resultado": "no disponible", "error": type(exc).__name__})
+            q = _contraste._busqueda.consulta_equivalente(base)
+            if q:
+                base.update(_consultas_contraste=[q], _max_fichas=1)
+                eq = _contraste.resolver(base, ("Web equivalentes",), buscar, confirmar, coincide,
+                                        lambda a, b: misma_tienda(a, b, ""))
+                resultado["referencias"].extend(eq["referencias"])
+                resultado["intentos"].extend(eq["intentos"])
+            else:
+                resultado["intentos"].append({"fuente": "Web equivalentes", "resultado": "no medido: faltan prestaciones candidatas"})
+    return _contraste.guardar(con, p, resultado)
 
 # ------------------------------------------------- Chollometro (copia local)
 # Su robots.txt PROHÍBE /search (antes se usaba: corregido el 7/11/2026). Sí permite /nuevos (todo lo
@@ -6188,6 +6302,8 @@ def mensaje_candidato(n, p):
     mercado = (f"Mercado: {p['idealo']:g} € en {mp['tienda']} (visto por el vigilante)" if p.get("idealo") and mp
                else f"Mercado: {p['idealo']:g} € (otras tiendas)" if p.get("idealo")
                else f"Mercado: sin comparar con otras tiendas. Idealo, a mano: {enlace_idealo(p)}")
+    if (p.get("_contraste") or {}).get("estado") == "referencia alternativa":
+        mercado += " · referencia alternativa (ficha verificada; portes en evidencia)"
     if p.get("_hist"):
         h = p["_hist"]
         origen = (h.get("fuente_corta") or ("PcComponentes, según PCComTracker" if p.get("_pcct_otra") else "comparador"))
@@ -7146,6 +7262,14 @@ def dossier_items(ids, ficha_manual=None):
                                  "min_30d": c["rt"] == "mas_bajo"}
                     if h:
                         item["historico"] = h
+                    if not h and (not item.get("id") or item.get("contraste")):
+                        p_alt = {"nombre": c["n"], "precio": ahora or c["p"], "tienda": c["t"],
+                                 "url": c.get("u"), "ean": c.get("e"), "marca": None,
+                                 "cupon": c.get("cup")}
+                        contraste = contraste_alternativo(con, p_alt)
+                        item["contraste"] = contraste
+                        if contraste.get("mercado"):
+                            item["id"] = contraste["mercado"]
                 except Exception as e:
                     log(f"dossier #{i}: {e}")
                 if len(item["ficha"].get("specs") or []) < 4:
@@ -7361,17 +7485,18 @@ def decidir_item(item, cfg=None):
                      f"y se exige un {_pct(u['mercado'])}{cambio}")
     if not etiqueta and item.get("hot") and not subio:
         etiqueta, prueba = "SUBIENDO", f"ya fue chollo caliente en Chollometro: {item['hot']}"
-    if not etiqueta and clase == "moda" and not mercado and item.get("a") and (item["a"] - precio) / item["a"] >= 0.70:
-        etiqueta = "SUBIENDO"
-        prueba = (f"moda sin comparador: {_pct((item['a'] - precio) / item['a'])} sobre el precio de tienda "
-                  f"({item['a']:g} €), que no es una referencia independiente")
     if not etiqueta and not fallo and item.get("dr") and not subio:
         m = re.match(r"-(\d+) % sobre (.+)", str(item["dr"]))
         if m and int(m.group(1)) / 100 >= u["subiendo"] - 0.005:
             etiqueta, prueba = "SUBIENDO", f"{m.group(1)} % menos sobre {m.group(2)}, calculado en la ronda"
+    if not etiqueta and not fallo:
+        return fin("sin_validar", f"sin prueba de ventaja: no medido; faltan referencias verificadas{cambio}",
+                   contraste="no medido")
     if not etiqueta:
         return fin("descartado", fallo or f"sin prueba de ventaja: no hay histórico, ni otra tienda más cara, "
                                           f"ni antecedente en Chollometro{cambio}", memoria=mem)
+    if (item.get("contraste") or {}).get("estado") == "referencia alternativa":
+        prueba += "; referencia alternativa, envío y condiciones en evidencia guardada"
     return fin("pasa", prueba, etiqueta=etiqueta, prueba=prueba, precio=precio, clase=clase)
 
 
@@ -8167,7 +8292,7 @@ def compacto(p):
          "dr": (f"-{round(p['dto_real'] * 100)} % sobre {p['ref_real']}" if p.get("dto_real") else None),
          "promo": p.get("promo"), "ps": p.get("precio_suelto"), "uds": p.get("unidades"),
          "rt": p.get("ref_tienda"), "cup": p.get("cupon"), "psc": p.get("precio_sin_cupon"),
-         "mp": p.get("_mercado_propio"),
+         "mp": p.get("_mercado_propio"), "contraste": p.get("_contraste"),
          "hab": (f"{p['_hist']['habitual']:g} € ({p['_hist']['fuente_corta']})"
                  if (p.get("_hist") or {}).get("fuente_corta") else None)}
     if p["estado"] == "bajada":
@@ -8647,6 +8772,14 @@ def ronda(categoria, solo=None):
                             "caducado": bool(cp["caducado"])}
             p["_chollo_previo"] = True
             ok = True
+        if (not ok and mejor is None and not p.get("_hist") and not sin_idealo
+                and i < max_idealo and not p.get("gratis")):
+            contraste = contraste_alternativo(con, p)
+            p["_contraste"] = contraste
+            if contraste.get("mercado"):
+                mejor = contraste["mercado"]
+                ok = p["precio"] <= mejor * (1 - u_c["mercado"] + 0.005)
+                p["_sin_contraste"] = False
         if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
             log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
             ok = False
