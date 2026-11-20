@@ -103,3 +103,28 @@ Orden del apartado 5 de `docs/SPEC.md`: resultados de lo publicado (`publicadas`
 - **Trampa al escribir código:** las barras invertidas se corrompen al pasar por scripts o heredocs: la barra seguida de b pasa a ser el carácter 0x08 y la barra seguida de n, un salto de línea real. Escribe esas secuencias con chr(92) dentro de un script, o usa Edit.
 - **Rondas parciales:** scripts en el scratchpad que filtran `v.tiendas_de` (solo Miravia y AliExpress, solo MediaMarkt) y llaman a `ronda_grupo`.
 - **Histórico de Zeta y rutas (20/11/2026):** `src/historico.py` (importación, `lecturas_vigilante`, `enlace_cm`), `config/rutas_campana.json` + `vigilante.py rutas`, paginación por tienda y `docs/RUTAS_TIENDAS.md` (cómo lee Zeta las tiendas). Pruebas: 288.
+
+
+## Encargo de Zeta (20/11/2026): contraste cuando falta histórico o comparables
+
+Ampliación del contraste de candidatas ya existente (histórico propio, `habitual_propio`, `mercado_propio`, `_cm_min`, `cm_ref`): qué hacer cuando el producto no tiene histórico recuperable ni aparece en los comparadores. No cambia umbrales, etiquetas, cadencias ni pausas ya documentadas. Una candidata sin contraste no se aprueba: sigue la regla vigente.
+
+1. Tres datos distintos, nunca mezclados:
+   - Precio actual: el de la tienda ahora, con cupones aplicados y el envío aparte.
+   - Habitual: solo con histórico verificado que lo respalde. El tachado/PVP de la ficha es una afirmación de la tienda: se muestra, pero no prueba el precio de mercado ni sirve de habitual.
+   - Mínimo histórico: con fuente y fecha. Las ofertas antiguas de Chollometro son mínimos puntuales (ya se usan en `_cm_min`), nunca el habitual.
+2. Búsqueda de referencias: primero modelo exacto o EAN; si falla, nombre del producto. La página de resultados es una pista; el dato vale tras confirmar producto, precio y condiciones en la ficha.
+3. Comparación:
+   - Mismo producto en otra tienda: misma versión y estado; vale variante de color sin cambio de prestaciones. Normaliza cupón, envío, vendedor y que se pueda comprar de verdad. Dice cómo está frente al mercado actual, no cuál era su habitual.
+   - Modelo equivalente: compara qué compras por ese dinero según la categoría (portátil: CPU, GPU, RAM, SSD, pantalla; altavoz: potencia, batería, resistencia, funciones). No comparar con uno más caro solo por marca. Vale para valorar relación prestaciones/precio, nunca para calcular % de descuento ni mínimo entre modelos distintos.
+4. Sin histórico recuperable:
+   - Si falta en el comparador principal, probar el alternativo y hasta 2 fuentes más (otras tiendas, modelos equivalentes, antecedentes del producto en `cm`). La candidata queda marcada como "referencia alternativa", para que se vea la vía usada.
+   - Sin ninguna referencia: registrar "no medido" y no atascar la candidata. La ausencia de datos no descarta ni demuestra chollo; sin contraste no se aprueba ni se publica (queda pendiente según la regla vigente).
+5. Nunca:
+   - Inventar habitual, mínimo o % de descuento sin referencia.
+   - Descartar por falta de datos o envío desconocido: avisar y seguir. Salvo que la ficha diga lo contrario, se presume producto nuevo; el stock no verificado se marca como no verificado, nunca como confirmado.
+   - Bloquearse por un dato que falta: se deja vacío y se continúa.
+6. Duplicados en Chollometro: seguir la regla ya documentada (tienda, antigüedad del hilo y precio vigente; otra tienda no es duplicado por sí sola) y `ya_salio_mas_barato`. Estar publicado no veta por sí solo: se decide con esa regla y se guarda el enlace del hilo con sus grados.
+7. Persistencia: cada contraste se guarda (fuente, URL, tienda, precio, variante, fecha, resultado) y se reutiliza antes de volver a consultar lo mismo.
+
+Cada cambio lleva su prueba: ejecutar la suite completa y dejarla en verde antes de subir.
