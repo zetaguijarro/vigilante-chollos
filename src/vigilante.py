@@ -2281,7 +2281,7 @@ def lista_codigos(nombre):
     # Al menos 2 cifras: 'BOOK6' o 'PIXEL9' son la familia, no el modelo exacto.
     return [c for c in RE_CODIGO_MODELO.findall(nombre.upper()) if len(c) >= 5 and len(re.findall(r"\d", c)) >= 2
             and not RE_PROCESADOR.fullmatch(c)
-            and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P|ATM|BAR)?", c)
+            and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|ML|CL|KG|MG|RPM|H|K|G|P|ATM|BAR|OZ|UDS?|CAPS?)?", c)
             and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE|HDR|DVB-?[TSC]|H)\d*\w?", c)
             and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)  # medidas: 135X190, 75X45CM
             # Especificaciones, no modelos (20/11/2026: SPF50, 8000DPI, ECE22 y 18V-40 hacían "mismo producto" a un
@@ -4188,7 +4188,8 @@ def chollo_previo(p, grados=CHOLLO_PREVIO_GRADOS, dias=CHOLLO_PREVIO_DIAS):
     hilos = hilos_por_enlace(p.get("url"))
     if codigos_modelo(p["nombre"]):
         ya = {h["id"] for h in hilos}
-        hilos += [h for h in hilos_del_producto(p["nombre"]) if h["id"] not in ya]
+        # Además del código, el mismo producto (20/11/2026: "100ML" casaba una cafetera Jocca con un perfume Azzaro).
+        hilos += [h for h in hilos_del_producto(p["nombre"]) if h["id"] not in ya and mismo_post(p["nombre"], h["titulo"])]
     desde = (datetime.now() - timedelta(days=dias)).timestamp()
     buenos = [h for h in hilos if h["precio"] and (h["temp"] or 0) >= grados
               and (h["publicado"] or 0) >= desde and h["precio"] * HOT_PRECIO_MIN <= p["precio"] <= h["precio"] * 1.0]
@@ -6314,8 +6315,8 @@ def mensaje_candidato(n, p):
         hist = f"Histórico propio: mínimo {p['_min_previo']:g} € en {p['_seguido_dias']} días"
     else:
         hist = "Histórico: sin verificar"
-    ch = {"no": "no aparece en la copia local, duplicado sin revisar",
-          "?": "duplicado sin revisar"}.get(p.get("ch"), p.get("ch", "").replace(":", " a ") + " €")
+    ch = {"no": "sin hilos de este producto (copia local y buscador)",
+          "?": "duplicado sin revisar (la copia local no está al día)"}.get(p.get("ch"), p.get("ch", "").replace(":", " a ") + " €")
     baja = " · bajada" if p.get("estado") == "bajada" else ""
     precio_extra = []
     socio = " (precio socio)" if p.get("socio") else ""

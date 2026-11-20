@@ -42,6 +42,21 @@ class TitulosSospechosos(unittest.TestCase):
         self.assertEqual(v.titulos_sospechosos(ps), [])
 
 
+class CholloPrevioSinCodigosFalsos(unittest.TestCase):
+    """#295 (20/11/2026): una cafetera Jocca salió con «Ya fue chollo: 2650° a 51,77 €», que era un perfume Azzaro
+    The Most Wanted 100ml: "100ML" contaba como código de modelo."""
+
+    def test_capacidades_no_son_codigo(self):
+        n = "Cafetera portátil - Jocca 2902, 3 en 1: Compatible con cápsulas Nespresso, Dolce Gusto y café molido, 15 bar, 100ml"
+        self.assertNotIn("100ML", v.lista_codigos(n))
+        for c in ("250ML", "33CL", "500MG", "16OZ"):
+            self.assertEqual(v.lista_codigos(f"Producto marca {c}"), [], c)
+
+    def test_el_aviso_no_dice_copia_local_si_tambien_se_busco(self):
+        texto = v.mensaje_candidato(1, {"tienda": "t.es", "nombre": "x", "precio": 5, "ch": "no"})
+        self.assertIn("sin hilos de este producto (copia local y buscador)", texto)
+
+
 class TituloDeTarjeta(unittest.TestCase):
     def test_el_titulo_corto_gana_al_reclamo_largo(self):
         html = ('<div><a href="https://www.tienda.es/producto/cafetera-x-123.html">'

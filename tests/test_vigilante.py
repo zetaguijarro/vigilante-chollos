@@ -1794,7 +1794,7 @@ class Rondas(Base):
              "url": "https://x.es/sofa", "estado": "bajada"}
         texto = v.mensaje_candidato(3, p)
         for frase in ("<b>Mercado:</b> sin comparar con otras tiendas", "<b>Histórico:</b> sin verificar",
-                      "duplicado sin revisar", "Sin verificar: envío, stock y tallas"):
+                      "sin hilos de este producto", "Sin verificar: envío, stock y tallas"):
             self.assertIn(frase, texto)
         p.update({"_min_previo": 129.0, "_seguido_dias": 21, "idealo": 140.0})
         texto = v.mensaje_candidato(3, p)
