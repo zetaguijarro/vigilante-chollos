@@ -73,6 +73,21 @@ class Compatibilidad(unittest.TestCase):
                         "sin coma delante, 'para' sigue siendo parte del nombre")
 
 
+class NombresLargosEnIngles(unittest.TestCase):
+    """#294 (20/11/2026): Braun All-in-One Series 7 de Miravia, nombre larguísimo en inglés y sin código."""
+    N = ("Braun all-in-one series 7 hair clipper, problade blade, autosense technology, 120 minutes of autonomy, "
+         "skinguard protection, beard gradient, submersible aquagrip handle")
+
+    def test_casa_por_la_cabecera_y_traduce_el_tipo(self):
+        self.assertEqual(v.cabecera(self.N), "Braun all-in-one series 7 cortapelos")
+        self.assertTrue(v.mismo_post(self.N, "Braun Cortapelos All-in-One Series 7, AIO7540 Kit 11-en-1"))
+        self.assertTrue(v.mismo_post(self.N, "Braun Recortadora Todo en Uno Series 7, AIO7585, Gris"))
+        self.assertFalse(v.mismo_post(self.N, "Afeitadora eléctrica Braun Series 7 72-N4200s Negro"), "una afeitadora no")
+
+    def test_consulta_marca_y_modelo_hasta_el_numero(self):
+        self.assertIn("Braun all-in-one series 7", v.consultas_chollometro({"nombre": self.N, "tienda": "miravia.es"}))
+
+
 class HilosDudosos(unittest.TestCase):
     """Zeta, 20/11/2026: "abre 2 o 3 hilos dudosos por candidata"."""
     P = {"nombre": "Samsung Galaxy S25 256GB Azul", "tienda": "mediamarkt.es"}

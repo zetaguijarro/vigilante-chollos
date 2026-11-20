@@ -3314,9 +3314,37 @@ def coincidencia(nombre, titulo, marca=None):
     return round(100 * palabras_comunes_difusas(mo_a, mo_b) / min(len(mo_a), len(mo_b)))
 
 
+RE_TODO_EN_UNO = re.compile(r"todo[ -]en[ -]uno", re.I)
+# Tipos de producto escritos en inglés en algunas tiendas (Miravia, AliExpress) y en español en los hilos.
+EN_A_ES = [(re.compile(r"hair[ -]?clippers?", re.I), "cortapelos"), (re.compile(r"beard[ -]?trimmers?|trimmers?", re.I), "recortadora"),
+           (re.compile(r"electric[ -]shavers?|shavers?", re.I), "afeitadora"), (re.compile(r"vacuum[ -]cleaners?", re.I), "aspiradora"),
+           (re.compile(r"headphones|earbuds|earphones", re.I), "auriculares"), (re.compile(r"air[ -]?fryers?", re.I), "freidora de aire")]
+
+
+def cabecera(texto):
+    """El nombre sin la lista de características: lo que va antes de la primera coma ("Braun all-in-one series 7 hair
+    clipper, problade blade, autosense technology, 120 minutes..." -> "Braun all-in-one series 7 hair clipper").
+    "Todo en uno" se escribe como "all-in-one" (los hilos usan las dos formas)."""
+    t = RE_TODO_EN_UNO.sub("all-in-one", texto or "")
+    for rx, es in EN_A_ES:
+        t = rx.sub(es, t)
+    return t.split(",")[0].strip()
+
+
+def _sin_codigo(texto):
+    return not [c for c in codigos_modelo(texto or "") if not RE_UNIDAD.match(c.lower())]
+
+
 def mismo_post(nombre, titulo, marca=None):
-    """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto)."""
-    return mismo_producto(nombre, titulo, marca)
+    """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto).
+    20/11/2026 (#294, Braun All-in-One Series 7 de Miravia con un nombre larguísimo en inglés): si el producto no tiene
+    código de modelo y no casa con el nombre entero, se compara la cabecera (antes de la primera coma) de los dos."""
+    if mismo_producto(nombre, titulo, marca):
+        return True
+    cn, ct = cabecera(nombre), cabecera(titulo)
+    if (cn != nombre or ct != titulo) and _sin_codigo(nombre) and len(cn.split()) >= 3 and len(ct.split()) >= 3:
+        return mismo_producto(cn, ct, marca)
+    return False
 
 
 def _mismo_post_antiguo(nombre, titulo):
@@ -3452,7 +3480,8 @@ def estado_chollometro(p, copia=None, excluir=()):
         raices = [re.sub(r"[^A-Z0-9]", "", c.upper()) for c in codigos]
         if raices:
             return any(r and (r in t or (len(r) >= 9 and r[:-3] in t)) for r in raices)
-        return coincidencia(p["nombre"], h["titulo"], p.get("marca")) >= 100 * SIMILITUD_MINIMA
+        return max(coincidencia(p["nombre"], h["titulo"], p.get("marca")),
+                   coincidencia(cabecera(p["nombre"]), cabecera(h["titulo"]), p.get("marca"))) >= 100 * SIMILITUD_MINIMA
 
     historicos = [h["precio"] for h in iguales if h["precio"] and h["precio"] >= p["precio"] * 0.4
                   and mismo_historico(h)]
@@ -3544,6 +3573,11 @@ def consultas_chollometro(p):
         marca = _consulta_busqueda(p).split()[0] if _consulta_busqueda(p) else ""
         for forma in variantes_codigo(codigos[0])[1:]:
             mas(f"{marca} {forma}")
+    # Sin código: marca + el modelo hasta su primer número ("Braun all-in-one series 7"), antes que el principio del nombre.
+    pal = cabecera(nombre_con_marca({"nombre": nombre, "marca": p.get("marca") or "", "tienda": p.get("tienda") or p.get("t")})).split()
+    hasta = next((i for i, w in enumerate(pal[:7]) if any(ch.isdigit() for ch in w)), None)
+    if hasta is not None and hasta >= 1:
+        mas(" ".join(pal[:hasta + 1]))
     mas(consulta_corta(nombre_con_marca({"nombre": nombre, "marca": p.get("marca") or "", "tienda": p.get("tienda") or p.get("t")})))
     return salida
 
