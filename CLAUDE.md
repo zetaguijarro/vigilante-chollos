@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 269 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 281 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -67,6 +67,7 @@ Pedidos desde Claude en el móvil. Por orden:
     - (Nota antigua) **ASIN:** el hilo no lo trae; el enlace va por la redirección de Chollometro. Seguir la redirección sin descargar Amazon (solo leer la cabecera Location) para sacar el ASIN con `asin_de`, quitando el afiliado. Poco a poco: unos 200 hilos al día. Guardar ASIN, precio y temperatura con que triunfó.
     - Comprobar primero, con números, cuántos hilos de Amazon con 200° y ASIN salen; con eso se decide el tamaño de la lista.
 
+10. **Histórico de Instinct (Zeta, 20/11).** Tres ZIP `Historico-Claude-actualizado17-parte{1,2,3}.zip` (una sola edición, sustituye a la anterior). Importador: `& $py src\importar_instinct.py <carpeta con los 3 zip>` → base **aparte** `data/instinct.db` (nunca se mezcla con `vistos.db` ni con `precios`). Comprueba manifiesto igual en las tres partes, los 17 CSV.gz (nombre, bytes, SHA256, filas) y cabeceras; restituye NULL con `__null_fields`; sustituye la edición entera en una transacción (si había otra, guarda `instinct_<fecha>.db`); comprueba los 4 `event_id` del 17/11 (la vista `17-noviembre-identificados.csv` no se importa), las 250 filas MediaMarkt `superseded` y que reimportar no suma filas. Probado con los ZIP reales: 1.035.791 filas en 30 s, ~450 MB. Qué es: `legacy_series` = 936.609 productos de 1.448 tiendas con mín/máx/actual **solo del 8 al 14/11** (provisional, no es historial ni precio habitual); `observations` 40.111 del 17-20/11 (casi todas URL sin variante); `evidence_records` 58.044 textos de tarjetas (24.563 superseded); `comparator_queries` 21. Reglas del prompt de Zeta: nada de esto es oferta aprobada ni precio validado; no fusionar por nombre parecido; desconocido no es gratis ni disponible. Uso previsto (propuesto, sin hacer): cruzar `legacy_series` con `cm`/`cm_destino` por código de modelo o EAN (633 de 3.407 hilos de 200°+ casan, con ruido de códigos genéricos tipo "8000PA") para la lista de vigilancia de todas las tiendas, y como precio de referencia anterior a Black Friday.
 
 ## Pendiente de la mañana del 17/11 (repasado por la noche)
 

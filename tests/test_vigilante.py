@@ -313,7 +313,8 @@ class Cupones(unittest.TestCase):
             v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 5, "tipo": "€", "minimo": 40, "codigo": "AMANO5"}])
             self.assertEqual(v.actualizar_cupones(self.con), {"miravia.es": 1, "aliexpress.com": 1})
             self.assertEqual(v.actualizar_cupones(self.con), {}, "como mucho cada 6 h")
-            paginas["aliexpress"] = self.voucher("ESD1123", "23€", "Gasto mínimo de 135€.")
+            # fecha de fin lejana: con la de por defecto (19/11/2026) la prueba caducaba sola el 20/11
+            paginas["aliexpress"] = self.voucher("ESD1123", "23€", "Gasto mínimo de 135€.", fin="2099-11-19T08:59:00.000Z")
             v.actualizar_cupones(self.con, forzar=True)
             codigos = sorted(c["codigo"] for c in v.cupones_activos(self.con, "aliexpress.com"))
             self.assertEqual(codigos, ["AMANO5", "ESD1123"], "el retirado sale; el puesto a mano se queda")
