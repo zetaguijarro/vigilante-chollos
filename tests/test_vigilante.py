@@ -2856,23 +2856,24 @@ class ModoTelegram(Base):
                 {"titulo": "[EXCEPCIONAL] Xiaomi Redmi Buds 6 Pro", "descripcion": "Texto.", "precios": "inventado"}), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(n))
-            # Formato de Zeta (20/11/2026): 4 mensajes: foto con el título, precio (descuento y PVPR, con el enlace al
-            # final), info adicional (con los códigos) y descripción.
+            # Formato de Zeta (20/11/2026): mensajes separados: foto con el título, precio (descuento y PVPR), enlace,
+            # info adicional (con los códigos) y descripción.
             textos = [t for _, t, _ in self.enviados]
-            self.assertEqual(len(textos), 4)
+            self.assertEqual(len(textos), 5)
             self.assertEqual((textos[0], self.enviados[0][2]), ("Xiaomi Redmi Buds 6 Pro", "https://img/x.jpg"),
                              "la foto con el título debajo, sin etiqueta")
             self.assertTrue(textos[1].startswith("30 €"), textos[1])
             self.assertIn("Descuento: -50 %", textos[1])
             self.assertIn("PVPR de la tienda: 59,99 €", textos[1])
             self.assertIn("Envío: portes no verificados", textos[1])
-            self.assertTrue(textos[1].rstrip().splitlines()[-1].startswith("http"), "el enlace, al final del precio")
+            self.assertNotIn("http", textos[1], "el enlace va aparte")
+            self.assertTrue(textos[2].startswith("http"), "el enlace, en su propio mensaje")
             self.assertNotIn("41,5", textos[1], "el mercado no es una referencia del bloque de precio")
             self.assertNotIn("habitual", textos[1].lower())
-            self.assertIn("Sin códigos de descuento visibles.", textos[2], "los códigos van en la info adicional")
+            self.assertIn("Sin códigos de descuento visibles.", textos[3], "los códigos van en la info adicional")
             for proceso in ("Comprobado:", "Prueba:", "PENDIENTE", "Precio inicial publicado"):
                 self.assertNotIn(proceso, "".join(textos))
-            self.assertEqual(textos[3], "Texto.")
+            self.assertEqual(textos[4], "Texto.")
             self.assertFalse((v.DATOS / f"decision_{n}.json").exists())
             # Descarte: lo dice el código por Telegram, con números, y guarda el veredicto del modelo.
             self.enviados.clear()
@@ -2894,8 +2895,8 @@ class ModoTelegram(Base):
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n)
             self.assertTrue(d["entregado"])
-            self.assertEqual(len(self.enviados), 4)
-            self.assertIn("📋 <b>Características</b>\n• Autonomía: 36 h", self.enviados[3][1], "negrita real")
+            self.assertEqual(len(self.enviados), 5)
+            self.assertIn("📋 <b>Características</b>\n• Autonomía: 36 h", self.enviados[4][1], "negrita real")
 
         finally:
             v.dossier_items = orig
@@ -3266,10 +3267,10 @@ class ReglasInstinct(Base):
             (v.DATOS / "entrega_7.json").write_text(json.dumps(bloques), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(7))
-            # Formato de Zeta (20/11/2026): 4 mensajes: foto con el título, precio (con el enlace), info adicional (con
+            # Formato de Zeta (20/11/2026): mensajes separados: foto con el título, precio, enlace, info adicional (con
             # los códigos) y descripción.
-            self.assertEqual([e[0] for e in enviados], ["JBL Flip 6 altavoz Bluetooth",
-                                                        "Precio inicial: 149 €\n\nhttps://t.es/jbl",
+            self.assertEqual([e[0] for e in enviados], ["JBL Flip 6 altavoz Bluetooth", "Precio inicial: 149 €",
+                                                        "https://t.es/jbl",
                                                         "Mínimo histórico: 79 €\n\nSin códigos de descuento visibles.",
                                                         "Altavoz portátil."])
             self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "la foto, con el título, en el primer mensaje")

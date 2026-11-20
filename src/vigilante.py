@@ -3449,6 +3449,132 @@ def _sin_codigo(texto):
     return not [c for c in codigos_modelo(texto or "") if not RE_UNIDAD.match(c.lower())]
 
 
+# ------------------------------------------------------------------ emparejamiento por "palabras de modelo" y TF-IDF
+# Zeta, 20/11/2026 (#297, Xiaomi Robot Vacuum S40 de AliExpress a 89,95 €: ya estaba "Robot aspirador y friegasuelos
+# Xiaomi S40 – 10.000 Pa, láser LDS, 5200 mAh" a 89,99 € en la misma tienda). Técnicas de resolución de entidades para
+# títulos de producto: "model words" (tokens con letras y cifras: S40, UX3480) como prueba fuerte, especificaciones con
+# unidad (10000pa, 5200mah) que no pueden contradecirse, y similitud TF-IDF (las palabras raras pesan más que las comunes)
+# con el índice de la copia de Chollometro como corpus.
+EN_ES_PALABRAS = {"vacuum": "aspirador", "cleaner": "", "robot": "robot", "mop": "friegasuelos", "headphones": "auriculares",
+                  "earbuds": "auriculares", "speaker": "altavoz", "watch": "reloj", "smartwatch": "reloj", "scale": "bascula",
+                  "kettle": "hervidor", "fryer": "freidora", "blender": "batidora", "trimmer": "recortadora",
+                  "shaver": "afeitadora", "toothbrush": "cepillo", "official": "", "oficial": ""}
+RE_SPEC = re.compile(r"(?<![a-z0-9])([0-9]{1,3}(?:[ .,][0-9]{3})+|[0-9]+(?:[.,][0-9]+)?) ?(pa|kpa|mah|wh|w|v|gb|tb|hz|mm|cm|ml|l|kg|g|mp|db|lm|rpm|bar|min|h)(?![a-z])", re.I)
+
+
+def _tokens_er(texto):
+    """Tokens normalizados para el emparejamiento: sin tildes, en minúscula, especificaciones con su unidad pegadas
+    ("10.000 Pa" -> "10000pa"), inglés frecuente traducido y sin relleno."""
+    t = sin_tildes((texto or "").lower())
+    t = RE_SPEC.sub(lambda m: re.sub(r"[ .,]", "", m.group(1)) + m.group(2).lower() + " ", t)
+    salida = []
+    for w in re.findall(r"[a-z0-9]+", t):
+        w = EN_ES_PALABRAS.get(w, w)
+        if w and w not in _STOP_TEXTO and (len(w) > 1 or w.isdigit()):
+            salida.append(_singular(w))
+    return salida
+
+
+RE_LOTE = re.compile(r"[+]|\bbundle\b|\bcon (?:juego|c[oó]digo de descarga)|\bincluye\b|\bpack de juego", re.I)
+RE_CANTIDAD = re.compile(r"(?:pack|lote|x) ?([0-9]{1,2})(?![0-9])|(?<![0-9])([0-9]{1,2}) ?(?:x(?![a-z0-9])|uds?|unidades|kilos?|kg|litros?|botes|latas|capsulas)", re.I)
+
+
+def _cantidades(texto):
+    return {int(a or b) for a, b in RE_CANTIDAD.findall(sin_tildes((texto or "").lower()))}
+
+
+def _es_spec(w):
+    return bool(re.fullmatch(r"[0-9]+(?:pa|kpa|mah|wh|w|v|gb|tb|hz|mm|cm|ml|l|kg|g|mp|db|lm|rpm|bar|min|h)", w))
+
+
+def _es_palabra_modelo(w):
+    return any(c.isdigit() for c in w) and any(c.isalpha() for c in w) and not _es_spec(w)
+
+
+def _idf(w, idx, total):
+    import math
+    return math.log((total + 1) / (1 + len(idx.get(w, ()))))
+
+
+def similitud_idf(a, b, fuera=frozenset()):
+    """Coincidencia ponderada por rareza (TF-IDF): suma de pesos de las palabras comunes entre la del más corto.
+    -> 0..100. Sin índice de la copia, todas pesan igual."""
+    idx = _INDICE.get("idx") or {}
+    total = max(len(idx), 1000)
+    ta, tb = set(_tokens_er(a)) - fuera, set(_tokens_er(b)) - fuera
+    if not ta or not tb:
+        return 0
+    peso = lambda ws: sum(_idf(w, idx, total) for w in ws)
+    # Simétrica (Dice ponderado): con "el más corto" un título de 2 palabras ("Nintendo Switch 2") casaba con cualquier
+    # juego de Switch 2.
+    return round(100 * 2 * peso(ta & tb) / max(1e-9, peso(ta) + peso(tb)))
+
+
+def mismo_por_palabras_modelo(nombre, titulo, marca=None):
+    """Tercera vía de `mismo_post`: misma marca; sin variante distinta (Pro, Max...); ninguna especificación con la
+    misma unidad que se contradiga (5200mah frente a 3200mah); y o bien comparten una palabra de modelo (S40) y se
+    parecen un 60 % en TF-IDF, o bien sin palabras de modelo se parecen un 80 %. Si los dos tienen palabras de modelo y
+    no comparten ninguna, no son el mismo."""
+    nombre, titulo = RE_COMPATIBLE.sub(" ", nombre or ""), RE_COMPATIBLE.sub(" ", titulo or "")  # ", para PS5..." no es el producto
+    ma, mb = marca_y_modelo(nombre, marca)[0], marca_y_modelo(titulo)[0]
+    if not (ma and mb and ma & mb):
+        return False
+    if bool(RE_REACONDICIONADO.search(nombre or "")) != bool(RE_REACONDICIONADO.search(titulo or "")):
+        return False
+    # Números sueltos del modelo (Buds 6 frente a Buds 4), mirados en la cabecera para no confundir con características.
+    na = {w for w in _tokens_er(cabecera(nombre)) if w.isdigit() and len(w) <= 4}
+    nb = {w for w in _tokens_er(cabecera(titulo)) if w.isdigit() and len(w) <= 4}
+    if na and nb and not (na & nb):
+        return False
+    ta, tb = set(_tokens_er(nombre)), set(_tokens_er(titulo))
+    if (ta & VARIANTES) != (tb & VARIANTES):
+        return False
+    tipos_a, tipos_b = tipos_producto(nombre or ""), tipos_producto(titulo or "")
+    if tipos_a and tipos_b and not (tipos_a & tipos_b):
+        return False
+    ra, rb = _rasgos(nombre or ""), _rasgos(titulo or "")
+    if ra[1] != rb[1] or (ra[2] and rb[2] and not (ra[2] & rb[2])):
+        return False  # accesorio frente a producto; hombre frente a mujer
+    colores = (COLORES - {"color"}) | COLORES_EXTRA
+    ca, cb = ra[5] & colores, rb[5] & colores
+    if ca and cb and not (ca & cb):
+        return False  # otro color es otra oferta
+    unidad = lambda w: re.sub(r"[0-9]", "", w)
+    sa, sb = {w for w in ta if _es_spec(w)}, {w for w in tb if _es_spec(w)}
+    for u in {unidad(w) for w in sa} & {unidad(w) for w in sb}:
+        if not ({w for w in sa if unidad(w) == u} & {w for w in sb if unidad(w) == u}):
+            return False  # 5200mah frente a 3200mah: otro producto
+    # Palabras de modelo RARAS (en menos de 300 títulos de la copia, 3+ caracteres): "4k", "5g" o "ddr5" no identifican.
+    idx = _INDICE.get("idx") or {}
+    rara = lambda w: _es_palabra_modelo(w) and len(w) >= 3 and len(idx.get(w, ())) < 300
+    mwa, mwb = {w for w in ta if rara(w)}, {w for w in tb if rara(w)}
+    if not (mwa & mwb):
+        return False  # sin una palabra de modelo rara en común (S40, UX3480) esta vía no decide
+    if (mwa - mwb) and (mwb - mwa):
+        return False  # cada uno con su propio modelo (TQ65S95H frente a TQ65S85F; V3607VM-TK150 frente a -TK265)
+    # Misma forma y otro número, aunque sea una palabra corriente: DDR4 frente a DDR5, Gen4 frente a Gen5.
+    forma = lambda w: re.sub(r"[0-9]+", "#", w)
+    todas_a = {w for w in ta if _es_palabra_modelo(w)}
+    todas_b = {w for w in tb if _es_palabra_modelo(w)}
+    for fm in {forma(w) for w in todas_a} & {forma(w) for w in todas_b}:
+        if not ({w for w in todas_a if forma(w) == fm} & {w for w in todas_b if forma(w) == fm}):
+            return False
+    movil = lambda t: bool(t & {"4g", "5g", "lte"})
+    wifi = lambda t: "wifi" in t or ("wi" in t and "fi" in t)
+    if (movil(ta) and wifi(tb) and not movil(tb)) or (movil(tb) and wifi(ta) and not movil(ta)):
+        return False  # tableta 4G frente a solo wifi
+    # Packs y lotes: "consola + juego" no es la consola sola; "pack 2 kilos" no es "pack 3 kilos".
+    if bool(RE_LOTE.search(nombre or "")) != bool(RE_LOTE.search(titulo or "")):
+        return False
+    if _cantidades(nombre) and _cantidades(titulo) and not (_cantidades(nombre) & _cantidades(titulo)):
+        return False
+    # Sobre el nombre entero y sobre la cabecera (antes de la primera coma): los nombres de tienda llevan una lista de
+    # características con palabras raras que no son el modelo ("huracán", "multidimensional").
+    marca_tok = frozenset(set().union(*(set(_tokens_er(m)) for m in ma | mb)))  # la marca no cuenta como parecido
+    sim = max(similitud_idf(nombre, titulo, marca_tok), similitud_idf(cabecera(nombre), cabecera(titulo), marca_tok))
+    return sim >= 50
+
+
 def mismo_post(nombre, titulo, marca=None):
     """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto).
     20/11/2026 (#294, Braun All-in-One Series 7 de Miravia con un nombre larguísimo en inglés): si el producto no tiene
@@ -3457,8 +3583,9 @@ def mismo_post(nombre, titulo, marca=None):
         return True
     cn, ct = cabecera(nombre), cabecera(titulo)
     if (cn != nombre or ct != titulo) and _sin_codigo(nombre) and len(cn.split()) >= 3 and len(ct.split()) >= 3:
-        return mismo_producto(cn, ct, marca)
-    return False
+        if mismo_producto(cn, ct, marca):
+            return True
+    return mismo_por_palabras_modelo(nombre, titulo, marca)
 
 
 def _mismo_post_antiguo(nombre, titulo):
@@ -6400,6 +6527,7 @@ def enviar_pendientes(con, entrega):
                             h["comprobado"] = comprobados[h["id"]]
             if fuera_por_chollometro(p, ch, p.get("precio") or 0):
                 con.execute("UPDATE lista SET enviado=2 WHERE id=?", (n,))  # 2 = publicada por otro
+                log_descarte(p, f"ya en Chollometro ({ch}; mínimo histórico {p.get('_cm_min')}), no se envía")
                 con.commit()
                 continue
             p["ch"] = d["ch"] = ch
@@ -6523,6 +6651,69 @@ def mensaje_candidato(n, p):
     return "\n\n".join(b for b in bloques if b.strip())
 
 
+# ------------------------------------------------------------------ alertas y descartes (Zeta, 21/11/2026)
+# "Siempre me tienes que informar de bloqueos al canal de alertas de Telegram" y "dime las descartadas y el motivo".
+_DESCARTADAS = []
+DESCARTES_POR_RONDA = 25
+
+
+def alerta_sistema(clave, texto, horas=6):
+    """Aviso a la pestaña ⚠️ Sistema, como mucho uno por `clave` cada `horas`. Nunca para la ronda."""
+    try:
+        con = bd()
+        try:
+            fila = con.execute("SELECT v FROM meta WHERE k=?", (f"alerta:{clave}",)).fetchone()
+            if fila and fila[0] > (datetime.now() - timedelta(hours=horas)).isoformat(timespec="minutes"):
+                return False
+            token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
+            if not (token and chat):
+                return False
+            ok = enviar_telegram(token, chat, texto, hilo="sistema")
+            if ok:
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"alerta:{clave}", datetime.now().isoformat(timespec="minutes")))
+                con.commit()
+            return ok
+        finally:
+            con.close()
+    except Exception as e:
+        log(f"alerta: {str(e)[:80]}")
+        return False
+
+
+def log_descarte(p, texto):
+    """Apunta un descarte en el log y lo guarda para mandarlo a la pestaña 🗑️ Descartadas al final de la ronda."""
+    log(texto)
+    try:
+        motivo = texto.replace(", no se envía", "").replace(" no se envía", "")
+        _DESCARTADAS.append({"tienda": p.get("tienda"), "nombre": p.get("nombre"), "precio": p.get("precio"),
+                             "url": p.get("url"), "imagen_url": p.get("imagen_url"), "motivo": motivo.strip()})
+    except Exception:
+        pass
+
+
+def enviar_descartadas():
+    """Una ficha corta por descarte de esta ronda (como mucho DESCARTES_POR_RONDA) en la pestaña 🗑️ Descartadas."""
+    lista = list(_DESCARTADAS)
+    _DESCARTADAS.clear()
+    if not lista or not cargar_config().get("entrega", {}).get("descartadas"):
+        return 0
+    token, chat = token_telegram(), str(cargar_config().get("entrega", {}).get("chat_id", ""))
+    if not (token and chat):
+        return 0
+    hilo = "descartadas" if tema_id("descartadas") else "sistema"  # la pestaña se crea con `vigilante.py temas`
+    enviados = 0
+    for d in lista[:DESCARTES_POR_RONDA]:
+        precio = f"{d['precio']:g} €" if isinstance(d.get("precio"), (int, float)) else ""
+        texto = (f"<b>🗑️ Descartada · {escape(d.get('tienda') or '')}</b>\n<b>{escape((d.get('nombre') or '')[:200])}</b>"
+                 f"\n\n<b>{precio}</b>\n\n• ❌ <b>Motivo:</b> {escape(d['motivo'][:300])}\n\n{escape(d.get('url') or '')}")
+        if enviar_telegram(token, chat, texto, d.get("imagen_url"), html=True, hilo=hilo):
+            enviados += 1
+    if len(lista) > DESCARTES_POR_RONDA:
+        enviar_telegram(token, chat, f"… y {len(lista) - DESCARTES_POR_RONDA} descartadas más en esta ronda (data/log.txt).",
+                        hilo=hilo)
+    return enviados
+
+
 def token_telegram():
     """Token del bot: variable de entorno, o el .env de Hermes (no se guarda en ningún otro sitio)."""
     for var in ("VIGILANTE_TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN"):
@@ -6547,7 +6738,7 @@ def _post(url, datos, timeout=20):
 
 
 TEMAS = "telegram_temas.json"  # pestañas del chat: {"publicar": id, "sistema": id, "cat:tecnologia": id, ...}
-NOMBRES_TEMA = {"publicar": "✅ Para publicar", "sistema": "⚠️ Sistema"}
+NOMBRES_TEMA = {"publicar": "✅ Para publicar", "sistema": "⚠️ Sistema", "descartadas": "🗑️ Descartadas"}
 NOMBRES_CATEGORIA = {"tecnologia": "Tecnología", "generalistas": "Generalistas", "electro_marcas": "Electro de marca",
                      "videojuegos": "Videojuegos", "supermercado": "Supermercado", "hogar": "Hogar",
                      "salud_belleza": "Salud y belleza", "moda": "Moda", "deporte": "Deporte",
@@ -7979,14 +8170,14 @@ def redaccion(n):
 # Orden de envío (Zeta, 18/11/2026): 5 mensajes: foto, título, precio (final, descuento y PVPR; lleva el enlace al
 # final), posibles códigos y descripción. Antes eran 6 (con enlace e INFO ADICIONAL aparte, docs/FORMATO.md).
 BLOQUES = ("titulo", "precios", "codigos", "descripcion")
-# Zeta (20/11/2026): "por separado el título, precio final y PVP o referencia, enlace, info adicional y descripción, en
-# 4 mensajes": 1) foto con el título, 2) precio final, PVP o referencia y enlace, 3) info adicional (con los códigos y
-# las tallas), 4) descripción.
+# Zeta (20/11/2026): "por separado el título, precio final y PVP o referencia, enlace, info adicional y descripción":
+# 1) foto con el título, 2) precio final con PVP o referencia, 3) enlace, 4) info adicional (con los códigos y las
+# tallas), 5) descripción.
 
 
 def entregar(n, callado=False):
-    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 4 mensajes (Zeta,
-    20/11/2026): foto con el título, precio final con PVP o referencia y enlace, info adicional (con los códigos y las
+    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda en mensajes separados (Zeta,
+    20/11/2026): foto con el título, precio final con PVP o referencia, enlace, info adicional (con los códigos y las
     tallas) y descripción (con negrita real). Así la IA no repite texto y el
     formato sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
     "descripcion": precio, INFO, enlace y foto salen de la decisión por código. La etiqueta va en la INFO,
@@ -8013,8 +8204,8 @@ def entregar(n, callado=False):
     b["titulo"] = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(b.get("titulo", ""))).strip()[:140]
     b.setdefault("codigos", "Sin códigos de descuento visibles.")
     enlace = str(b.get("enlace", "")).strip()
-    if enlace and enlace not in str(b.get("precios", "")):
-        b["precios"] = f"{str(b.get('precios', '')).strip()}\n\n{enlace}"  # el enlace, al final del precio
+    if enlace:  # el enlace va en su propio mensaje (Zeta, 20/11/2026): fuera del bloque de precio si venía dentro
+        b["precios"] = str(b.get("precios", "")).replace(enlace, "").strip()
     faltan = [k for k in BLOQUES if not str(b.get(k, "")).strip()]
     if faltan:
         decir(f"#{n}: faltan bloques: {', '.join(faltan)}")
@@ -8034,8 +8225,9 @@ def entregar(n, callado=False):
     extra = {"hilo": hilo}
     ok, enviados = True, 0
     info = "\n\n".join(x for x in (str(b.get("info") or "").strip(), str(b.get("codigos") or "").strip()) if x)
-    mensajes = [("titulo", str(b["titulo"]).strip()), ("precios", str(b["precios"]).strip()), ("info", info),
-                ("descripcion", str(b["descripcion"]).strip())]
+    mensajes = [("titulo", str(b["titulo"]).strip()), ("precios", str(b["precios"]).strip()), ("enlace", enlace),
+                ("info", info), ("descripcion", str(b["descripcion"]).strip())]
+    mensajes = [(k, t) for k, t in mensajes if t]
     for k, texto in mensajes:
         if k == "titulo":
             ok = enviar_telegram(token, chat, texto, foto, **extra) and ok  # la foto lleva el título debajo
@@ -8338,6 +8530,7 @@ def registrar_fallos(con, lecturas, fijas=None):
                 hasta = (datetime.now() + timedelta(minutes=fijas[tienda])).isoformat(timespec="minutes")
                 con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pausa:{tienda}", hasta))
                 log(f"{tienda}: {error[:60]}, en pausa {fijas[tienda]} min")
+                alerta_sistema(f"bloqueo:{tienda}", f"⛔ Bloqueo en {tienda}: {error[:120]}. En pausa {fijas[tienda]} min (no se intenta saltar).")
             continue
         if RE_NO_SE_LEE.search(error):
             # Instrucciones de lectura, paso 4: si una web bloquea (robots.txt, antibot, captcha) se anota
@@ -8349,6 +8542,7 @@ def registrar_fallos(con, lecturas, fijas=None):
                         (f"no_se_lee:{tienda}", f"{datetime.now():%d/%m %H:%M} {error[:90]}"))
             if not ya:
                 log(f"{tienda}: no se lee ({error[:70]}), fuera 24 h")
+                alerta_sistema(f"bloqueo:{tienda}", f"⛔ Bloqueo en {tienda}: {error[:120]}. Fuera 24 h (no se intenta saltar).")
             continue
         fila = con.execute("SELECT v FROM meta WHERE k=?", (clave,)).fetchone()
         n = int(fila[0]) + 1 if fila else 1
@@ -8358,6 +8552,7 @@ def registrar_fallos(con, lecturas, fijas=None):
             hasta = (datetime.now() + timedelta(minutes=minutos)).isoformat(timespec="minutes")
             con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pausa:{tienda}", hasta))
             log(f"{tienda}: {n} fallos seguidos ({error[:60]}), en pausa {minutos} min")
+            alerta_sistema(f"bloqueo:{tienda}", f"⛔ {tienda}: {n} fallos seguidos ({error[:100]}). En pausa {minutos} min.")
     con.commit()
 
 
@@ -8502,6 +8697,8 @@ def ronda_grupo(grupo):
             log(f"{grupo} {categoria}: {str(e)[:150]}")
         volcar_a_historico()
     _CTX.update(ronda=None, categoria=None)
+    if modo_telegram_cfg(cargar_config()):
+        enviar_descartadas()  # las que quedaron de categorías sin candidatas
     if grupo == "navegador" and cargar_config().get("rutas", {}).get("descubrir_hubs", True):
         try:  # una vez al día por tienda: los enlaces de campaña de su hub, solo si traen productos que no teníamos
             con_r = bd()
@@ -8766,7 +8963,7 @@ def ronda(categoria, solo=None):
                 fuera["ya publicado"] += 1
             elif not p.get("error_precio") and not p.get("gratis") and (techo := ya_salio_mas_barato(p)):
                 fuera["ya salió más barato"] += 1
-                log(f"ya salió más barato en Chollometro (200°+ a {techo:g} € como mucho), no se envía: "
+                log_descarte(p, f"ya salió más barato en Chollometro (200°+ a {techo:g} € como mucho), no se envía: "
                     f"{p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
             else:
                 quedan.append(p)
@@ -8892,7 +9089,7 @@ def ronda(categoria, solo=None):
             if ref.get("sin_precio_tienda") and not p.get("_pcct_otra"):
                 pa = ref.get("amazon_precio")
                 if not (ref.get("amazon_url") and pa and abs(pa - p["precio"]) <= p["precio"] * 0.02):
-                    log(f"PcComponentes no tiene precio oficial ahora, no se envía: {p['nombre'][:60]} a {p['precio']} €")
+                    log_descarte(p, f"PcComponentes no tiene precio oficial ahora, no se envía: {p['nombre'][:60]} a {p['precio']} €")
                     continue
                 # El precio en pantalla es el de Amazon (Zeta, 18/11/2026): la oferta es de Amazon, comparada con el
                 # habitual de PcComponentes. Los duplicados se miran otra vez, ahora como Amazon.
@@ -8957,10 +9154,10 @@ def ronda(categoria, solo=None):
                 ok = p["precio"] <= mejor * (1 - u_c["mercado"] + 0.005)
                 p["_sin_contraste"] = False
         if ok and es_accesorio(p["nombre"]) and not demanda_probada_ok(p) and not p.get("error_precio"):
-            log(f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
+            log_descarte(p, f"accesorio o recambio sin demanda probada, no se envía: {p['tienda']} {p['nombre'][:60]}")
             ok = False
         if ok and not p.get("gratis") and precio_sospechoso(p, mejor, f.get("precio_sospechoso", PRECIO_SOSPECHOSO)):
-            log(f"precio sospechoso, no se envía: {p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
+            log_descarte(p, f"precio sospechoso, no se envía: {p['tienda']} {p['nombre'][:60]} a {p['precio']} €")
             ok = False
         ok = ok and ahorro_suficiente(p, mejor, cat_cfg, f)
         if ok and clase_c == "moda" and not p.get("gratis") and not p.get("error_precio") \
@@ -9047,19 +9244,19 @@ def ronda(categoria, solo=None):
                 ok_f, motivo = (confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02), nav_tiendas) if nav_tiendas
                                 else (None, "sin navegador"))
                 if ok_f is not True:
-                    log(f"precio de comparador sin confirmar en la tienda, no se envía: {p['tienda']} "
+                    log_descarte(p, f"precio de comparador sin confirmar en la tienda, no se envía: {p['tienda']} "
                         f"{p['nombre'][:60]} a {p['precio']} €: {motivo}")
                     continue
                 p["ficha_ok"] = True
             elif f.get("confirmar_ficha") and not p.get("gratis") and ficha_se_intenta(cfg, p["tienda"]):
                 p["ficha_ok"], motivo = confirmar_en_ficha(p, f.get("ficha_tolerancia", 0.02))
                 if p["ficha_ok"] is False:
-                    log(f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
+                    log_descarte(p, f"ficha no confirma, no se envía: {p['tienda']} {p['nombre'][:60]}: {motivo}")
                     continue
                 if p.get("error_precio") and p["ficha_ok"] is not True:
                     # Un "error de precio" se salta el contraste de mercado: sin ficha que lo confirme
                     # suele ser un fallo de lectura (HP EliteBook de PCBox, 16/11/2026).
-                    log(f"error de precio sin confirmar en ficha, no se envía: {p['tienda']} {p['nombre'][:60]}")
+                    log_descarte(p, f"error de precio sin confirmar en ficha, no se envía: {p['tienda']} {p['nombre'][:60]}")
                     continue
             por_tienda[p["tienda"]] += 1
             enviar.append(p)
@@ -9090,6 +9287,7 @@ def ronda(categoria, solo=None):
         con.commit()
         if not silencio:  # en 14:00-15:00 se guardan y salen en la primera ronda después
             enviar_pendientes(con, entrega)
+            enviar_descartadas()
         con.close()
         print(SILENCIO)  # Hermes no se despierta: coste 0
         return

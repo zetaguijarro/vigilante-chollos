@@ -112,3 +112,53 @@ class ParecidosYTallas(unittest.TestCase):
         texto = v.mensaje_candidato(1, p)
         self.assertIn("<b>Tallas disponibles:</b> 40, 41, 42", texto)
         self.assertIn("<b>Parecido (75 %):</b> Nike Pegasus 40", texto)
+
+
+class AlertasYDescartadas(unittest.TestCase):
+    def test_descartadas_con_motivo_a_su_pestana(self):
+        import json, tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp())
+        orig = (v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id)
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["entrega"] = {"modo": "telegram", "chat_id": "1", "descartadas": True}
+        (tmp / "t.json").write_text(json.dumps(cfg), encoding="utf-8")
+        enviados = []
+        v.CONFIG = tmp / "t.json"
+        v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: enviados.append((texto, k.get("hilo"))) or True
+        v.token_telegram = lambda: "x"
+        v.tema_id = lambda clave: 9
+        try:
+            v.log_descarte({"tienda": "t.es", "nombre": "Cafetera X", "precio": 45.0, "url": "https://t.es/x"},
+                           "ficha no confirma, no se envía: t.es Cafetera X: la ficha marca 60 € y el listado 45 €")
+            self.assertEqual(v.enviar_descartadas(), 1)
+            texto, hilo = enviados[0]
+            self.assertEqual(hilo, "descartadas")
+            self.assertIn("Cafetera X", texto)
+            self.assertIn("<b>Motivo:</b> ficha no confirma: t.es Cafetera X: la ficha marca 60 € y el listado 45 €", texto)
+        finally:
+            v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id = orig
+
+
+class PalabrasDeModeloYTfidf(unittest.TestCase):
+    """#297 (21/11/2026): el Xiaomi Robot Vacuum S40 de AliExpress ya estaba como "Robot aspirador y friegasuelos Xiaomi
+    S40 – 10.000 Pa, 5200 mAh" en la misma tienda al mismo precio."""
+
+    def test_mismo_robot_en_ingles_y_en_espanol(self):
+        a = ("Official | Xiaomi Robot Vacuum S40, Ventilador de succión tipo huracán de 10 000 Pa, Batería de duración "
+             "prolongada con 5200 mAh, Tecnología antienredos multidimensional")
+        self.assertTrue(v.mismo_post(a, "Robot aspirador y friegasuelos Xiaomi S40 – 10.000 Pa, láser LDS, 5200 mAh (180 min, app)"))
+        self.assertFalse(v.mismo_post(a, "Robot friegasuelos - Xiaomi Vacuum S40 Pro, 160 W, Ventilador de Succión 15000 Pa"),
+                         "el S40 Pro es otro")
+
+    def test_lo_que_no_debe_casar(self):
+        self.assertFalse(v.mismo_post("Gigabyte B760 Gaming X DDR4 Gen5 - Placa base 1700 ATX", "Placa Base Gigabyte B760 Gaming X DDR5"))
+        self.assertFalse(v.mismo_post("Tablet Samsung Galaxy Tab A11 4G 8,7\" 8GB 128GB Plata", "Samsung Galaxy Tab A11 Wi-Fi"))
+        self.assertFalse(v.mismo_post("Nintendo Switch 2", "Dragon Quest I & II HD-2D Remake - Nintendo Switch 2"))
+        self.assertFalse(v.mismo_post("TV OLED 163cm (65\") Samsung TQ65S95HFTXXC 4K Smart TV",
+                                      "TV OLED 65\" - Samsung TQ65S85FAEXXC, OLED 4K, NQ4 AI Gen2"))
+
+    def test_especificaciones_y_similitud(self):
+        self.assertIn("10000pa", v._tokens_er("succión de 10 000 Pa"))
+        self.assertIn("5200mah", v._tokens_er("batería 5.200 mAh"))
+        self.assertGreater(v.similitud_idf("HP 305 negro 3YM61AE", "HP 305 Negro, 3YM61AE, cartucho"), 50)

@@ -540,7 +540,9 @@
   "chat_id": "456808276",
   "perfil_chollometro": "PorLa_Jeta",
   "redaccion": "plantilla",
-  "_nota_redaccion": "Quién escribe el título y la descripción de lo que pasa la decisión por código: \"hermes\" (una tarea corta, habilidad redacta-chollo) o \"plantilla\" (por código, 0 tokens, texto soso; no necesita Hermes)."
+  "_nota_redaccion": "Quién escribe el título y la descripción de lo que pasa la decisión por código: \"hermes\" (una tarea corta, habilidad redacta-chollo) o \"plantilla\" (por código, 0 tokens, texto soso; no necesita Hermes).",
+  "descartadas": true,
+  "_nota_descartadas": "Zeta 21/11/2026: cada descarte de la ronda (ficha, precio, Chollometro...) va a la pestaña 🗑️ Descartadas con su motivo (25 por ronda como mucho)."
  },
  "reglas_tienda": {
   "aliexpress.com": {
