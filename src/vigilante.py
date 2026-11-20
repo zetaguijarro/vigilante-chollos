@@ -3421,29 +3421,91 @@ def _cache_busqueda(con, clave, horas):
     return False, None
 
 
-def buscar_en_chollometro(con, p):
-    """Busca el producto en el buscador de Chollometro y guarda en la copia local lo que encuentre (con su
-    temperatura y fecha). Robots.txt ya no se mira (Zeta, 17/11/2026); se hace poco: caché de 6 h por consulta,
-    pausa de 2 s y como mucho CM_BUSCAR_MAX por ronda. -> número de hilos encontrados, o None si no se buscó."""
-    q = _consulta_busqueda(p).strip()
-    if len(q) < 3:
-        return None
-    hecho, valor = _cache_busqueda(con, f"cm_q:{q.lower()}", CM_BUSCAR_CACHE_H)
-    if hecho:
-        return int(valor or 0)
-    try:
-        html, _ = descargar(CM_BUSQUEDA.format(q=quote_plus(q)))
-        hilos = hilos_chollometro(html)
-    except Exception as e:
-        log(f"chollometro búsqueda {q[:40]}: {str(e)[:80]}")
-        return None
-    if hilos:
-        guardar_hilos(con, hilos)
-    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
-                (f"cm_q:{q.lower()}", f"{datetime.now().isoformat(timespec='minutes')}|{len(hilos)}"))
-    con.commit()
-    time.sleep(2)
-    return len(hilos)
+CM_CONSULTAS_MAX = 4  # consultas por producto (método de búsqueda de Zeta, 20/11/2026): de la más precisa a la más amplia
+
+
+def variantes_codigo(codigo):
+    """Formas de escribir un código de modelo: con y sin guion o espacio ("WH-1000XM5" / "WH1000XM5"). No se quitan
+    sufijos: un sufijo puede ser otro producto."""
+    c = codigo.upper()
+    formas = [c]
+    pegado = c.replace("-", "").replace(" ", "")
+    if pegado != c:
+        formas.append(pegado)
+    else:
+        m = re.match(r"^([A-Z]{1,4})(?=[0-9])(.+)$", c)  # WH1000XM5 -> WH-1000XM5
+        if m:
+            formas.append(f"{m.group(1)}-{m.group(2)}")
+    return formas
+
+
+def consultas_chollometro(p):
+    """Consultas para el buscador de Chollometro, de la más precisa a la más amplia (método de Zeta, 20/11/2026):
+    EAN, ASIN, marca + modelo completo, el modelo escrito de otra forma y, por último, marca + modelo en palabras.
+    Sin repetir y sin el título comercial entero."""
+    nombre = p.get("nombre") or p.get("n", "")
+    salida = []
+
+    def mas(q):
+        q = " ".join((q or "").split())
+        if len(q) >= 3 and q.lower() not in (x.lower() for x in salida):
+            salida.append(q)
+    ean = str(p.get("ean") or p.get("e") or "")
+    if re.fullmatch(r"[0-9]{8,14}", ean):
+        mas(ean)
+    asin = asin_de(p.get("url") or p.get("u") or "")
+    if asin:
+        mas(asin)
+    mas(_consulta_busqueda(p))  # marca + código (o serie y pulgadas en televisores)
+    codigos = lista_codigos(nombre)
+    if codigos:
+        marca = _consulta_busqueda(p).split()[0] if _consulta_busqueda(p) else ""
+        for forma in variantes_codigo(codigos[0])[1:]:
+            mas(f"{marca} {forma}")
+    mas(consulta_corta(nombre_con_marca({"nombre": nombre, "marca": p.get("marca") or "", "tienda": p.get("tienda") or p.get("t")})))
+    return salida
+
+
+def _hilos_del_mismo(p, hilos):
+    """Cuántos de los hilos encontrados son este producto (mismo enlace de producto o marca y modelo)."""
+    nombre = p.get("nombre") or p.get("n", "")
+    return sum(1 for h in hilos if mismo_post(nombre, h["titulo"], p.get("marca")))
+
+
+def buscar_en_chollometro(con, p, maximo=None):
+    """Busca el producto en el buscador de Chollometro con varias consultas, de la más precisa a la más amplia, y
+    guarda en la copia local lo que encuentre (vigentes y agotados, con su temperatura y fecha). Para en cuanto una
+    consulta trae un hilo de este mismo producto. Caché de 6 h por consulta y 2 s entre búsquedas. Deja en
+    p["_busquedas"] las consultas hechas. -> número de hilos encontrados, o None si no se pudo buscar nada."""
+    maximo = maximo or CM_CONSULTAS_MAX
+    hechas, total, alguna = [], 0, False
+    for q in consultas_chollometro(p)[:maximo]:
+        hecho, valor = _cache_busqueda(con, f"cm_q:{q.lower()}", CM_BUSCAR_CACHE_H)
+        if hecho:
+            n, _, mismos = (valor or "0").partition("|")
+            n, mismos = int(n or 0), int(mismos or n or 0)
+        else:
+            try:
+                html, _ = descargar(CM_BUSQUEDA.format(q=quote_plus(q)))
+                hilos = hilos_chollometro(html)
+            except Exception as e:
+                log(f"chollometro búsqueda {q[:40]}: {str(e)[:80]}")
+                hechas.append(f"{q} (fallo)")
+                continue
+            if hilos:
+                guardar_hilos(con, hilos)
+            n, mismos = len(hilos), _hilos_del_mismo(p, hilos)
+            con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                        (f"cm_q:{q.lower()}", f"{datetime.now().isoformat(timespec='minutes')}|{n}|{mismos}"))
+            con.commit()
+            time.sleep(2)
+        alguna = True
+        total += n
+        hechas.append(f"{q} ({n})")
+        if mismos:
+            break  # ya hay hilos de este producto: las consultas más amplias solo traerían ruido
+    p["_busquedas"] = hechas
+    return total if alguna else None
 
 
 def hilos_del_producto(nombre, copia=None):
@@ -3725,6 +3787,10 @@ def lineas_iguales(p):
     con fecha, precio, grados, tienda y enlace. Sin hilos, lo dice."""
     iguales = p.get("_iguales")
     if not iguales:
+        hechas = p.get("_busquedas")
+        if hechas:  # método de búsqueda de Zeta: un negativo no demuestra que no existan
+            return ("Hilos en Chollometro: no he localizado coincidencias en las búsquedas realizadas "
+                    f"({'; '.join(hechas)}); esto no demuestra que no existan")
         return "Hilos en Chollometro: ninguno de este producto en la copia"
     def linea(h):
         precio = f" · {h['precio']:g} €" if h.get("precio") else ""
@@ -5835,21 +5901,24 @@ def enviar_pendientes(con, entrega):
     hoy = datetime.now().strftime("%Y-%m-%d")
     pendientes = con.execute("SELECT id, datos FROM lista WHERE enviado=0 AND fecha>=? ORDER BY id", (hoy,)).fetchall()
     cupo = freno_telegram(con, token, chat, len(pendientes))
-    copia = None
+    copia, consultas = None, {}
     if pendientes[:cupo]:
         # Zeta (19/11/2026): la #267 ya estaba en Chollometro, expirada, y no salió porque solo se miraba la copia.
         # Antes de enviar, también el buscador (caché de 6 h por consulta, 2 s entre búsquedas): trae hilos viejos o
         # poco calientes que la copia no tiene. Como mucho 15 por tanda.
-        buscadas = 0
+        buscadas, consultas = 0, {}
         for n, datos in pendientes[:cupo]:
             p = json.loads(datos).get("_p")
             if p and buscadas < 15 and buscar_en_chollometro(con, p) is not None:
                 buscadas += 1
+                consultas[n] = p.get("_busquedas")
         actualizar_chollometro(con)
         copia = cargar_chollometro(con)
     for n, datos in pendientes[:cupo]:
         d = json.loads(datos)
         p = d.pop("_p", None) or {}
+        if p and copia is not None and consultas.get(n):
+            p["_busquedas"] = consultas[n]  # para decir en el aviso qué se buscó si no aparece nada
         if p:
             ch = estado_chollometro(p, copia)
             if fuera_por_chollometro(p, ch, p.get("precio") or 0):
