@@ -2416,15 +2416,25 @@ def _pagina(base, n):
     return base if n == 1 else f"{base.rstrip('/')}{'/' if base.endswith('.com/') else ''}?page={n}"
 
 
-def actualizar_chollometro(con, forzar=False, max_paginas=8):
-    """Lee lo nuevo de /nuevos (hasta enlazar con lo ya guardado) y la primera página de la portada
-    (temperaturas de lo destacado). Como mucho cada CM_REFRESCO_MIN minutos. -> True si está al día."""
+CM_NUEVOS_MAX_PAGINAS = 60  # /nuevos: tope de páginas para rellenar un hueco (unas 30 publicaciones por página)
+
+
+def actualizar_chollometro(con, forzar=False, max_paginas=CM_NUEVOS_MAX_PAGINAS):
+    """Lee lo nuevo de /nuevos hasta llegar a lo que ya se leyó de /nuevos la vez anterior (`cm_nuevos_hasta`), y la
+    primera página de la portada (temperaturas de lo destacado). Como mucho cada CM_REFRESCO_MIN minutos.
+    20/11/2026 (Zeta: "no se han actualizado los hilos de hoy"): antes paraba en cuanto una página traía UN hilo ya
+    guardado; uno que había entrado por el buscador o la portada cortaba la lectura y dejaba sin leer la mañana entera
+    (6 hilos de 00:00 a 12:00). Ahora para por fecha. -> True si está al día."""
     ahora = datetime.now()
     fila = con.execute("SELECT v FROM meta WHERE k='cm_intento'").fetchone()
     if not forzar and fila and datetime.fromisoformat(fila[0]) > ahora - timedelta(minutes=CM_REFRESCO_MIN):
         return chollometro_fresca(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_intento', ?)", (ahora.isoformat(timespec="minutes"),))
     con.commit()
+    fila = con.execute("SELECT v FROM meta WHERE k='cm_nuevos_hasta'").fetchone()
+    # Sin marca (primera vez), hasta el principio del día: no se recorre /nuevos hacia atrás sin límite.
+    hasta = int(fila[0]) if fila else int(ahora.replace(hour=0, minute=0, second=0).timestamp())
+    mas_nuevo = None
     try:
         for n in range(1, max_paginas + 1):
             html, _ = descargar(_pagina(CM_NUEVOS, n))
@@ -2433,12 +2443,17 @@ def actualizar_chollometro(con, forzar=False, max_paginas=8):
                 if n == 1:  # la primera página siempre tiene posts: si no, ha cambiado el formato
                     raise ValueError("/nuevos sin posts")
                 break
-            ids = [h["id"] for h in hilos]
-            conocidos = con.execute(f"SELECT COUNT(*) FROM cm WHERE id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
             guardar_hilos(con, hilos)
-            if conocidos:
-                break  # ya enlaza con lo guardado
+            fechas = [h["publicado"] for h in hilos if h.get("publicado")]
+            if fechas:
+                mas_nuevo = max(mas_nuevo or 0, max(fechas))
+                if sorted(fechas)[len(fechas) // 5] <= hasta:  # sin contar un par de fijados antiguos
+                    break  # ya enlaza con lo leído de /nuevos la vez anterior
             time.sleep(1)
+        else:
+            log(f"chollometro: /nuevos sin llegar a lo ya leído tras {max_paginas} páginas; queda un hueco")
+        if mas_nuevo:
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('cm_nuevos_hasta', ?)", (str(max(mas_nuevo, hasta)),))
         html, _ = descargar(CM_PORTADA)
         guardar_hilos(con, hilos_chollometro(html))
         # Una página más de la portada, rotando de la 2 a la CM_PORTADA_PAGINAS: cada una se refresca cada
