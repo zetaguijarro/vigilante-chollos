@@ -197,3 +197,32 @@ class SembrarSinRetiradas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RutasExcluidasYPaginas(unittest.TestCase):
+    def test_excluidas_solo_moda_infantil_mascotas_motor_y_jardin(self):
+        fuera = [("elcorteingles.es", "https://www.elcorteingles.es/black-friday/moda-infantil/"),
+                 ("zalando.es", "https://www.zalando.es/nino-home/"),
+                 ("footlocker.es", "https://www.footlocker.es/es/category/ninos/zapatillas.html"),
+                 ("tiendasmgi.es", "https://www.tiendasmgi.es/mascotas/"),
+                 ("pccomponentes.com", "https://pccomtracker.com/categoria/hogar/accesorios-de-jardineria")]
+        dentro = [("toysrus.es", "https://www.toysrus.es/Juguetes-de-Verano/c/MenuAireLibre-JUEGOSDEJARDIN-JuguetesdeVerano"),
+                  ("lidl.es", "https://www.lidl.es/c/black-week-bricolaje-y-jardin/s10080763"),
+                  ("lidl.es", "https://www.lidl.es/c/black-week-bebe-nino-y-juguetes/s10080765"),
+                  ("pccomponentes.com", "https://pccomtracker.com/categoria/relojes-inteligentes/smartwatches-infantiles"),
+                  ("coolmod.com", "https://www.coolmod.com/black-friday/monitores/")]
+        for t, u in fuera:
+            self.assertTrue(r.ruta_excluida(t, u), u)
+        for t, u in dentro:
+            self.assertFalse(r.ruta_excluida(t, u), u)
+
+    def test_seguir_por_la_pagina_donde_se_quedo(self):
+        con = con_memoria()
+        u = "https://www.coolmod.com/black-friday/monitores/"
+        self.assertEqual(v.pagina_de_inicio(con, "coolmod.com", u), 1)
+        v.apuntar_pagina(con, "coolmod.com", u, 1, 5, 120)
+        self.assertEqual(v.pagina_de_inicio(con, "coolmod.com", u), 6)
+        self.assertEqual(v.url_pagina(u, 6), "https://www.coolmod.com/black-friday/monitores/?pagina=6")
+        v.apuntar_pagina(con, "coolmod.com", u, 6, 5, 0)
+        self.assertEqual(v.pagina_de_inicio(con, "coolmod.com", u), 1, "listado acabado: vuelve a la página 1")
+        self.assertEqual(v.url_pagina("https://x.es/ofertas", 3), "https://x.es/ofertas?page=3")

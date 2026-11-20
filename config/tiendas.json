@@ -301,39 +301,55 @@
   "espera_ms": 2500,
   "scroll_max": 8,
   "pestanas": 4,
-  "paginas": 3,
+  "paginas": 5,
   "bloquear_recursos": true,
   "espera_red_ms": 8000
  },
  "paginas": {
-  "defecto": 3,
+  "defecto": 5,
   "mi.com/es": 1
  },
  "catalogo_cada_min": 60,
  "paginas_catalogo": {
   "descarga": 5,
-  "navegador": 3,
+  "navegador": 5,
   "por_tienda": {
    "mediamarkt.es": 10
   }
  },
  "pagos": {
   "aliexpress.com": {
-   "paypal": [[99, 9], [199, 20], [299, 40]],
+   "paypal": [
+    [
+     99,
+     9
+    ],
+    [
+     199,
+     20
+    ],
+    [
+     299,
+     40
+    ]
+   ],
    "hasta": "2026-12-03",
    "_nota": "Black Friday y Cyber Monday de AliExpress (19/11 a 3/12/2026): descuento al pagar con PayPal, se suma a los cupones. Hilo de Chollometro 2075847 (Zeta, 19/11/2026)."
   }
  },
- "vigilancia_amazon": {"por_ronda": 0, "_nota": "18/11/2026: apagada por Zeta (rondas normales). Para encenderla, por_ronda 20 (o con Keepa)."},
+ "vigilancia_amazon": {
+  "por_ronda": 0,
+  "_nota": "18/11/2026: apagada por Zeta (rondas normales). Para encenderla, por_ronda 20 (o con Keepa)."
+ },
  "catalogo_por_tienda": {
   "privalia.com": {
    "cada_min": 30,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: la portada solo trae campañas; la ronda las guarda como catálogo (guardar_campanas) y lee 3 por turno. El tachado es el precio recomendado del fabricante: no cuenta como precio anterior."
   },
   "mediamarkt.es": {
    "cada_min": 10,
-   "por_ronda": 4,
+   "por_ronda": 5,
    "profundas": {
     "cada": 4,
     "desde": 11,
@@ -411,27 +427,27 @@
   },
   "elcorteingles.es": {
    "cada_min": 15,
-   "por_ronda": 4,
+   "por_ronda": 5,
    "_nota": "17/11/2026: 243 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
   },
   "carrefour.es": {
    "cada_min": 15,
-   "por_ronda": 2,
+   "por_ronda": 5,
    "_nota": "17/11/2026: 322 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
   },
   "lidl.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "outlet-pc.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "coolmod.com": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "asos.com/es": {
@@ -446,7 +462,7 @@
   },
   "tiendasmgi.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "xtralife.com": {
@@ -476,7 +492,7 @@
   },
   "hipercor.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "womensecret.com/es": {
@@ -486,13 +502,37 @@
   },
   "footlocker.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "alcampo.es": {
    "cada_min": 20,
    "por_ronda": 3,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
+  },
+  "privatesportshop.es": {
+   "por_ronda": 5,
+   "cada_min": 20
+  },
+  "zalando.es": {
+   "por_ronda": 5,
+   "cada_min": 20
+  },
+  "miravia.es": {
+   "por_ronda": 5,
+   "cada_min": 20
+  },
+  "toysrus.es": {
+   "por_ronda": 5,
+   "cada_min": 20
+  },
+  "runningemotion.com": {
+   "por_ronda": 5,
+   "cada_min": 20
+  },
+  "deporte-outlet.es": {
+   "por_ronda": 5,
+   "cada_min": 20
   }
  },
  "entrega": {
@@ -787,7 +827,6 @@
    ],
    "navegador": [
     "zalando.es",
-    "lefties.com/es",
     "outlet-pc.es",
     "esdemarca.com",
     "asos.com/es",
@@ -817,7 +856,8 @@
     "bershka.com/es": "Sin demanda: 5 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "stradivarius.com/es": "Sin demanda: 2 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "massimodutti.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
-    "oysho.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
+    "oysho.com/es": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "lefties.com/es": "20/11/2026: 0 productos en todas sus lecturas (carga con JavaScript); apartada."
    },
    "exigir_marca": false,
    "exigir_precio_mercado": false,
@@ -1017,5 +1057,6 @@
    "pccomtracker": "https://pccomtracker.com/buscar?q={q}"
   },
   "_nota": "Las direcciones de búsqueda están sin probar: si un comparador falla, el 'verifica' lo busca a mano como antes. Keepa no se lee por código (bloquea)."
- }
+ },
+ "_nota_paginas_20nov": "Zeta 20/11/2026: las tiendas que leían pocas páginas leen 5 (navegador y catálogo); las de campañas leen 5 rutas por vuelta; cada ruta sigue por la página donde se quedó la vez anterior (meta pag_sig)."
 }

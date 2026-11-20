@@ -1932,7 +1932,7 @@ class Rondas(Base):
             self.assertIn(t, siempre)
         # Repaso del 18/11/2026 con Zeta: de 183 tiendas a 63 (62 desde que PrecioReal dejó de leerse como tienda, 18/11). Se apartan las que no se pueden leer (antibot, Worten
         # sin venta online) y las que no tienen demanda; quedan en "apartadas" con su motivo.
-        self.assertEqual(len(leidas), 62)
+        self.assertEqual(len(leidas), 61)  # 20/11/2026: Lefties apartada (0 productos siempre)
         for t in ("fnac.es", "adidas.es", "worten.es", "www.aeg.com.es"):
             self.assertIn(t, apartadas)
             self.assertNotIn(t, siempre)
@@ -1943,7 +1943,7 @@ class Rondas(Base):
         self.assertIn("nbastore.eu", cats["deporte"]["apartadas"])
         self.assertNotIn("precioreal.com", siempre, "PrecioReal es solo el buscador comparador (Zeta, 18/11/2026)")
         # Portátil de Zeta (17/11/2026): 16 GB de RAM, i5-8265U de 4 núcleos, dedicado solo al vigilante.
-        self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 3))
+        self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 5))  # 20/11/2026 (Zeta): 5 páginas por tienda en navegador
         # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 4)
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)
@@ -3785,6 +3785,7 @@ class Catalogo(Base):
         con = sqlite3.connect(v.DB)
         con.execute("UPDATE meta SET v='2000-01-01T00:00' WHERE k='cat_ultimo:mediamarkt.es'")
         con.execute("UPDATE meta SET v='0' WHERE k='cat_turno:mediamarkt.es'")
+        con.execute("DELETE FROM meta WHERE k LIKE 'pag_sig:%'")  # vuelve a la página 1 de la ruta
         con.commit()
         con.close()
         catalogo.append({"n": "JBL Live 770NC", "m": "JBL", "p": 50.0, "a": 150.0})

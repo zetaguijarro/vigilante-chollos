@@ -5451,7 +5451,8 @@ def sembrar_rutas_campana(archivo=None, con=None):
     for tienda, rutas in datos.get("rutas", {}).items():
         actuales = cat.setdefault(tienda, [])
         # Una ruta que se retiró hace menos de 14 días (vacía, redirigida...) no se vuelve a sembrar.
-        añadir = [r for r in rutas if r not in actuales and not _rutas.retirada_reciente(con, tienda, r)]
+        añadir = [r for r in rutas if r not in actuales and not _rutas.retirada_reciente(con, tienda, r)
+                  and not _rutas.ruta_excluida(tienda, r)]
         if añadir:
             actuales.extend(añadir)
             nuevas[tienda] = len(añadir)
@@ -5517,6 +5518,42 @@ def orden_catalogo(lista, pesos, max_turnos=4, factor=None):
     return salida
 
 
+_RUTA_BASE = {}  # url leída (con su página) -> (ruta del catálogo, página de inicio, páginas pedidas)
+
+
+def url_pagina(url, pagina):
+    """La página `pagina` (1 = la misma) de un listado: con la paginación de la tienda si se conoce
+    (`pagina_siguiente_por_tienda`), si no con ?page=N (el lector para solo si no trae nada nuevo)."""
+    if pagina <= 1:
+        return url
+    actual = url
+    for _ in range(pagina - 1):
+        siguiente = pagina_siguiente_por_tienda(actual)
+        if not siguiente:
+            m = RE_PARAM_PAGINA.search(actual)
+            if m:
+                return actual[:m.start(2)] + str(int(m.group(2)) + pagina - 1) + actual[m.end(2):]
+            return url + ("&" if "?" in url else "?") + f"page={pagina}"
+        actual = siguiente
+    return actual
+
+
+def pagina_de_inicio(con, tienda, url):
+    fila = con.execute("SELECT v FROM meta WHERE k=?", (f"pag_sig:{tienda}|{url}",)).fetchone()
+    try:
+        return max(1, int(fila[0])) if fila else 1
+    except ValueError:
+        return 1
+
+
+def apuntar_pagina(con, tienda, url, inicio, paginas, productos, tope=20):
+    """Por dónde seguir la próxima vez (Zeta, 20/11/2026: "guardar por dónde te has quedado"): si la lectura trajo
+    productos, la siguiente empieza tras las páginas leídas; si no trajo nada (fin del listado) o pasa de `tope`
+    páginas, vuelve a la 1."""
+    sig = inicio + paginas if productos and inicio + paginas <= tope else 1
+    con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pag_sig:{tienda}|{url}", str(sig)))
+
+
 def catalogo_turno(con, cfg, tiendas):
     """[(tienda, url)] de las categorías que tocan en esta ronda: una por tienda, por turnos, y solo si
     hace más de 'catalogo_cada_min' (60 por defecto) que se leyó la anterior de esa tienda.
@@ -5527,7 +5564,9 @@ def catalogo_turno(con, cfg, tiendas):
     ahora = datetime.now()
     salida = []
     for t in tiendas:
-        lista = cat.get(t) or []
+        principal = url_de(t, urls_ofertas())
+        # Sin rutas excluidas (moda infantil, mascotas, jardín salvo Lidl...) ni la página principal (ya se lee aparte).
+        lista = [u for u in dict.fromkeys(cat.get(t) or []) if not _rutas.ruta_excluida(t, u) and u != principal]
         if not lista:
             continue
         # 18/11: por volumen de calientes en esa tienda; 20/11: y por lo que da cada ruta (rutas.factor_rutas)
@@ -5549,7 +5588,12 @@ def catalogo_turno(con, cfg, tiendas):
                 elegidas.append(u)
             if len(elegidas) == cuantas:
                 break
-        salida += [(t, u) for u in elegidas]
+        pags = int(((cfg or {}).get("paginas_catalogo", {}).get("por_tienda") or {}).get(t, 0)) or None
+        for u in elegidas:
+            inicio = pagina_de_inicio(con, t, u)
+            leida = url_pagina(u, inicio)
+            _RUTA_BASE[(t, leida)] = (u, inicio, pags)
+            salida.append((t, leida))
         # Listados enormes (MediaMarkt: 1.203 televisores, 1.361 juegos PS5): cada `cada` lecturas de la tienda se
         # leen también sus páginas desde `desde` (Zeta, 19/11/2026). El resto de tandas empieza en la página 1.
         prof = por_tienda.get(t, {}).get("profundas")
@@ -8546,10 +8590,19 @@ def ronda(categoria, solo=None):
             n_vig_leidos, n_vig_baratos = n_vig_leidos + bool(productos), n_vig_baratos + n_cambios
             continue  # una línea para todos los vigilados, no una por ficha
         try:  # lo que da cada ruta; si lleva tres lecturas vacías seguidas sale del catálogo
-            motivo = _rutas.registrar_lectura(con, tienda, url_leida, len(productos), None, n_cambios, len(previos) - n_previos,
-                                              origen="catalogo" if (tienda, url_leida) in de_catalogo else "principal")
-            if motivo and url_leida in (urls_catalogo().get(tienda) or []):
-                quitar_de_catalogo(tienda, url_leida, motivo)
+            base, inicio, pags = _RUTA_BASE.get((tienda, url_leida), (url_leida, 1, None))
+            if (tienda, url_leida) in _RUTA_BASE:
+                paginas_leidas = pags or int(f.get("paginas_catalogo_por_lectura", 0) or 0) or int(
+                    cfg.get("paginas_catalogo", {}).get("navegador" if tienda in navegador else "descarga", 5))
+                apuntar_pagina(con, tienda, base, inicio, paginas_leidas, len(productos))
+            # Una página de continuación vacía es el final del listado, no una ruta muerta: solo cuenta la página 1.
+            if inicio == 1 or productos:
+                motivo = _rutas.registrar_lectura(con, tienda, base, len(productos), None, n_cambios, len(previos) - n_previos,
+                                                  origen="catalogo" if (tienda, url_leida) in de_catalogo else "principal")
+            else:
+                motivo = None
+            if motivo and base in (urls_catalogo().get(tienda) or []):
+                quitar_de_catalogo(tienda, base, motivo)
         except Exception as e:
             log(f"rutas: {str(e)[:100]}")
         if rec:

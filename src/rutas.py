@@ -26,6 +26,24 @@ HUB_CADA_HORAS = 24
 RE_CAMPANA = re.compile(r"black-?friday|black-?days|blackweek|cyber|promoc|oferta|outlet|rebajas|campaign|/cp/|/event/|"
                         r"/list/|/promotion|/sale|/deals|descuento|semanas-black", re.I)
 RE_PRODUCTO = re.compile(r"/(?:product|producto|productos|p|dp|item|articulo|art)/", re.I)
+# Rutas de lo que el proyecto excluye: moda y calzado infantil (los juguetes y el resto de cosas de niños sí), mascotas,
+# motor y neumáticos, y jardín salvo Lidl (y salvo juguetes de jardín). No se leen ni se siembran.
+RE_INFANTIL_RUTA = re.compile(r"infantil|nin[oa]s?(?:/|-|$)|-home/?$|junior|bebe", re.I)
+RE_MODA_RUTA = re.compile(r"moda|ropa|calzado|zapat|bota|sudadera|camiset|textil|nino-home|nina-home", re.I)
+RE_SIEMPRE_FUERA = re.compile(r"mascota|/pets?(?:/|$)|neumatic|/motor(?:/|$|-)", re.I)
+
+
+def ruta_excluida(tienda, url):
+    u = (url or "").lower()
+    if RE_SIEMPRE_FUERA.search(u):
+        return True
+    if RE_INFANTIL_RUTA.search(u) and RE_MODA_RUTA.search(u):
+        return True
+    if "jardin" in u and "lidl." not in (tienda or "") + u and "juguet" not in u:
+        return True
+    return False
+
+
 RE_IDIOMA = re.compile(r"^(?:es|es-es|es_es|en-es|ca|eu|gl)$", re.I)
 
 CREAR = ("CREATE TABLE IF NOT EXISTS rutas (tienda TEXT, url TEXT, origen TEXT, desde TEXT, ultima TEXT, "
@@ -165,7 +183,7 @@ def descubrir_hub(con, v, tienda, hub, nav, ahora=None):
     cat = v.urls_catalogo()
     conocidas = set(cat.get(tienda, []))
     candidatas = [u for u in enlaces_candidatos(v, html, final, tienda)
-                  if u not in conocidas and not retirada_reciente(con, tienda, u)]
+                  if u not in conocidas and not retirada_reciente(con, tienda, u) and not ruta_excluida(tienda, u)]
     anadidas = []
     for u in candidatas[:MAX_CANDIDATAS_POR_HUB]:
         time.sleep(3)  # ritmo de lectura humana: nunca ráfagas

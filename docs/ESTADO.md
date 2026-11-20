@@ -522,3 +522,10 @@ Sin hacer (trabajo grande): extracción declarativa por tienda en la configuraci
 
 ## Copia de Chollometro con huecos (Zeta, 20/11/2026: "no se han actualizado los hilos de hoy")
 `actualizar_chollometro` paraba /nuevos en cuanto una página traía UN hilo ya guardado (uno que entró por el buscador o por la portada cortaba la lectura): hoy tenía 6 hilos de 00:00 a 12:00. Ahora para por fecha (`cm_nuevos_hasta`, lo más nuevo leído de /nuevos la vez anterior; sin marca, desde las 00:00 del día; un par de fijados antiguos no cortan) con tope de 60 páginas, y si llega al tope sin enlazar lo dice en el log. Rellenado a mano: 18/11 875 -> 1.229 hilos, 19/11 818 -> 2.352, 20/11 325 -> 985.
+
+## Más páginas, 5 campañas por vuelta y seguir por donde se quedó (Zeta, 20/11/2026)
+- 5 páginas por tienda en navegador (antes 3) y 5 por ruta del catálogo en navegador (antes 3); `paginas.defecto` 5.
+- Tiendas de campañas (PSS, Privalia, Coolmod, ECI, Carrefour, Foot Locker, Lidl, Hipercor, Outlet-PC, MGI, Zalando, Miravia, Toys R Us, Running Emotion, Deporte-Outlet, MediaMarkt): 5 rutas por vuelta.
+- Cada ruta guarda por qué página va (`meta pag_sig:<tienda>|<url>`): la vuelta siguiente sigue tras las páginas leídas; si no trae nada (fin del listado) o pasa de 20 páginas, vuelve a la 1. Una página de continuación vacía no cuenta como "ruta vacía" para retirarla.
+- Rutas excluidas fuera del catálogo y nunca sembradas ni descubiertas (`rutas.ruta_excluida`): moda y calzado infantil, mascotas, motor y neumáticos, jardín salvo Lidl y salvo juguetes. Quitadas 11 (ECI moda infantil, Zalando niño, Foot Locker niños, Futbol Emotion botas niño, mascotas de Action, Dyson, IKEA y MGI, jardinería de PcComponentes...). Lefties apartada (0 productos siempre).
+- Sin repetir ruta en la misma vuelta ni leer en el catálogo la página principal que ya se lee aparte (Samsung leía /es/offer/ dos veces).
