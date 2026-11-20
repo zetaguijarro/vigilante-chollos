@@ -303,9 +303,11 @@ class Cupones(unittest.TestCase):
         v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 23, "tipo": "€", "minimo": 135, "codigo": "ESD1123"}])
         self.assertNotEqual(antes, v.firma_cupones(self.con, "aliexpress.com"))
 
+    # Fecha de fin en el futuro (si no, la prueba caduca con los días): los cupones vencidos no cuentan.
     def test_actualizar_cupones_sustituye_los_de_la_pagina(self):
-        paginas = {"miravia": self.voucher("04D1102", "4€", "Compras de al menos 35€ en artículos del «Festival».")}
-        paginas["aliexpress"] = self.voucher("AEES12", "12€", "Gasto mínimo de 69€.")
+        FUTURO = "2035-01-01T08:59:00.000Z"
+        paginas = {"miravia": self.voucher("04D1102", "4€", "Compras de al menos 35€ en artículos del «Festival».", fin=FUTURO)}
+        paginas["aliexpress"] = self.voucher("AEES12", "12€", "Gasto mínimo de 69€.", fin=FUTURO)
         orig_d, orig_s = v.descargar, v.time.sleep
         v.descargar = lambda url, **k: (paginas["miravia" if "miravia" in url else "aliexpress"], url)
         v.time.sleep = lambda s: None
@@ -313,7 +315,7 @@ class Cupones(unittest.TestCase):
             v.guardar_cupones(self.con, "aliexpress.com", [{"descuento": 5, "tipo": "€", "minimo": 40, "codigo": "AMANO5"}])
             self.assertEqual(v.actualizar_cupones(self.con), {"miravia.es": 1, "aliexpress.com": 1})
             self.assertEqual(v.actualizar_cupones(self.con), {}, "como mucho cada 6 h")
-            paginas["aliexpress"] = self.voucher("ESD1123", "23€", "Gasto mínimo de 135€.")
+            paginas["aliexpress"] = self.voucher("ESD1123", "23€", "Gasto mínimo de 135€.", fin=FUTURO)
             v.actualizar_cupones(self.con, forzar=True)
             codigos = sorted(c["codigo"] for c in v.cupones_activos(self.con, "aliexpress.com"))
             self.assertEqual(codigos, ["AMANO5", "ESD1123"], "el retirado sale; el puesto a mano se queda")

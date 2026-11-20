@@ -2229,7 +2229,12 @@ def lista_codigos(nombre):
             and not RE_PROCESADOR.fullmatch(c)
             and not re.fullmatch(r"\d+(?:GB|TB|MB|W|MAH|HZ|MM|CM|L|KG|RPM|H|K|G|P|ATM|BAR)?", c)
             and not re.fullmatch(r"(?:IP|IPX|USB|HDMI|DDR|PCIE|WIFI|BT|LTE|HDR|DVB-?[TSC]|H)\d*\w?", c)
-            and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)]  # medidas: 135X190, 75X45CM
+            and not re.fullmatch(r"\d+X\d+(?:X\d+)?(?:CM|MM|M)?", c)  # medidas: 135X190, 75X45CM
+            # Especificaciones, no modelos (20/11/2026: SPF50, 8000DPI, ECE22 y 18V-40 hacían "mismo producto" a un
+            # protector solar con otro, a un ratón con un teclado y a una motosierra con un taladro).
+            and not re.fullmatch(r"(?:SPF|UPF|ECE|ARGB|RGB|FHD|UHD|QHD|WQHD)[\d.]*", c)
+            and not re.fullmatch(r"\d+(?:DPI|PPI|FPS|WH|AH|MP|LM|DB|DBA|CV|KW|VA|MHZ|GHZ|MBPS|GBPS)", c)
+            and not re.fullmatch(r"\d+V(?:-\d+)?(?:AH)?", c)]
 
 
 def codigos_modelo(nombre):
