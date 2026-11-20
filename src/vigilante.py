@@ -2764,7 +2764,11 @@ def hilos_candidatos(nombre, copia, ids_extra=()):
 # (17/11/2026: un Garmin Instinct 3 casaba con un Garmin Fenix 8 por "garmin mm pulgadas amoled").
 GENERICAS_POST = {"mm", "cm", "pulgadas", "pulgada", "gb", "tb", "hz", "amoled", "oled", "led", "gps", "nfc", "wifi",
                   "bluetooth", "smart", "tv", "4k", "uhd", "hd", "usb", "edition", "edicion", "smartwatch", "reloj",
-                  "anos", "ninos", "nino", "nina", "adultos", "unisex", "hombre", "mujer", "talla", "tallas"}
+                  "anos", "ninos", "nino", "nina", "adultos", "unisex", "hombre", "mujer", "talla", "tallas",
+                  # Descripción, no modelo (20/11/2026: unos Galaxy Buds3 FE no casaban con 6 hilos suyos por "True
+                  # Wireless", "Audio 360", "Ergonómicos", "Cancelación activa de ruido"):
+                  "true", "wireless", "audio", "ergonomico", "ergonomicos", "inalambrico", "inalambricos", "cancelacion",
+                  "ruido", "activa", "activo"}
 
 
 # Tipo de producto (ropa, calzado, complementos...): dos títulos con tipos distintos no son el mismo producto
@@ -3068,8 +3072,10 @@ def marca_y_modelo(texto, marca=None):
     for t in tokens(limpio) & set(MARCA_DE_GAMA):  # "POCO M7" es Xiaomi aunque el título no lo diga
         marcas.add(MARCA_DE_GAMA[t])
     de_marca = set().union(*(tokens(m) for m in marcas)) if marcas else set()
-    modelo = {_singular(t) for t in tokens(limpio) if t not in de_marca and t not in COLORES and t not in GENERICAS_POST
-              and t not in GENERICAS and t not in PALABRAS_ANUNCIO and not tipos_producto(t)}
+    fuera = lambda t: (t in de_marca or t in COLORES or t in GENERICAS_POST or t in GENERICAS or t in PALABRAS_ANUNCIO
+                       or bool(tipos_producto(t)))
+    # Se filtra antes y después de pasar a singular: "negros" -> "negro" (color), "wireless" -> "wireles".
+    modelo = {_singular(t) for t in tokens(limpio) if not fuera(t) and not fuera(_singular(t))}
     return de_marca, modelo, codigos_modelo(texto or ""), tipos_producto(texto or "")
 
 
