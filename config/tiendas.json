@@ -40,6 +40,11 @@
    ]
   ]
  },
+ "historico": {
+  "guardar_lecturas": true,
+  "enlazar_cada_horas": 24,
+  "_nota": "Zeta 20/11/2026: cada cambio de precio que lee el vigilante va a data/historico.db (tabla lecturas_vigilante, precio de listado sin validar) y se enlaza con los hilos de Chollometro (enlace_cm). enlazar_cada_horas: cada cuánto se rehacen los enlaces (47 s). Un fallo del histórico nunca para una ronda."
+ },
  "filtros_codigo": {
   "antiguedad_max_anios": 2,
   "min_bajo_mercado": 0.05,

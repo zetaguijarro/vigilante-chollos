@@ -1807,6 +1807,38 @@ def _distinto(a, b):
     return abs(a - b) >= 0.005
 
 
+_PARA_HISTORICO = []  # lecturas con cambio de precio de esta ronda; `volcar_a_historico` las guarda al terminar
+
+
+def _anotar_lectura(tienda, p, clave):
+    """Cada precio nuevo o cambiado que lee el vigilante va también al histórico comercial (data/historico.db,
+    tabla lecturas_vigilante; Zeta, 20/11/2026). Solo se apunta aquí; el volcado se hace de golpe al final de la ronda."""
+    _PARA_HISTORICO.append({"tienda": tienda, "nombre": p["nombre"][:200], "url": p.get("url") or None, "precio": p["precio"],
+                            "precio_antes": p.get("precio_antes"), "cupon": p.get("cupon"), "socio": bool(p.get("socio")) or None,
+                            "clave": clave, "ahora": datetime.now().astimezone().isoformat(timespec="seconds")})
+
+
+def volcar_a_historico(con=None):
+    """Guarda las lecturas apuntadas en el histórico comercial y las enlaza con los hilos de Chollometro. Un fallo aquí
+    nunca para una ronda. -> filas nuevas (0 si está apagado o no había nada)."""
+    lecturas = list(_PARA_HISTORICO)
+    _PARA_HISTORICO.clear()
+    if not lecturas or not cargar_config().get("historico", {}).get("guardar_lecturas", True):
+        return 0
+    try:
+        import historico
+        propia = con is None
+        c = con or bd()
+        try:
+            return historico.registrar_lecturas(lecturas, db=DATOS / "historico.db", con_vistos=c, vigilante=sys.modules[__name__])
+        finally:
+            if propia:
+                c.close()
+    except Exception as e:
+        log(f"histórico: {str(e)[:120]}")
+        return 0
+
+
 def novedad(con, tienda, p):
     """'nuevo' | 'bajada' (por debajo de su mínimo visto) | None. Guarda el precio."""
     clave = clave_vista(tienda, p)
@@ -1815,6 +1847,7 @@ def novedad(con, tienda, p):
     if con.execute("INSERT OR IGNORE INTO productos (clave, tienda, nombre, ean, url) VALUES (?,?,?,?,?)",
                    (clave, tienda, p["nombre"][:200], p.get("ean") or None, p.get("url") or None)).rowcount == 1:
         con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
+        _anotar_lectura(tienda, p, clave)
     # INSERT OR IGNORE: seguro aunque otra categoría lea la misma tienda a la vez.
     antes, min30 = p.get("precio_antes") or None, p.get("min30") or None
     tipo = p.get("ref_tienda") or None
@@ -1835,6 +1868,7 @@ def novedad(con, tienda, p):
     p["_precio_previo"] = previo
     if previo is None or abs(previo - p["precio"]) >= 0.005:
         con.execute("INSERT OR REPLACE INTO precios VALUES (?,?,?)", (clave, ahora, p["precio"]))
+        _anotar_lectura(tienda, p, clave)
     con.execute("UPDATE vistos SET precio=?, minimo=?, visto=? WHERE clave=?",
                 (p["precio"], min(minimo, p["precio"]), ahora, clave))
     try:
@@ -4393,8 +4427,49 @@ def tiendas_navegador_normal(cfg):
 RE_REL_NEXT = re.compile(r"<(?:link|a)\b[^>]*\brel=[\"']?next[\"']?[^>]*>", re.I)
 RE_HREF = re.compile(r"\bhref=[\"']([^\"']+)[\"']", re.I)
 RE_TEXTO_SIGUIENTE = re.compile(r"^(?:siguiente|página siguiente|next|›|»|>|→)$", re.I)
-RE_PARAM_PAGINA = re.compile(r"([?&](?:page|p|pagina|pag|pg)=)(\d+)", re.I)
+RE_PARAM_PAGINA = re.compile(r"([?&](?:page|p|pagina|pag|pg|dcp)=)(\d+)", re.I)
 RE_RUTA_PAGINA = re.compile(r"(/(?:page|pagina)/)(\d+)", re.I)
+
+
+def pagina_siguiente_por_tienda(url):
+    """Página siguiente de un listado por la forma de paginar de cada tienda (las que Zeta lee, 20/11/2026), incluso desde
+    la primera página, que no lleva número: Carrefour ?offset=24 (de 24 en 24), Decathlon ?from=N&size=40, Coolmod
+    ?pagina=N, Sports Direct ?dcp=N, Private Sport Shop y Deporte-Outlet ?p=N, Toys R Us ?page=N (desde 0) y El Corte
+    Inglés /N/ al final de la ruta. None si la tienda no es una de ellas."""
+    u = urlparse(url or "")
+    host = u.netloc.lower()
+    q = dict(parse_qsl(u.query, keep_blank_values=True))
+
+    def con(**cambios):
+        q.update({k: str(v) for k, v in cambios.items()})
+        return urlunsplit((u.scheme, u.netloc, u.path, urlencode(q, safe=":"), ""))
+
+    def entero(clave, defecto):
+        try:
+            return int(q.get(clave, defecto))
+        except ValueError:
+            return defecto
+    if host.endswith("carrefour.es"):
+        return con(offset=entero("offset", 0) + 24)
+    if host.endswith("decathlon.es"):
+        tam = entero("size", 40)
+        return con(**{"from": entero("from", 0) + tam, "size": tam})
+    if host.endswith("coolmod.com"):
+        return con(pagina=entero("pagina", 1) + 1)
+    if host.endswith("sportsdirect.es"):
+        return con(dcp=entero("dcp", 1) + 1)
+    if host.endswith(("privatesportshop.es", "deporte-outlet.es")):
+        return con(p=entero("p", 1) + 1)
+    if host.endswith("toysrus.es"):
+        return con(page=entero("page", 0) + 1)
+    if host.endswith("elcorteingles.es"):
+        trozos = [t for t in u.path.split("/") if t]
+        if trozos and trozos[-1].isdigit():
+            trozos[-1] = str(int(trozos[-1]) + 1)
+        else:
+            trozos.append("2")
+        return urlunsplit((u.scheme, u.netloc, "/" + "/".join(trozos) + "/", u.query, ""))
+    return None
 
 
 def siguiente_pagina(html, url_actual):
@@ -4413,6 +4488,9 @@ def siguiente_pagina(html, url_actual):
     for href, texto in parser.enlaces:
         if href and not href.startswith(("#", "javascript")) and RE_TEXTO_SIGUIENTE.match(texto.strip()):
             return urljoin(url_actual, href.replace("&amp;", "&"))
+    por_tienda = pagina_siguiente_por_tienda(url_actual)
+    if por_tienda:
+        return por_tienda
     for rx in (RE_PARAM_PAGINA, RE_RUTA_PAGINA):
         m = rx.search(url_actual)
         if m:
@@ -4951,6 +5029,27 @@ def urls_catalogo():
         return json.loads(_archivo_catalogo().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+RUTAS_CAMPANA = BASE / "config" / "rutas_campana.json"
+
+
+def sembrar_rutas_campana(archivo=None):
+    """Añade al catálogo de cada tienda las rutas de campaña y listados que Zeta usa de verdad (config/rutas_campana.json,
+    sacadas de su prompt "Cómo leo cada tienda", 20/11/2026). Sin duplicados: repetirlo no cambia nada. Las tiendas de
+    `pendientes_de_alta` no están en ninguna categoría de tiendas.json y solo se nombran. -> {tienda: rutas nuevas}."""
+    datos = json.loads((archivo or RUTAS_CAMPANA).read_text(encoding="utf-8"))
+    cat = urls_catalogo()
+    nuevas = {}
+    for tienda, rutas in datos.get("rutas", {}).items():
+        actuales = cat.setdefault(tienda, [])
+        añadir = [r for r in rutas if r not in actuales]
+        if añadir:
+            actuales.extend(añadir)
+            nuevas[tienda] = len(añadir)
+    if nuevas:
+        guardar_catalogo(cat)
+    return nuevas
 
 
 def guardar_catalogo(cat):
@@ -7783,6 +7882,17 @@ def ronda_grupo(grupo):
             ronda(categoria, solo=GRUPOS[grupo])
         except Exception as e:  # una categoría rota no para a las demás
             log(f"{grupo} {categoria}: {str(e)[:150]}")
+        volcar_a_historico()
+    if grupo == "rapidas" and cargar_config().get("historico", {}).get("enlazar_cada_horas", 24):
+        try:  # los hilos de Chollometro nuevos se enlazan con el histórico (como mucho una vez al día)
+            import historico
+            hecho = historico.refrescar_enlaces(db=DATOS / "historico.db", vigilante=sys.modules[__name__],
+                                                cada_horas=cargar_config()["historico"]["enlazar_cada_horas"])
+            if hecho:
+                log(f"histórico: enlaces con Chollometro rehechos: {hecho.get('registros_enlazados')} registros, "
+                    f"{hecho.get('hilos_con_historico')} hilos")
+        except Exception as e:
+            log(f"histórico (enlaces): {str(e)[:120]}")
 
 
 def ronda(categoria, solo=None):
@@ -8715,6 +8825,9 @@ if __name__ == "__main__":
         reordenar_mapas()
     elif args[:1] == ["mapa"]:
         mapa(*args[1:])
+    elif args == ["rutas"]:
+        nuevas = sembrar_rutas_campana()
+        print("rutas de campaña añadidas al catálogo:", nuevas or "ninguna (ya estaban)")
     elif args[:1] == ["destinos"]:
         destinos_cm(int(args[1]) if len(args) > 1 else 1000)
     elif args[:1] == ["catalogo"]:

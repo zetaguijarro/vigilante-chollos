@@ -8,7 +8,7 @@ Habla con Zeta en español, directo y con sinceridad. Prioridad: **gastar los m�
 
 - Python de Hermes (sin PyYAML; con Playwright y Chromium). `python` no está en el PATH:
   `C:\Users\Zeus\AppData\Local\hermes\installs\d64b124a26ddeb1a\environments\3bd123044b224acf8036cde493ed887c\venv\Scripts\python.exe`
-- Pruebas: `& $py -m unittest discover -s tests`. Son 277 y deben pasar siempre. Cada cambio lleva su prueba.
+- Pruebas: `& $py -m unittest discover -s tests`. Son 288 y deben pasar siempre. Cada cambio lleva su prueba.
 - En PowerShell 5.1 los `python -c` con comillas fallan: usa scripts en el scratchpad.
 - git: `C:\Program Files\Git\cmd\git.exe` (instalado el 16/11/2026). Remoto privado en GitHub: https://github.com/zetaguijarro/vigilante-chollos (`main` sigue a `origin/main`, push con la credencial guardada de Windows).
 
@@ -102,3 +102,4 @@ Orden del apartado 5 de `docs/SPEC.md`: resultados de lo publicado (`publicadas`
 - **Guía de ofertas 19/11:** aplicada salvo alternativa actual, soporte restante, CP 28041 y rutas por tienda.
 - **Trampa al escribir código:** las barras invertidas se corrompen al pasar por scripts o heredocs: la barra seguida de b pasa a ser el carácter 0x08 y la barra seguida de n, un salto de línea real. Escribe esas secuencias con chr(92) dentro de un script, o usa Edit.
 - **Rondas parciales:** scripts en el scratchpad que filtran `v.tiendas_de` (solo Miravia y AliExpress, solo MediaMarkt) y llaman a `ronda_grupo`.
+- **Histórico de Zeta y rutas (20/11/2026):** `src/historico.py` (importación, `lecturas_vigilante`, `enlace_cm`), `config/rutas_campana.json` + `vigilante.py rutas`, paginación por tienda y `docs/RUTAS_TIENDAS.md` (cómo lee Zeta las tiendas). Pruebas: 288.

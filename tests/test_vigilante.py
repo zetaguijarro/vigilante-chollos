@@ -2628,6 +2628,7 @@ class ModoTelegram(Base):
         super().setUp()
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
         cfg["entrega"] = {"modo": "telegram", "chat_id": "456808276"}
+        cfg["horario"]["silencio_entregas"] = []  # la real (14:00-15:00) hacía fallar estas pruebas a esa hora del día
         v.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
         self.enviados, self.teclados = [], []
         self._orig_tg = (v.enviar_telegram, v.token_telegram)

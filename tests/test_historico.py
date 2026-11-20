@@ -107,5 +107,91 @@ class CodigosSinEspecificaciones(unittest.TestCase):
         self.assertIn("EC685", v.lista_codigos("Cafetera De'Longhi Dedica EC685.M"))  # un modelo de verdad sigue valiendo
 
 
+class LecturasDelVigilante(unittest.TestCase):
+    """Las lecturas del vigilante van a `lecturas_vigilante`, aparte de la edición de Zeta (que `importar` sustituye)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = self.tmp / "h.db"
+        self.ahora = "2026-11-20T14:05:00+01:00"
+        self.lec = [{"tienda": "mediamarkt.es", "nombre": "Samsung TV QN90D 55", "url": "https://www.mediamarkt.es/es/product/x-1.html",
+                     "precio": 799.0, "precio_antes": 999.0, "clave": "mediamarkt.es|x", "ahora": self.ahora}]
+
+    def test_registrar_es_idempotente_y_marca_que_no_esta_validado(self):
+        self.assertEqual(h.registrar_lecturas(self.lec, db=self.db), 1)
+        self.assertEqual(h.registrar_lecturas(self.lec, db=self.db), 0, "el mismo producto, precio y minuto es el mismo evento")
+        con = sqlite3.connect(self.db)
+        fila = con.execute("SELECT price_minor, currency, identity_status, price_scope, admissible, source_id, conditions_json "
+                           "FROM lecturas_vigilante").fetchone()
+        self.assertEqual(fila[:6], (79900, "EUR", "URL_ONLY_UNRESOLVED_VARIANT", "listing_price", "0", "vigilante-rondas"))
+        self.assertEqual(json.loads(fila[6]), {"precio_antes": 999.0})
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM sources WHERE id='vigilante-rondas'").fetchone()[0], 1)
+
+    def test_reimportar_la_edicion_no_borra_las_lecturas_del_vigilante(self):
+        zip_ = Path(tempfile.mkdtemp()) / "p1.zip"
+        base = ImportacionHistorico("test_reimportar_no_aumenta_los_conteos")
+        base.setUp()
+        h.registrar_lecturas(self.lec, db=base.db)
+        h.importar([base.zip], db=base.db)
+        con = sqlite3.connect(base.db)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM lecturas_vigilante").fetchone()[0], 1)
+        self.assertEqual(con.execute("SELECT origen_dato, COUNT(*) FROM observaciones_todas GROUP BY 1 ORDER BY 1").fetchall(),
+                         [("vigilante", 1), ("zeta", 1)], "la vista junta las dos sin mezclarlas")
+
+    def test_sin_precio_no_se_registra(self):
+        self.assertEqual(h.registrar_lecturas([{**self.lec[0], "precio": None}], db=self.db), 0)
+
+
+class RutasYPaginacion(unittest.TestCase):
+    """Cómo pagina cada tienda que Zeta lee (prompt "Cómo leo cada tienda", 20/11/2026)."""
+
+    def test_paginacion_por_tienda_desde_la_primera_pagina(self):
+        import vigilante as v
+        casos = {
+            "https://www.carrefour.es/gaming/black-friday/cat28765042/c": "https://www.carrefour.es/gaming/black-friday/cat28765042/c?offset=24",
+            "https://www.carrefour.es/gaming/black-friday/cat28765042/c?offset=24": "https://www.carrefour.es/gaming/black-friday/cat28765042/c?offset=48",
+            "https://www.decathlon.es/es/deals/descuentos-hombre": "https://www.decathlon.es/es/deals/descuentos-hombre?from=40&size=40",
+            "https://www.decathlon.es/es/deals/descuentos-hombre?from=40&size=40": "https://www.decathlon.es/es/deals/descuentos-hombre?from=80&size=40",
+            "https://www.coolmod.com/black-friday/monitores/": "https://www.coolmod.com/black-friday/monitores/?pagina=2",
+            "https://www.coolmod.com/black-friday/monitores/?pagina=2": "https://www.coolmod.com/black-friday/monitores/?pagina=3",
+            "https://www.sportsdirect.es/black-friday/nike": "https://www.sportsdirect.es/black-friday/nike?dcp=2",
+            "https://www.privatesportshop.es/event/30-seven": "https://www.privatesportshop.es/event/30-seven?p=2",
+            "https://www.deporte-outlet.es/mejores-ofertas?p=3": "https://www.deporte-outlet.es/mejores-ofertas?p=4",
+            "https://www.elcorteingles.es/black-friday/electronica/tv/": "https://www.elcorteingles.es/black-friday/electronica/tv/2/",
+            "https://www.elcorteingles.es/black-friday/electronica/tv/2/": "https://www.elcorteingles.es/black-friday/electronica/tv/3/",
+        }
+        for url, esperada in casos.items():
+            self.assertEqual(v.pagina_siguiente_por_tienda(url), esperada, url)
+        self.assertEqual(v.pagina_siguiente_por_tienda("https://www.toysrus.es/LEGO/c/LEGO?q=%3Arelevance&page=2"),
+                         "https://www.toysrus.es/LEGO/c/LEGO?q=:relevance&page=3")
+        self.assertIsNone(v.pagina_siguiente_por_tienda("https://www.otratienda.es/ofertas"))
+        self.assertEqual(v.siguiente_pagina("<html></html>", "https://www.coolmod.com/black-friday/monitores/"),
+                         "https://www.coolmod.com/black-friday/monitores/?pagina=2")
+
+    def test_sembrar_rutas_de_campana_sin_duplicar(self):
+        import vigilante as v
+        tmp = Path(tempfile.mkdtemp())
+        orig = v.DATOS
+        v.DATOS = tmp
+        try:
+            (tmp / "rutas.json").write_text(json.dumps({"rutas": {"coolmod.com": ["https://www.coolmod.com/black-friday/monitores/"]},
+                                                       "pendientes_de_alta": {"nike.com/es": ["https://www.nike.com/es/w/x"]}}), encoding="utf-8")
+            v.guardar_catalogo({"coolmod.com": ["https://www.coolmod.com/otra/"]})
+            self.assertEqual(v.sembrar_rutas_campana(tmp / "rutas.json"), {"coolmod.com": 1})
+            self.assertEqual(v.sembrar_rutas_campana(tmp / "rutas.json"), {}, "repetirlo no cambia nada")
+            self.assertEqual(len(v.urls_catalogo()["coolmod.com"]), 2)
+            self.assertNotIn("nike.com/es", v.urls_catalogo(), "las pendientes de alta solo se nombran")
+        finally:
+            v.DATOS = orig
+
+    def test_el_archivo_de_rutas_de_zeta_es_valido(self):
+        datos = json.loads((RAIZ / "config" / "rutas_campana.json").read_text(encoding="utf-8"))
+        self.assertGreater(len(datos["rutas"]["coolmod.com"]), 40)
+        self.assertGreater(len(datos["rutas"]["privatesportshop.es"]), 80)
+        for rutas in datos["rutas"].values():
+            for u in rutas:
+                self.assertTrue(u.startswith("https://"), u)
+
+
 if __name__ == "__main__":
     unittest.main()
