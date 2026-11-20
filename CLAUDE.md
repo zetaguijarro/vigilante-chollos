@@ -100,6 +100,5 @@ Orden del apartado 5 de `docs/SPEC.md`: resultados de lo publicado (`publicadas`
 - **Antigüedad del modelo:** móviles, tablets, portátiles y TV con más de `antiguedad_max_anios` (2) años se descartan (`anio_modelo`, dentro de `excluido`). Moda infantil sigue fuera (también "Primaria y colegio", "Boys", "Girls").
 - **Zalando:** el título sale de la tarjeta (`nombres_zalando_tarjetas`). **MediaMarkt:** se descarta lo vendido por marketplace (`vendedor_mediamarkt`).
 - **Guía de ofertas 19/11:** aplicada salvo alternativa actual, soporte restante, CP 28041 y rutas por tienda.
-- **Trampa al escribir código:** las barras invertidas se corrompen al pasar por heredocs y la herramienta Write (`` pasa a 0x08, `
-` a salto real). Usa Edit, o `chr(92)` en un script.
+- **Trampa al escribir código:** las barras invertidas se corrompen al pasar por scripts o heredocs: la barra seguida de b pasa a ser el carácter 0x08 y la barra seguida de n, un salto de línea real. Escribe esas secuencias con chr(92) dentro de un script, o usa Edit.
 - **Rondas parciales:** scripts en el scratchpad que filtran `v.tiendas_de` (solo Miravia y AliExpress, solo MediaMarkt) y llaman a `ronda_grupo`.
