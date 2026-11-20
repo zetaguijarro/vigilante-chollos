@@ -3035,8 +3035,14 @@ def _expandir_tv(texto):
     return f"{texto} {c[2]} {c[1]}\"" if c else texto
 
 
+# Lo que va detrás de ", para ..." o ", compatible con ..." es compatibilidad, no el producto (20/11/2026: unos auriculares
+# Sony PULSE "Para: PS5, ... PlayStation Portal, PC/Mac" casaban con los hilos de la PlayStation Portal).
+RE_COMPATIBLE = re.compile(r"[,;] *(?:para|compatibles? con|for)[ :].*$", re.I | re.S)
+
+
 def _limpiar_titulo(texto):
     """El título sin ruido (precios, tallas, edades, años) y con las medidas pegadas a su número."""
+    texto = RE_COMPATIBLE.sub(" ", texto or "")
     limpio = RE_RUIDO_TITULO.sub(" ", RE_SOFTWARE.sub(" ", _expandir_tv(texto or "")))
     # "256 GB" -> "256gb"; "6+128" y "6/128" (RAM + almacenamiento de un móvil) -> "6gb 128gb"
     limpio = re.sub(r"\b(\d{1,2})\s*(?:gb)?\s*[+/]\s*(\d{2,4})(?:\s*gb)?\b(?!\s*(?:€|%))", r"\1gb \2gb", limpio,

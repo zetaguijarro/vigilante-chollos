@@ -63,6 +63,16 @@ class Busqueda(unittest.TestCase):
                          "los agotados también se guardan: son antecedentes")
 
 
+class Compatibilidad(unittest.TestCase):
+    def test_lo_que_va_tras_para_no_es_el_producto(self):
+        n = ("Auriculares inalámbricos - Sony PlayStation PULSE, 30h Autonomía, Para: PS5, Disp. para uso a distancia "
+             "PlayStation Portal, PC/Mac y móviles, Blanco")
+        self.assertFalse(v.mismo_post(n, "PlayStation Portal Blanco o Negro"))
+        self.assertFalse(v.mismo_post(n, "Sony PlayStation Portal"))
+        self.assertTrue(v.mismo_post("Funda para iPhone 16 Pro transparente", "Funda para iPhone 16 Pro transparente"),
+                        "sin coma delante, 'para' sigue siendo parte del nombre")
+
+
 class HilosDudosos(unittest.TestCase):
     """Zeta, 20/11/2026: "abre 2 o 3 hilos dudosos por candidata"."""
     P = {"nombre": "Samsung Galaxy S25 256GB Azul", "tienda": "mediamarkt.es"}
