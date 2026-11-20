@@ -48,7 +48,7 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
     Los equivalentes se conservan aparte y jamás producen precio de mercado.
     """
     fecha = ahora or datetime.now().isoformat(timespec='seconds')
-    intentos, refs, vistas = [], [], set()
+    intentos, refs, vistas, tiendas = [], [], set(), set()
     consultas_p = p.get('_consultas_contraste') or [p.get('ean') or p['nombre']]
     for fuente in fuentes:
         for consulta in consultas_p:
@@ -63,23 +63,41 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
                 url = pista.get('url')
                 if not url or url in vistas or len(vistas) >= 2:
                     continue
-                if not coincide(p, pista):
+                if not coincide(p, pista) and pista.get('tipo') != 'equivalente':
+                    continue
+                tienda_pista = pista.get('tienda')
+                if tienda_pista and (tienda_pista in tiendas or misma_tienda(p.get('tienda', ''), tienda_pista)):
                     continue
                 vistas.add(url)
+                if tienda_pista:
+                    tiendas.add(tienda_pista)
                 try:
                     r = confirmar(url) or {}
                 except Exception as exc:
-                    intentos.append({'fuente': fuente, 'url': url, 'resultado': 'ficha no verificada',
-                                     'error': type(exc).__name__, 'fecha': fecha})
+                    refs.append({'fuente': fuente, 'url': url, 'tienda': tienda_pista,
+                                 'precio': None, 'variante': None, 'fecha': fecha,
+                                 'resultado': 'ficha no verificada', 'error': type(exc).__name__})
                     continue
                 r = dict(r, fuente=fuente, fecha=fecha, url=r.get('url') or url)
+                for campo in ('tienda', 'precio', 'variante'):
+                    r.setdefault(campo, None)
+                r['precio_sin_cupon'] = r.get('precio')
+                if r.get('cupon'):
+                    # Un código sin importe o elegibilidad no permite afirmar ventaja.
+                    if r.get('cupon_verificado') and isinstance(r.get('precio_con_cupon'), (int, float)):
+                        r['precio'] = r['precio_con_cupon']
+                    else:
+                        r['condiciones_pendientes'] = True
+                envio = r.get('envio_importe')
+                r['total'] = round(r['precio'] + envio, 2) if isinstance(r.get('precio'), (int, float)) and isinstance(envio, (int, float)) else None
                 if r.get('tipo') == 'equivalente':
                     r['resultado'] = valorar_equivalente(p, r)
                 elif not coincide(p, r) or misma_tienda(p.get('tienda', ''), r.get('tienda', '')):
                     r['resultado'] = 'otro producto o propia tienda'
                 elif r.get('estado_producto', 'nuevo') != p.get('estado_producto', 'nuevo'):
                     r['resultado'] = 'estado distinto'
-                elif not r.get('precio') or r.get('stock') != 'si' or not r.get('vendedor'):
+                elif (not isinstance(r.get('precio'), (int, float)) or r['precio'] <= 0
+                      or r.get('stock') != 'si' or not r.get('vendedor') or r.get('condiciones_pendientes')):
                     r['resultado'] = 'condiciones no verificadas'
                 else:
                     r['resultado'] = 'referencia alternativa'
@@ -90,6 +108,7 @@ def resolver(p, fuentes, buscar, confirmar, coincide, misma_tienda, ahora=None):
             break
     validas = [r for r in refs if r['resultado'] == 'referencia alternativa']
     return {'estado': 'referencia alternativa' if validas else 'no medido',
+            'etiqueta': 'referencia alternativa',
             'precio_actual': p.get('precio'), 'habitual': None, 'minimo': None,
             'mercado': min((r['precio'] for r in validas), default=None),
             'referencias': refs, 'intentos': intentos, 'fecha': fecha,
