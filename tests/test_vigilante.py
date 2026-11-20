@@ -1945,7 +1945,7 @@ class Rondas(Base):
         # Portátil de Zeta (17/11/2026): 16 GB de RAM, i5-8265U de 4 núcleos, dedicado solo al vigilante.
         self.assertEqual((cfg["navegador"]["pestanas"], cfg["navegador"]["paginas"]), (4, 5))  # 20/11/2026 (Zeta): 5 páginas por tienda en navegador
         # MediaMarkt: 16 % de lo que triunfa y sus campañas dan 13 productos por descarga: más catálogo.
-        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 4)
+        self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["por_ronda"], 5)  # 20/11/2026: 5 campañas por vuelta
         self.assertEqual(cfg["catalogo_por_tienda"]["mediamarkt.es"]["cada_min"], 10)
         self.assertEqual(leidas & apartadas, set(), "una tienda apartada no puede estar en una lista de lectura")
         # Ventas privadas (16/11/2026, tras el `login` de Zeta): se leen con navegador, con su sesión.
