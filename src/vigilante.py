@@ -4899,7 +4899,9 @@ def titulos_sospechosos(productos):
     for n in nombres:
         if RE_TITULO_CON_PRECIO.search(n):
             salida.append((n, "precio o envío en el nombre"))
-        elif cuenta[n.lower()] >= 3:
+        elif cuenta[n.lower()] >= 3 and len(n.split()) <= 2:
+            # Solo un texto corto repetido ("Supermercado", "Ver más"): un nombre de producto repetido es el mismo modelo
+            # en varios colores (Foot Locker daba 82 de 93 "sospechosos", 20/11/2026).
             salida.append((n, "texto repetido en varias tarjetas"))
         elif len(n) > 120 and len(n) > 2.5 * max(1, mediana):
             salida.append((n, f"mucho más largo que el resto ({len(n)} frente a {mediana} caracteres)"))

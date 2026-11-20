@@ -33,6 +33,8 @@ class TitulosSospechosos(unittest.TestCase):
         self.assertIn("repetido", motivos["Ver más"])
         self.assertIn("mucho más largo", motivos["Nike muy lar"])
         self.assertNotIn("Zapatillas N", motivos)
+        colores = [{"nombre": "Nike V5 Rnr - Mujer Zapatillas"}] * 4 + [{"nombre": "adidas Samba OG - Zapatillas"}] * 3
+        self.assertEqual(v.titulos_sospechosos(colores), [], "el mismo modelo en varios colores no es sospechoso")
 
     def test_un_nombre_largo_legitimo_no_es_sospechoso_si_todos_son_largos(self):
         largo = "Portátil gaming ASUS TUF Gaming A15 FA507NV-LP023 Ryzen 7 7735HS 16GB 512GB SSD RTX 4060 15,6 FHD 144Hz"
