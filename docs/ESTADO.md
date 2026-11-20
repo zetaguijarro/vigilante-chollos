@@ -529,3 +529,6 @@ Sin hacer (trabajo grande): extracción declarativa por tienda en la configuraci
 - Cada ruta guarda por qué página va (`meta pag_sig:<tienda>|<url>`): la vuelta siguiente sigue tras las páginas leídas; si no trae nada (fin del listado) o pasa de 20 páginas, vuelve a la 1. Una página de continuación vacía no cuenta como "ruta vacía" para retirarla.
 - Rutas excluidas fuera del catálogo y nunca sembradas ni descubiertas (`rutas.ruta_excluida`): moda y calzado infantil, mascotas, motor y neumáticos, jardín salvo Lidl y salvo juguetes. Quitadas 11 (ECI moda infantil, Zalando niño, Foot Locker niños, Futbol Emotion botas niño, mascotas de Action, Dyson, IKEA y MGI, jardinería de PcComponentes...). Lefties apartada (0 productos siempre).
 - Sin repetir ruta en la misma vuelta ni leer en el catálogo la página principal que ya se lee aparte (Samsung leía /es/offer/ dos veces).
+
+## Roadmap de lectura (Zeta, 20/11/2026)
+`data/roadmap.jsonl`: una línea JSON por página leída dentro de una ronda (ronda, grupo, categoría, tienda, modo descarga/navegador/perfil, ruta del catálogo, número de página real —con la continuación de `pag_sig`—, url, productos de la página, nuevos, segundos y error). Resumen legible: `vigilante.py roadmap [AAAA-MM-DD]`. Fuera de una ronda (pruebas, comandos) no escribe.

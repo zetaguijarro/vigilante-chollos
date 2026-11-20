@@ -72,3 +72,28 @@ class TituloDeTarjeta(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Roadmap(unittest.TestCase):
+    def test_una_linea_por_pagina_con_tienda_categoria_y_ruta(self):
+        import json, tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp())
+        orig = (v.DATOS, v.descargar, v.time.sleep)
+        v.DATOS = tmp
+        v.time.sleep = lambda s: None
+        paginas = {"https://t.es/ofertas": '<a href="https://t.es/p/1">Producto Uno largo</a> 10,00 € <a rel="next" href="https://t.es/ofertas?page=2">',
+                   "https://t.es/ofertas?page=2": "<html></html>"}
+        v.descargar = lambda url, **k: (paginas.get(url, "<html></html>"), url)
+        v._CTX.update(ronda="prueba 2026-11-20 22:00", grupo="rapidas", categoria="tecnologia")
+        try:
+            v.leer_tienda("t.es", {}, None, None, 3, "https://t.es/ofertas")
+            lineas = [json.loads(l) for l in (tmp / "roadmap.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertGreaterEqual(len(lineas), 1)
+            d = lineas[0]
+            self.assertEqual((d["ronda"], d["categoria"], d["tienda"], d["modo"], d["pagina"]),
+                             ("prueba 2026-11-20 22:00", "tecnologia", "t.es", "descarga", 1))
+            self.assertIn("productos", d)
+        finally:
+            v.DATOS, v.descargar, v.time.sleep = orig
+            v._CTX.update(ronda=None, grupo=None, categoria=None)

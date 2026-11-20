@@ -4996,6 +4996,56 @@ def comprobar_muro(html):
         raise OSError("antibot o captcha: no se lee")
 
 
+# ------------------------------------------------------------------ roadmap (Zeta, 20/11/2026)
+# "Un log de cada tienda, categoría y página que pasa, para estudiarlo después": una línea JSON por página leída en
+# data/roadmap.jsonl (ronda, grupo, categoría, tienda, modo, ruta del catálogo, número de página, url, productos de la
+# página, nuevos en esa lectura, segundos y error). Resumen: `vigilante.py roadmap [AAAA-MM-DD]`.
+_CTX = {"ronda": None, "grupo": None, "categoria": None}
+_ROADMAP_LOCK = threading.Lock()
+
+
+def roadmap(tienda, url, pagina, productos, nuevos, segundos, modo, error=None, final=None):
+    if not _CTX["ronda"]:
+        return  # solo dentro de una ronda (ni pruebas ni comandos sueltos)
+    try:
+        base, inicio, _ = _RUTA_BASE.get((tienda, url), (None, 1, None))
+        linea = {"ts": datetime.now().isoformat(timespec="seconds"), "ronda": _CTX["ronda"], "grupo": _CTX["grupo"],
+                 "categoria": _CTX["categoria"], "tienda": tienda, "modo": modo, "ruta": base or url,
+                 "pagina": inicio + pagina - 1, "url": url if pagina == 1 else None, "leida": final,
+                 "productos": productos, "nuevos": nuevos, "seg": round(segundos, 1), "error": (error or None) and str(error)[:120]}
+        with _ROADMAP_LOCK:
+            with open(DATOS / "roadmap.jsonl", "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(linea, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # el registro nunca para una lectura
+
+
+def informe_roadmap(fecha=None):
+    """Resumen del roadmap: por ronda, categoría y tienda, las rutas y páginas leídas con sus productos."""
+    fecha = fecha or datetime.now().strftime("%Y-%m-%d")
+    filas = []
+    try:
+        with open(DATOS / "roadmap.jsonl", encoding="utf-8") as fh:
+            for l in fh:
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if (d.get("ts") or "").startswith(fecha):
+                    filas.append(d)
+    except OSError:
+        print("sin roadmap todavía")
+        return
+    ronda = None
+    for d in filas:
+        if d["ronda"] != ronda:
+            ronda = d["ronda"]
+            print(f"\n=== {ronda}")
+        err = f"  ERROR {d['error']}" if d.get("error") else ""
+        print(f"  {d['ts'][11:]} {d['categoria'] or '-':13} {d['tienda']:24} {d['modo']:9} p{d['pagina']:<3} "
+              f"{d['productos']:4} productos {d['nuevos']:4} nuevos {d['seg']:5}s  {(d['ruta'] or '')[:70]}{err}")
+
+
 RE_TITULO_CON_PRECIO = re.compile(r"[0-9]+(?:[.,][0-9]{2})? ?(?:€|eur)|env[ií]o gratis|gastos de env[ií]o", re.I)
 
 
@@ -5035,6 +5085,7 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
             if actual in visitadas:
                 break
             visitadas.add(actual)
+            t_pag = time.time()
             try:
                 if nav is not None:
                     html, final, datos = nav.leer(actual)
@@ -5053,7 +5104,8 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                     nuevos = extraer(html, final)
                 if n == 0 and not nuevos:
                     comprobar_muro(html)
-            except Exception:
+            except Exception as e:
+                roadmap(tienda, url, n + 1, 0, 0, time.time() - t_pag, "navegador" if nav is not None else "descarga", e)
                 if n == 0:
                     raise
                 break  # falla una página siguiente: nos quedamos con lo leído
@@ -5075,7 +5127,10 @@ def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None)
                     # Leído en un comparador: su precio solo vale si la propia tienda lo confirma (Zeta, 18/11/2026:
                     # "los precios de las propias tiendas son los que mandan, los comparadores son solo para comparar").
                     p["_precio_comparador"] = True
+            leidos_pag = len(nuevos)
             nuevos = [p for p in nuevos if (p["nombre"].lower(), p["precio"]) not in claves]
+            roadmap(tienda, url, n + 1, leidos_pag, len(nuevos), time.time() - t_pag,
+                    "navegador" if nav is not None else "descarga", final=final)
             if not nuevos:
                 break
             claves.update((p["nombre"].lower(), p["precio"]) for p in nuevos)
@@ -6124,6 +6179,7 @@ async def _pestanas(cfg, trabajos):
                         if not actual or actual in visitadas:
                             break
                         visitadas.add(actual)
+                        t_pag = time.time()
                         try:
                             html, final, datos = await leer(actual)
                             leidos = extraer(html, final, datos)
@@ -6133,11 +6189,13 @@ async def _pestanas(cfg, trabajos):
                                 leidos = extraer(html, final, datos)
                                 if not leidos:
                                     comprobar_muro(html)
-                        except Exception:
+                        except Exception as e:
+                            roadmap(t, url, i + 1, 0, 0, time.time() - t_pag, "perfil", e)
                             if i == 0:
                                 raise
                             break
                         nuevos = [p for p in leidos if (p["nombre"].lower(), p["precio"]) not in claves]
+                        roadmap(t, url, i + 1, len(leidos), len(nuevos), time.time() - t_pag, "perfil", final=final)
                         if not nuevos:
                             break
                         claves.update((p["nombre"].lower(), p["precio"]) for p in nuevos)
@@ -8374,12 +8432,15 @@ def ronda_grupo(grupo):
             con.close()
         except Exception as e:
             log(f"chollometro: {str(e)[:150]}")
+    _CTX.update(ronda=f"{grupo} {datetime.now():%Y-%m-%d %H:%M}", grupo=grupo)
     for categoria in cargar_config()["categorias"]:
+        _CTX["categoria"] = categoria
         try:
             ronda(categoria, solo=GRUPOS[grupo])
         except Exception as e:  # una categoría rota no para a las demás
             log(f"{grupo} {categoria}: {str(e)[:150]}")
         volcar_a_historico()
+    _CTX.update(ronda=None, categoria=None)
     if grupo == "navegador" and cargar_config().get("rutas", {}).get("descubrir_hubs", True):
         try:  # una vez al día por tienda: los enlaces de campaña de su hub, solo si traen productos que no teníamos
             con_r = bd()
@@ -9365,6 +9426,8 @@ if __name__ == "__main__":
         reordenar_mapas()
     elif args[:1] == ["mapa"]:
         mapa(*args[1:])
+    elif args[:1] == ["roadmap"]:
+        informe_roadmap(args[1] if len(args) > 1 else None)
     elif args == ["rutas", "informe"]:
         informe_rutas()
     elif args == ["rutas"]:
