@@ -1285,7 +1285,7 @@ def tarjetas_html(html, base_url, tope=6000):
     plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<svg\b.*?</svg>|<!--.*?-->|<noscript\b.*?</noscript>",
                    "", html, flags=re.S | re.I)
     host = urlparse(base_url).netloc.replace("www.", "")
-    fichas = {}  # url -> [primera posición, [nombres candidatos]]
+    fichas = {}  # url -> [primera posición, [textos del enlace], [títulos: <h2-4> y atributo title]]
     for m in RE_A_COMPLETO.finditer(plano):
         h = RE_ATR_HREF.search(m.group(1))
         if not h:
@@ -1297,17 +1297,17 @@ def tarjetas_html(html, base_url, tope=6000):
         if RE_ENLACE_OPINIONES.search(partes.path):
             continue  # Amazon: el enlace a las opiniones partía la tarjeta y se quedaba con su precio
         texto = " ".join(RE_ETIQUETA_HTML.sub(" ", unescape(RE_ETIQUETA_HTML.sub(" ", m.group(2)))).split())
-        f = fichas.setdefault(url, [m.start(), []])
+        f = fichas.setdefault(url, [m.start(), [], []])
         if texto:
             f[1].append(texto)
         # Tarjeta entera dentro del enlace (marca + nombre + precio): el nombre va en su título <h2>/<h3>.
-        f[1] += [" ".join(unescape(re.sub(r"<[^>]+>", " ", x)).split())
+        f[2] += [" ".join(unescape(re.sub(r"<[^>]+>", " ", x)).split())
                  for x in re.findall(r"<h[2-4]\b[^>]*>(.*?)</h[2-4]>", m.group(2), re.S | re.I)]
-        f[1] += [unescape(t) for t in RE_ATR_TITULO.findall(m.group(0))]
+        f[2] += [unescape(t) for t in RE_ATR_TITULO.findall(m.group(0))]
     orden = sorted(fichas.items(), key=lambda kv: kv[1][0])
     rx_euros = RE_EUROS_DELANTE if euro_delante(plano) else RE_EUROS
     salida = []
-    for n, (url, (ini, nombres)) in enumerate(orden):
+    for n, (url, (ini, textos, titulos)) in enumerate(orden):
         fin = min(ini + tope, orden[n + 1][1][0] if n + 1 < len(orden) else len(plano))
         # La etiqueta de descuento ("-200,10 €" en Neobyte, 18/11/2026) no es el precio: fuera antes de buscarlo.
         trozo = RE_ETIQUETA_DESCUENTO.sub(" ", plano[ini:fin])
@@ -1323,9 +1323,14 @@ def tarjetas_html(html, base_url, tope=6000):
                 continue  # "-200,10 €": lo que se descuenta, no el precio
             precio = a_numero(e.group(1).replace(" ", ""))
             break
-        buenos = [t for t in nombres if 8 <= len(t) <= 250 and re.search(r"[a-zA-Z]{3}", t)
-                  and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t) and not RE_EUROS_DELANTE.search(t)
-                  and not RE_VALORACION.match(t)]
+        def validos(lista):
+            return [t for t in lista if 8 <= len(t) <= 250 and re.search(r"[a-zA-Z]{3}", t)
+                    and not RE_TEXTO_GENERICO.match(t) and not RE_EUROS.search(t) and not RE_EUROS_DELANTE.search(t)
+                    and not RE_VALORACION.match(t) and not RE_TITULO_CON_PRECIO.search(t)]
+        # Revisión del 20/11/2026: antes ganaba siempre el texto más largo, y un reclamo largo ("Llévatelo hoy con
+        # entrega en 24 h y devolución...") podía ganar al título. Primero los títulos de la tarjeta (<h2-4> y el
+        # atributo title); el texto más largo del enlace queda de reserva.
+        buenos = validos(titulos) or validos(textos)
         if precio and 0.5 <= precio <= 20000 and buenos:
             salida.append({"name": max(buenos, key=len), "price": precio, "url": url})
     return salida
@@ -3308,8 +3313,44 @@ def _mismo_post_antiguo(nombre, titulo):
     return len(comunes) >= min(3, corto) and len(comunes) / corto >= 0.75
 
 
+# "Misma tienda" (revisión del 20/11/2026): iba por subcadena ("game" casaba dentro de "Gameplanet" y "mi" -menos de 4
+# letras- no casaba con mi.com). Ahora por igualdad: dominio del enlace del hilo (con su país: amazon.it no es amazon.es)
+# o nombre del comercio igual a la raíz de la tienda, y alias explícitos. Nunca por subcadena.
+ALIAS_DOMINIO = {"hipercor.es": "elcorteingles.es"}  # comparten stock: misma tienda para Chollometro (regla 6)
+ALIAS_COMERCIO = {"elcorteingles": "elcorteingles.es", "hipercor": "elcorteingles.es", "xiaomi": "mi.com",
+                  "xiaomistore": "mi.com", "mistore": "mi.com", "pccom": "pccomponentes.com"}
+
+
+def _dominio(x):
+    d = ".".join((x or "").lower().split("/")[0].split(".")[-2:])
+    return ALIAS_DOMINIO.get(d, d)
+
+
+def _norm_comercio(texto):
+    return re.sub(r"[^a-z0-9.]", "", sin_tildes((texto or "").lower()))
+
+
+def misma_tienda(tienda, host, comercio):
+    """¿El hilo es de la misma tienda que el candidato? Por igualdad, nunca por subcadena: mi.com = Xiaomi; GAME no es
+    Gameplanet; El Corte Inglés = Hipercor; Amazon.it no es amazon.es."""
+    if not tienda:
+        return False
+    dom = _dominio(tienda)
+    if host and _dominio(host) == dom:
+        return True
+    n = _norm_comercio(comercio)
+    if not n:
+        return False
+    if n in ALIAS_COMERCIO:
+        return ALIAS_COMERCIO[n] == dom
+    if "." in n:  # "Amazon.it", "mi.com"
+        return _dominio(n) == dom
+    return n == raiz(dom)
+
+
 def estado_chollometro(p, copia=None, excluir=()):
-    """Estado del producto en Chollometro, por la copia local (sin buscar: /search está prohibido):
+    """Estado del producto en Chollometro, por la copia local (antes de enviar, `buscar_en_chollometro` la completa con
+    el buscador de la web):
     'misma'      misma tienda y precio parecido, reciente o activo -> se descarta
     'misma:X'    misma tienda a otro precio -> decide Zeta
     'otra:X'     publicado con otra tienda a X €
@@ -3342,8 +3383,7 @@ def estado_chollometro(p, copia=None, excluir=()):
             hot = h
         if not h["precio"]:
             continue
-        donde = (h["host"] + " " + h["tienda"]).lower().replace(" ", "")
-        es_misma = enlace or (len(tienda) >= 4 and tienda in donde) or (tienda in grupo and any(g in donde for g in grupo))
+        es_misma = enlace or misma_tienda(p.get("tienda") or "", h["host"], h["tienda"])
         if h["publicado"] < limite:
             # Reglas de publicación de Chollometro (regla 1, 18/11/2026): con el anterior de hace más de 1 mes, se
             # mantiene el nuevo si el precio es distinto o el anterior está agotado. Solo es duplicado al mismo
@@ -4777,6 +4817,31 @@ def comprobar_muro(html):
     nunca resolver captchas ni saltarse antibots). La tienda se aparta 24 h sin reintentar en bucle."""
     if RE_ANTIBOT.search(html[:30000]):
         raise OSError("antibot o captcha: no se lee")
+
+
+RE_TITULO_CON_PRECIO = re.compile(r"[0-9]+(?:[.,][0-9]{2})? ?(?:€|eur)|env[ií]o gratis|gastos de env[ií]o", re.I)
+
+
+def titulos_sospechosos(productos):
+    """Señales de que el "nombre" leído no es el título del producto (revisión del 20/11/2026). Solo se anotan en
+    data/recorrido.txt, sin descartar nada: lleva un precio o "envío gratis", se repite igual en 3 o más tarjetas de la
+    misma lectura (texto genérico de la página) o es mucho más largo que el resto (más de 2,5 veces la mediana y más
+    de 120 caracteres). -> [(nombre, motivo)]"""
+    nombres = [p.get("nombre") or "" for p in productos]
+    if not nombres:
+        return []
+    largos = sorted(len(n) for n in nombres)
+    mediana = largos[len(largos) // 2]
+    cuenta = Counter(n.lower() for n in nombres)
+    salida = []
+    for n in nombres:
+        if RE_TITULO_CON_PRECIO.search(n):
+            salida.append((n, "precio o envío en el nombre"))
+        elif cuenta[n.lower()] >= 3:
+            salida.append((n, "texto repetido en varias tarjetas"))
+        elif len(n) > 120 and len(n) > 2.5 * max(1, mediana):
+            salida.append((n, f"mucho más largo que el resto ({len(n)} frente a {mediana} caracteres)"))
+    return salida
 
 
 def leer_tienda(tienda, urls, categoria=None, nav=None, max_paginas=1, url=None):
@@ -8298,6 +8363,11 @@ def ronda(categoria, solo=None):
         except Exception as e:
             log(f"rutas: {str(e)[:100]}")
         if rec:
+            raros = titulos_sospechosos(productos)
+            if raros:
+                motivos = Counter(m.split(" (")[0] for _, m in raros)
+                recorrido(f"    OJO títulos {tienda}: {len(raros)} de {len(productos)} sospechosos "
+                          f"({', '.join(f'{k}: {v}' for k, v in motivos.items())}); p. ej. «{raros[0][0][:70]}»")
             con_antes = sum(1 for x in productos if x.get("precio_antes"))
             nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
             recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> {len(productos)} productos, "
