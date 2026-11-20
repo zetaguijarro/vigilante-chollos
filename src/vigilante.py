@@ -3518,6 +3518,36 @@ def misma_tienda(tienda, host, comercio):
     return n == raiz(dom)
 
 
+PARECIDO_MIN = 60  # % de coincidencia para enseñar un hilo como "parecido" (no cuenta como duplicado ni como precio)
+
+
+def hilos_parecidos(p, copia, ya=(), maximo=3):
+    """Hilos de modelos muy parecidos (misma marca y tipo, 60 % o más de coincidencia) que no son el mismo producto:
+    para comparar a ojo (Zeta, 20/11/2026: "en los portátiles hay modelos muy parecidos, pon los parecidos con su %").
+    No cuentan como duplicado, ni para la regla del +8 %, ni como histórico. -> [{fecha, precio, temp, tienda, url,
+    coincide, titulo}] de más parecido a menos."""
+    nombre = p.get("nombre") or ""
+    marca_p = marca_y_modelo(nombre, p.get("marca"))[0]
+    fam = familia_de(nombre)
+    if not marca_p or not fam:
+        return []
+    cands = []
+    for h in hilos_candidatos(nombre, copia):
+        if h["id"] in ya or not h.get("precio"):
+            continue
+        if not (marca_y_modelo(h["titulo"])[0] & marca_p) or familia_de(h["titulo"]) != fam:
+            continue
+        if bool(RE_REACONDICIONADO.search(h["titulo"])) != bool(RE_REACONDICIONADO.search(nombre)):
+            continue
+        sim = max(coincidencia(nombre, h["titulo"], p.get("marca")), coincidencia(cabecera(nombre), cabecera(h["titulo"]), p.get("marca")))
+        if sim >= PARECIDO_MIN:
+            cands.append((sim, h["publicado"] or 0, h))
+    cands.sort(key=lambda x: (-x[0], -x[1]))
+    return [{"fecha": datetime.fromtimestamp(h["publicado"]).strftime("%d/%m/%Y"), "precio": h["precio"],
+             "temp": round(h["temp"] or 0), "tienda": h["tienda"], "agotado": bool(h["caducado"]), "url": enlace_hilo(h),
+             "coincide": sim, "titulo": h["titulo"][:90]} for sim, _, h in cands[:maximo]]
+
+
 def estado_chollometro(p, copia=None, excluir=()):
     """Estado del producto en Chollometro, por la copia local (antes de enviar, `buscar_en_chollometro` la completa con
     el buscador de la web):
@@ -3576,6 +3606,7 @@ def estado_chollometro(p, copia=None, excluir=()):
                       "coincide": "mismo enlace" if h["id"] in por_enlace
                       else f"coincide {coincidencia(p['nombre'], h['titulo'], p.get('marca'))} %"}
                      for h in sorted(iguales, key=lambda h: -(h["publicado"] or 0))[:4]]
+    p["_parecidos"] = hilos_parecidos(p, copia, {h["id"] for h in iguales} | set(excluir))
     if hot:
         p["_cm_hot"] = {"temp": round(hot["temp"]), "precio": hot["precio"], "titulo": hot["titulo"][:80],
                         "dias": int((datetime.now().timestamp() - hot["publicado"]) // 86400),
@@ -6448,6 +6479,8 @@ def mensaje_candidato(n, p):
         datos.append("Opiniones: " + " · ".join(resenas))
     if p.get("_anio"):
         datos.append(f"Lanzamiento: ~{p['_anio']} ({datetime.now().year - p['_anio']} años)")
+    if p.get("_tallas"):
+        datos.insert(0, "Tallas disponibles: " + ", ".join(p["_tallas"]))
     h = p.get("_cm_hot")
     if h and h.get("precio"):
         datos.append(f"Ya fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)")
@@ -6457,7 +6490,8 @@ def mensaje_candidato(n, p):
     avisos.append("Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)")
     if p.get("_detectado"):
         avisos.append(f"Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}")
-    emojis = {"Mercado": "📊", "Histórico": "📉", "Chollometro": "🔎", "Opiniones": "⭐", "Ya fue chollo": "🔥", "Lanzamiento": "📅"}
+    emojis = {"Mercado": "📊", "Histórico": "📉", "Chollometro": "🔎", "Opiniones": "⭐", "Ya fue chollo": "🔥", "Lanzamiento": "📅",
+              "Tallas disponibles": "📏"}
     vinetas = []
     for x in datos:
         etiqueta = x.split(":")[0].split(" (")[0]
@@ -6468,7 +6502,11 @@ def mensaje_candidato(n, p):
         vinetas.append(f"• 🔗 <b>Hilo:</b> {escape(h['fecha'])}{precio_h} · {h['temp']}° · {escape(h['tienda'])}{escape(extra)}\n"
                        f"{escape(h['url'])}")
     if not p.get("_iguales"):
-        vinetas.append("• 🔗 " + _negrita_etiqueta("Hilos en Chollometro: ninguno de este producto en la copia"))
+        vinetas.append("• 🔗 " + _negrita_etiqueta(lineas_iguales(p).split(chr(10))[0]))
+    for h in (p.get("_parecidos") or []):  # para comparar a ojo: no son el mismo producto
+        vinetas.append(f"• ≈ <b>Parecido ({h['coincide']} %):</b> {escape(h['titulo'])} · {h['precio']:g} € · {h['temp']}° · "
+                       f"{escape(h['tienda'])} · {escape(h['fecha'])}{' · agotado' if h.get('agotado') else ''}" + chr(10)
+                       + escape(h["url"]))
     for x in precio_extra:
         vinetas.insert(0, f"• {'💰' if x.startswith('Descuento') else '🎟️'} {_negrita_etiqueta(x)}")
     for x in avisos:
@@ -6793,6 +6831,7 @@ def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
     if ficha.get("no_envia_es"):
         return False, "no se envía a España (Chollometro no la acepta)"
     ok_tallas, motivo = regla_tallas(p, ficha)
+    p["_tallas"] = tallas_disponibles(p, ficha)
     if ok_tallas is False:
         return False, motivo
     if ok_tallas:
@@ -7077,6 +7116,20 @@ RE_CALZADO = re.compile(r"zapatill|zapato|\bbotas?\b|botin|sandalia|chancla|depo
                         r"n[aá]uticos?|tacones", re.I)
 RE_TALLA = re.compile(r"^(?:talla\s+)?(?:\d{2}(?:[.,]5)?(?:\s*(?:eu|1/3|2/3))?|\d{1,2}(?:[.,]5)?\s*(?:uk|us)|"
                       r"x{0,3}s|m|x{0,4}l|\d?xl|\d{2}-\d{2}|\d{2,3}\s*cm|w\d{2}(?:\s*l\d{2})?|u|única|unica)$", re.I)
+
+
+def tallas_disponibles(p, ficha):
+    """Tallas con stock de la ficha (ropa y calzado), en su orden: ["38", "39", "40,5"...]. [] si no es ropa ni
+    calzado o la ficha no las dice (Zeta, 20/11/2026: "si es ropa o zapatillas tiene que poner las tallas")."""
+    fam = familia_de(p.get("nombre") or "")
+    if fam not in ("ropa", "calzado") and not RE_CALZADO.search(p.get("nombre") or ""):
+        return []
+    salida = []
+    for x in (ficha or {}).get("variantes") or []:
+        nombre = x.split(":")[0].strip()
+        if RE_TALLA.match(nombre) and not x.endswith(": agotada") and nombre not in salida:
+            salida.append(re.sub(r"^talla\s+", "", nombre, flags=re.I))
+    return salida[:25]
 
 
 def regla_tallas(p, ficha):
@@ -7722,7 +7775,10 @@ def bloques_de_codigo(item, d):
     if item.get("aviso"):
         avisos.append(item["aviso"])
     if nombres_tallas:
-        avisos.append("Tallas con stock: " + ", ".join(nombres_tallas))
+        info.insert(0, "📏 Tallas disponibles: " + ", ".join(re.sub(r"^talla\s+", "", t, flags=re.I) for t in nombres_tallas))
+        info.insert(1, "")
+    elif familia_de(item.get("n", "")) in ("ropa", "calzado"):
+        avisos.append("Tallas sin comprobar en la ficha")
     if ficha.get("vendedor"):
         avisos.append(f"Vendido por {ficha['vendedor']}")
     if ficha.get("cupones"):
@@ -7743,7 +7799,7 @@ def bloques_de_codigo(item, d):
     if pago:
         codigos.append(f"💳 {pago}. Se suma al cupón; hay que elegir PayPal al pagar.")
     codigos = codigos or ["Sin códigos de descuento visibles."]
-    precios += [f"⚠️ {a}." for a in avisos if a.startswith(("Promoción", "Tallas", "Sin foto"))]
+    precios += [f"⚠️ {a}." for a in avisos if a.startswith(("Promoción", "Sin foto"))]
     return {"precios": "\n".join(precios), "info": "\n".join(info), "enlace": item.get("u", ""),
             "codigos": "\n".join(codigos),
             "foto": ficha.get("foto") or item.get("img"), "etiqueta": d["etiqueta"],
@@ -7923,11 +7979,15 @@ def redaccion(n):
 # Orden de envío (Zeta, 18/11/2026): 5 mensajes: foto, título, precio (final, descuento y PVPR; lleva el enlace al
 # final), posibles códigos y descripción. Antes eran 6 (con enlace e INFO ADICIONAL aparte, docs/FORMATO.md).
 BLOQUES = ("titulo", "precios", "codigos", "descripcion")
+# Zeta (20/11/2026): "por separado el título, precio final y PVP o referencia, enlace, info adicional y descripción, en
+# 4 mensajes": 1) foto con el título, 2) precio final, PVP o referencia y enlace, 3) info adicional (con los códigos y
+# las tallas), 4) descripción.
 
 
 def entregar(n, callado=False):
-    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 5 mensajes: foto,
-    título, precio (con descuento, PVPR y enlace), posibles códigos y descripción (con negrita real). Así la IA no repite texto y el
+    """La IA deja vigilante_data/entrega_N.json con los bloques y el script los manda como 4 mensajes (Zeta,
+    20/11/2026): foto con el título, precio final con PVP o referencia y enlace, info adicional (con los códigos y las
+    tallas) y descripción (con negrita real). Así la IA no repite texto y el
     formato sale siempre igual. Si `decidir` dejó data/decision_N.json, la IA solo escribe "titulo" y
     "descripcion": precio, INFO, enlace y foto salen de la decisión por código. La etiqueta va en la INFO,
     no en el título. Con `entrega.hilos` {categoría: id del tema}, va al tema de su categoría."""
@@ -7973,12 +8033,13 @@ def entregar(n, callado=False):
     hilo = (entrega.get("hilos") or {}).get(d.get("cat")) or "publicar"
     extra = {"hilo": hilo}
     ok, enviados = True, 0
-    if foto:
-        ok = enviar_telegram(token, chat, "", foto, **extra)
-        enviados += 1
-    for k in BLOQUES:
-        texto = str(b[k]).strip()
-        if k == "descripcion":
+    info = "\n\n".join(x for x in (str(b.get("info") or "").strip(), str(b.get("codigos") or "").strip()) if x)
+    mensajes = [("titulo", str(b["titulo"]).strip()), ("precios", str(b["precios"]).strip()), ("info", info),
+                ("descripcion", str(b["descripcion"]).strip())]
+    for k, texto in mensajes:
+        if k == "titulo":
+            ok = enviar_telegram(token, chat, texto, foto, **extra) and ok  # la foto lleva el título debajo
+        elif k == "descripcion":
             ok = enviar_telegram(token, chat, a_html_telegram(texto), html=True, **extra) and ok
         else:
             ok = enviar_telegram(token, chat, texto, **extra) and ok

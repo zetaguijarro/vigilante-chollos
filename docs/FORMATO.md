@@ -6,7 +6,7 @@ Lo que hace el código y lo que hace Hermes está al final.
 
 ## La ficha, pieza por pieza
 
-1. **Entrega.** Solo Telegram, en el hilo de la categoría. **Desde el 18/11/2026 son cinco mensajes** (Zeta): foto, título, precio (final, descuento y PVPR/PVP/tachado de la tienda, con el enlace al final), posibles códigos y descripción. La INFO ADICIONAL ya no se manda; el resto de este documento describe la versión de seis mensajes y sirve de consulta para el contenido. Sin aviso por cada ficha en WhatsApp.
+1. **Entrega.** Solo Telegram, en el hilo de la categoría. **Desde el 20/11/2026 son cuatro mensajes** (Zeta): foto con el título, precio (final, descuento y PVPR/PVP/tachado de la tienda, envío y enlace), info adicional (con los códigos y las tallas) y descripción; el resto de este documento describe la versión de seis mensajes y sirve de consulta para el contenido. Sin aviso por cada ficha en WhatsApp.
 2. **Foto.** Foto real del producto y variante exactos. No capturas de la tienda ni imágenes inventadas. Si falta, solo se entrega sin ella cuando esté autorizado y se declara. *Autorizado por Zeta el 17/11/2026: sin foto se entrega y la INFO lo declara con ⚠️.*
 3. **Título.** Máximo 140 caracteres: marca, modelo comercial y características clave. Sin precio, tienda ni código alfanumérico interno. Regalos verificados destacados; viajes con fechas y duración.
 4. **Tallas.** En ropa y calzado, todas las tallas disponibles verificadas y su variante. Rango solo si están todas las intermedias; si hay huecos, enumerar. Sin tallas verificadas, la ficha espera.

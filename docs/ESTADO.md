@@ -532,3 +532,8 @@ Sin hacer (trabajo grande): extracción declarativa por tienda en la configuraci
 
 ## Roadmap de lectura (Zeta, 20/11/2026)
 `data/roadmap.jsonl`: una línea JSON por página leída dentro de una ronda (ronda, grupo, categoría, tienda, modo descarga/navegador/perfil, ruta del catálogo, número de página real —con la continuación de `pag_sig`—, url, productos de la página, nuevos, segundos y error). Resumen legible: `vigilante.py roadmap [AAAA-MM-DD]`. Fuera de una ronda (pruebas, comandos) no escribe.
+
+## Fichas en 4 mensajes, tallas y parecidos (Zeta, 20/11/2026)
+- Ficha final (`entregar`): 4 mensajes: 1) foto con el título debajo, 2) precio final, descuento, PVPR o referencia de la tienda, envío y enlace, 3) info adicional (vuelve a mandarse: etiqueta, contraste, antecedentes de Chollometro, avisos) con los códigos, 4) descripción.
+- Ropa y calzado: "📏 Tallas disponibles: 38, 40, 41" en la info adicional de la ficha y en el aviso de candidata (`tallas_disponibles`, de la ficha de la tienda); si la ficha no las dice, aviso "Tallas sin comprobar".
+- Aviso de candidata: hasta 3 hilos "≈ Parecido (N %)" de la misma marca y tipo con 60 % o más de coincidencia que no son el mismo producto (`hilos_parecidos`), para comparar a ojo (portátiles: Zenbook 14 UX3480 frente a UM3406...). No cuentan como duplicado, ni para el +8 %, ni como histórico.

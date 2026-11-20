@@ -97,3 +97,18 @@ class Roadmap(unittest.TestCase):
         finally:
             v.DATOS, v.descargar, v.time.sleep = orig
             v._CTX.update(ronda=None, grupo=None, categoria=None)
+
+
+class ParecidosYTallas(unittest.TestCase):
+    def test_tallas_disponibles_solo_en_ropa_y_calzado(self):
+        ficha = {"variantes": ["38", "39: agotada", "40", "41", "Talla 42"]}
+        self.assertEqual(v.tallas_disponibles({"nombre": "Zapatillas Nike Pegasus 41"}, ficha), ["38", "40", "41", "42"])
+        self.assertEqual(v.tallas_disponibles({"nombre": "TV Samsung 55"}, ficha), [])
+
+    def test_aviso_con_tallas_y_parecidos(self):
+        p = {"tienda": "t.es", "nombre": "Zapatillas Nike Pegasus 41", "precio": 70, "ch": "no", "_tallas": ["40", "41", "42"],
+             "_parecidos": [{"coincide": 75, "titulo": "Nike Pegasus 40", "precio": 65.0, "temp": 300, "tienda": "Amazon",
+                             "fecha": "01/10/2026", "agotado": True, "url": "https://www.chollometro.com/ofertas/x-1"}]}
+        texto = v.mensaje_candidato(1, p)
+        self.assertIn("<b>Tallas disponibles:</b> 40, 41, 42", texto)
+        self.assertIn("<b>Parecido (75 %):</b> Nike Pegasus 40", texto)

@@ -2856,23 +2856,23 @@ class ModoTelegram(Base):
                 {"titulo": "[EXCEPCIONAL] Xiaomi Redmi Buds 6 Pro", "descripcion": "Texto.", "precios": "inventado"}), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(n))
-            # Formato de Zeta (18/11/2026): 5 mensajes: foto, título, precio (descuento y PVPR, con el enlace al final),
-            # posibles códigos y descripción.
+            # Formato de Zeta (20/11/2026): 4 mensajes: foto con el título, precio (descuento y PVPR, con el enlace al
+            # final), info adicional (con los códigos) y descripción.
             textos = [t for _, t, _ in self.enviados]
-            self.assertEqual(len(textos), 5)
-            self.assertEqual((textos[0], self.enviados[0][2]), ("", "https://img/x.jpg"), "la foto, sola")
-            self.assertEqual(textos[1], "Xiaomi Redmi Buds 6 Pro", "sin etiqueta en el título")
-            self.assertTrue(textos[2].startswith("30 €"), textos[2])
-            self.assertIn("Descuento: -50 %", textos[2])
-            self.assertIn("PVPR de la tienda: 59,99 €", textos[2])
-            self.assertIn("Envío: portes no verificados", textos[2])
-            self.assertTrue(textos[2].rstrip().splitlines()[-1].startswith("http"), "el enlace, al final del precio")
-            self.assertNotIn("41,5", textos[2], "el mercado no es una referencia del bloque de precio")
-            self.assertNotIn("habitual", textos[2].lower())
-            self.assertEqual(textos[3], "Sin códigos de descuento visibles.")
-            for proceso in ("Comprobado:", "Prueba:", "PENDIENTE", "Precio inicial publicado", "Chollometro", "🕒"):
+            self.assertEqual(len(textos), 4)
+            self.assertEqual((textos[0], self.enviados[0][2]), ("Xiaomi Redmi Buds 6 Pro", "https://img/x.jpg"),
+                             "la foto con el título debajo, sin etiqueta")
+            self.assertTrue(textos[1].startswith("30 €"), textos[1])
+            self.assertIn("Descuento: -50 %", textos[1])
+            self.assertIn("PVPR de la tienda: 59,99 €", textos[1])
+            self.assertIn("Envío: portes no verificados", textos[1])
+            self.assertTrue(textos[1].rstrip().splitlines()[-1].startswith("http"), "el enlace, al final del precio")
+            self.assertNotIn("41,5", textos[1], "el mercado no es una referencia del bloque de precio")
+            self.assertNotIn("habitual", textos[1].lower())
+            self.assertIn("Sin códigos de descuento visibles.", textos[2], "los códigos van en la info adicional")
+            for proceso in ("Comprobado:", "Prueba:", "PENDIENTE", "Precio inicial publicado"):
                 self.assertNotIn(proceso, "".join(textos))
-            self.assertEqual(textos[4], "Texto.")
+            self.assertEqual(textos[3], "Texto.")
             self.assertFalse((v.DATOS / f"decision_{n}.json").exists())
             # Descarte: lo dice el código por Telegram, con números, y guarda el veredicto del modelo.
             self.enviados.clear()
@@ -2894,8 +2894,8 @@ class ModoTelegram(Base):
             with redirect_stdout(io.StringIO()):
                 d = v.decidir(n)
             self.assertTrue(d["entregado"])
-            self.assertEqual(len(self.enviados), 5)
-            self.assertIn("📋 <b>Características</b>\n• Autonomía: 36 h", self.enviados[4][1], "negrita real")
+            self.assertEqual(len(self.enviados), 4)
+            self.assertIn("📋 <b>Características</b>\n• Autonomía: 36 h", self.enviados[3][1], "negrita real")
 
         finally:
             v.dossier_items = orig
@@ -3266,11 +3266,13 @@ class ReglasInstinct(Base):
             (v.DATOS / "entrega_7.json").write_text(json.dumps(bloques), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertTrue(v.entregar(7))
-            # Formato de Zeta (18/11/2026): foto sola, título sin etiqueta, precio (con el enlace), códigos, descripción.
-            self.assertEqual([e[0] for e in enviados], ["", "JBL Flip 6 altavoz Bluetooth",
+            # Formato de Zeta (20/11/2026): 4 mensajes: foto con el título, precio (con el enlace), info adicional (con
+            # los códigos) y descripción.
+            self.assertEqual([e[0] for e in enviados], ["JBL Flip 6 altavoz Bluetooth",
                                                         "Precio inicial: 149 €\n\nhttps://t.es/jbl",
-                                                        "Sin códigos de descuento visibles.", "Altavoz portátil."])
-            self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "la foto, sola, en el primer mensaje")
+                                                        "Mínimo histórico: 79 €\n\nSin códigos de descuento visibles.",
+                                                        "Altavoz portátil."])
+            self.assertEqual(enviados[0][1], "https://t.es/f.jpg", "la foto, con el título, en el primer mensaje")
             self.assertTrue(all(f is None for _, f in enviados[1:]))
             self.assertFalse((v.DATOS / "entrega_7.json").exists())
             (v.DATOS / "entrega_7.json").write_text(json.dumps({"titulo": "x"}), encoding="utf-8")
