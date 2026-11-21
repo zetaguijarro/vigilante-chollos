@@ -533,11 +533,6 @@
    "por_ronda": 5,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
-  "alcampo.es": {
-   "cada_min": 20,
-   "por_ronda": 4,
-   "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
-  },
   "privatesportshop.es": {
    "por_ronda": 5,
    "cada_min": 20
@@ -756,9 +751,7 @@
   },
   "supermercado": {
    "cada_min": 30,
-   "tiendas": [
-    "alcampo.es"
-   ],
+   "tiendas": [],
    "navegador": [
     "lidl.es",
     "dia.es",
@@ -780,7 +773,8 @@
     "gadisline.com": "Sin demanda: 4 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "ahorramas.com": "Sin demanda: 3 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
     "condisline.com": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
-    "bonpreuesclat.cat": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí."
+    "bonpreuesclat.cat": "Sin demanda: 0 hilos de 200°+ en Chollometro en 180 días y ningún aviso enviado (repaso con Zeta, 18/11/2026). Se recupera quitándola de aquí.",
+    "alcampo.es": "Zeta, 21/11/2026: 'quita Alcampo de la lista, no me gusta'. Se recupera quitándola de aquí y volviéndola a poner en 'tiendas'."
    }
   },
   "hogar": {

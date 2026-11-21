@@ -272,9 +272,6 @@
   "amazon.es": [
    "https://www.amazon.es/deals",
    "https://www.amazon.es/everydayessentials"
-  ],
-  "alcampo.es": [
-   "https://www.compraonline.alcampo.es/categories/folletos-y-promociones/OCFYP"
   ]
  },
  "_nota_hubs": "Hubs de campaña que Zeta usa como punto de partida (20/11/2026). Una vez al día se lee cada uno y sus enlaces de campaña pasan al catálogo solo si traen productos que el vigilante no tenía (src/rutas.py)."
