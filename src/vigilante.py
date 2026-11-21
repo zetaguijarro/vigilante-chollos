@@ -5389,6 +5389,7 @@ def comprobar_muro(html):
 # data/roadmap.jsonl (ronda, grupo, categoría, tienda, modo, ruta del catálogo, número de página, url, productos de la
 # página, nuevos en esa lectura, segundos y error). Resumen: `vigilante.py roadmap [AAAA-MM-DD]`.
 _CTX = {"ronda": None, "grupo": None, "categoria": None}
+_HILO = threading.local()  # categoría de la lectura en segundo plano (la siguiente mientras se compara la actual)
 _ROADMAP_LOCK = threading.Lock()
 
 
@@ -5398,7 +5399,8 @@ def roadmap(tienda, url, pagina, productos, nuevos, segundos, modo, error=None, 
     try:
         base, inicio, _ = _RUTA_BASE.get((tienda, url), (None, 1, None))
         linea = {"ts": datetime.now().isoformat(timespec="seconds"), "ronda": _CTX["ronda"], "grupo": _CTX["grupo"],
-                 "categoria": _CTX["categoria"], "tienda": tienda, "modo": modo, "ruta": base or url,
+                 "categoria": getattr(_HILO, "categoria", None) or _CTX["categoria"], "tienda": tienda, "modo": modo,
+                 "ruta": base or url,
                  "pagina": inicio + pagina - 1, "url": url if pagina == 1 else None, "leida": final,
                  "productos": productos, "nuevos": nuevos, "seg": round(segundos, 1), "error": (error or None) and str(error)[:120]}
         with _ROADMAP_LOCK:
@@ -9031,13 +9033,17 @@ def ronda_grupo(grupo):
         except Exception as e:
             log(f"chollometro: {str(e)[:150]}")
     _CTX.update(ronda=f"{grupo} {datetime.now():%Y-%m-%d %H:%M}", grupo=grupo)
-    for categoria in cargar_config()["categorias"]:
+    cats = list(cargar_config()["categorias"])
+    for i, categoria in enumerate(cats):
         _CTX["categoria"] = categoria
+        # La siguiente se lee en segundo plano mientras esta se compara (Zeta, 21/11/2026).
+        _SIGUIENTE.update(categoria=cats[i + 1] if i + 1 < len(cats) else None, solo=GRUPOS[grupo])
         try:
             ronda(categoria, solo=GRUPOS[grupo])
         except Exception as e:  # una categoría rota no para a las demás
             log(f"{grupo} {categoria}: {str(e)[:150]}")
         volcar_a_historico()
+    _esperar_precargas()
     _CTX.update(ronda=None, categoria=None)
     if modo_telegram_cfg(cargar_config()):
         enviar_descartadas()  # las que quedaron de categorías sin candidatas
@@ -9060,6 +9066,94 @@ def ronda_grupo(grupo):
                     f"{hecho.get('hilos_con_historico')} hilos")
         except Exception as e:
             log(f"histórico (enlaces): {str(e)[:120]}")
+
+
+SIN_TRABAJO = object()
+_PRECARGA = {}  # categoría -> {"hilo", "res", "error"}: lecturas hechas en segundo plano
+_SIGUIENTE = {"categoria": None, "solo": None}  # la categoría que toca después (la fija ronda_grupo)
+
+
+def _tomar_precarga(categoria):
+    """El resultado de la lectura en segundo plano de esta categoría (esperando a que acabe), o None si no la hubo o
+    falló (entonces ronda() la lee ella, como siempre)."""
+    caja = _PRECARGA.pop(categoria, None)
+    if not caja:
+        return None
+    caja["hilo"].join()
+    if caja["error"] is not None:
+        log(f"precarga {categoria}: {str(caja['error'])[:100]}; se lee ahora")
+        return None
+    return caja["res"]
+
+
+def _arrancar_precarga(cfg):
+    """Lanza la lectura de la categoría siguiente en un hilo (con su propia conexión a la base). Solo dentro de
+    ronda_grupo (que fija _SIGUIENTE), una vez por categoría y si `leer_siguiente_mientras_compara` no está apagado."""
+    sig, solo = _SIGUIENTE.get("categoria"), _SIGUIENTE.get("solo")
+    _SIGUIENTE["categoria"] = None
+    if not sig or sig in _PRECARGA or not en_horario(cfg) \
+            or not cfg.get("filtros_codigo", {}).get("leer_siguiente_mientras_compara", True):
+        return
+    caja = {"res": None, "error": None}
+
+    def trabajo():
+        _HILO.categoria = sig  # el roadmap apunta esta lectura a su categoría, no a la que se está comparando
+        try:
+            c = bd()
+            try:
+                caja["res"] = _planificar_y_leer(sig, solo, cfg, c)
+                c.commit()
+            finally:
+                c.close()
+        except BaseException as e:  # nunca tumba la ronda: ronda() la leerá ella
+            caja["error"] = e
+
+    caja["hilo"] = threading.Thread(target=trabajo, name=f"precarga-{sig}", daemon=True)
+    _PRECARGA[sig] = caja
+    caja["hilo"].start()
+
+
+def _esperar_precargas():
+    """Al acabar el grupo, ninguna lectura queda a medias."""
+    for caja in list(_PRECARGA.values()):
+        caja["hilo"].join(timeout=900)
+    _PRECARGA.clear()
+    _SIGUIENTE["categoria"] = None
+
+
+def _planificar_y_leer(categoria, solo, cfg, con):
+    """Qué tiendas y rutas tocan en esta categoría y su lectura (descarga, Chrome y fuentes). Es lo que hacía ronda() antes
+    de comparar. -> (tiendas, navegador, fuentes, turno, vigilados, en_pausa, sin_demanda, todas) o SIN_TRABAJO.
+    Zeta, 21/11/2026 ("sí, sigue con la 2"): se puede hacer en un hilo para la categoría siguiente mientras la actual se
+    compara, porque Chrome está parado esa mitad del tiempo."""
+    cat_cfg = cfg["categorias"][categoria]
+    tiendas, navegador = tiendas_de(cfg, categoria)
+    # Tiendas cuyo HTML sale vacío en descarga normal: se leen con Chrome (como las ve una persona).
+    pasar = tiendas_a_navegador(con, tiendas)
+    tiendas, navegador = [t for t in tiendas if t not in pasar], navegador + sorted(pasar)
+    urls = urls_ofertas()
+    fuentes = (cat_cfg.get("apis", []) + [f"rss:{f}" for f in cat_cfg.get("fuentes", [])]
+               + [f"tg:{c}" for c in cat_cfg.get("canales_telegram", [])])
+    if solo == "descarga":
+        navegador = []
+    elif solo == "navegador":
+        tiendas, fuentes = [], []
+    if not (tiendas or navegador or fuentes):
+        return SIN_TRABAJO
+    antes = set(tiendas) | set(navegador) | set(fuentes)
+    tiendas, navegador, fuentes = (en_pausa_fuera(con, x) for x in (tiendas, navegador, fuentes))
+    en_pausa = antes - set(tiendas) - set(navegador) - set(fuentes)
+    con_pausa = set(tiendas) | set(navegador)
+    tiendas, navegador = filtrar_por_demanda(con, cfg, tiendas), filtrar_por_demanda(con, cfg, navegador)
+    sin_demanda = con_pausa - set(tiendas) - set(navegador)
+    if refrescar_extras(con, cfg, categoria, solo, set(tiendas) | set(navegador)):
+        urls = urls_ofertas()
+    extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador) + busquedas_turno(con, cfg, navegador)
+    turno = catalogo_turno(con, cfg, tiendas + navegador) + extras
+    vigilados = vigilancia_turno(con, cfg, navegador)
+    turno += [("amazon.es", u) for u in vigilados]
+    todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
+    return tiendas, navegador, fuentes, turno, vigilados, en_pausa, sin_demanda, todas
 
 
 def ronda(categoria, solo=None):
@@ -9087,36 +9181,17 @@ def ronda(categoria, solo=None):
         return
 
     rx = regex_marcas()
-    tiendas, navegador = tiendas_de(cfg, categoria)
-    # Tiendas cuyo HTML sale vacío en descarga normal: se leen con Chrome (como las ve una persona).
-    pasar = tiendas_a_navegador(con, tiendas)
-    tiendas, navegador = [t for t in tiendas if t not in pasar], navegador + sorted(pasar)
-    urls = urls_ofertas()
     cat_cfg = cfg["categorias"][categoria]
-    fuentes = (cat_cfg.get("apis", []) + [f"rss:{f}" for f in cat_cfg.get("fuentes", [])]
-               + [f"tg:{c}" for c in cat_cfg.get("canales_telegram", [])])
-    if solo == "descarga":
-        navegador = []
-    elif solo == "navegador":
-        tiendas, fuentes = [], []
-    if not (tiendas or navegador or fuentes):
+    rec, t0 = f.get("log_recorrido"), time.time()
+    plan = _tomar_precarga(categoria)  # leída ya en segundo plano mientras se comparaba la categoría anterior
+    if plan is None:
+        plan = _planificar_y_leer(categoria, solo, cfg, con)
+    if plan is SIN_TRABAJO:
         con.close()
         print(SILENCIO)
         return
-    rec, t0 = f.get("log_recorrido"), time.time()
-    antes = set(tiendas) | set(navegador) | set(fuentes)
-    tiendas, navegador, fuentes = (en_pausa_fuera(con, x) for x in (tiendas, navegador, fuentes))
-    en_pausa = antes - set(tiendas) - set(navegador) - set(fuentes)
-    con_pausa = set(tiendas) | set(navegador)
-    tiendas, navegador = filtrar_por_demanda(con, cfg, tiendas), filtrar_por_demanda(con, cfg, navegador)
-    sin_demanda = con_pausa - set(tiendas) - set(navegador)
-    if refrescar_extras(con, cfg, categoria, solo, set(tiendas) | set(navegador)):
-        urls = urls_ofertas()
-    extras = ofertas_extra_turno(con, cfg, urls, tiendas + navegador) + busquedas_turno(con, cfg, navegador)
-    turno = catalogo_turno(con, cfg, tiendas + navegador) + extras
-    vigilados = vigilancia_turno(con, cfg, navegador)
-    turno += [("amazon.es", u) for u in vigilados]
-    todas = leer_todas(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
+    tiendas, navegador, fuentes, turno, vigilados, en_pausa, sin_demanda, todas = plan
+    _arrancar_precarga(cfg)  # ya leída esta: la siguiente se lee en segundo plano mientras esta se compara
     if rec:
         recorrido(f"--- {categoria} ({solo or 'todo'}): {len(tiendas)} por descarga, {len(navegador)} con navegador, "
                   f"{len(fuentes)} fuentes, {len(turno)} categorías de catálogo")

@@ -333,3 +333,117 @@ class CompatibleConEnCaracteristicas(unittest.TestCase):
         self.assertFalse(v.es_accesorio_de(a))
         self.assertTrue(v.es_accesorio_de("Funda compatible con iPhone 15, silicona"))
         self.assertTrue(v.mismo_post(a, "Fuente de Alimentación MSI MAG A850GLS PCIe 5 850W 80 Plus Gold, ATX 3.1"))
+
+
+class LecturaEnSegundoPlano(unittest.TestCase):
+    """Zeta, 21/11/2026 ("sí, sigue con la 2"): la categoría siguiente se lee mientras la actual se compara."""
+
+    def setUp(self):
+        import tempfile
+        import time
+        from pathlib import Path
+        import historico
+        self.tmp = tempfile.TemporaryDirectory()
+        self.orig = {n: getattr(v, n) for n in ("DATOS", "DB", "leer_todas", "en_horario", "volcar_a_historico",
+                                                "enviar_descartadas", "actualizar_chollometro", "vigilar_sesiones",
+                                                "carga_en_marcha", "log", "refrescar_extras", "ofertas_extra_turno",
+                                                "busquedas_turno", "vigilancia_turno", "tiendas_a_navegador")}
+        self.orig_hist = historico.refrescar_enlaces
+        v.DATOS = Path(self.tmp.name)
+        v.DB = v.DATOS / "vistos.db"
+        v.en_horario = lambda cfg: True
+        v.volcar_a_historico = lambda *a, **k: 0
+        v.enviar_descartadas = lambda *a, **k: 0
+        v.actualizar_chollometro = lambda *a, **k: None
+        v.carga_en_marcha = lambda: False
+        v.refrescar_extras = lambda *a, **k: False  # nada de red en las pruebas
+        v.ofertas_extra_turno = lambda *a, **k: []
+        v.busquedas_turno = lambda *a, **k: []
+        v.vigilancia_turno = lambda *a, **k: {}
+        v.tiendas_a_navegador = lambda *a, **k: set()
+        historico.refrescar_enlaces = lambda **k: None
+        self.log = []
+        v.log = lambda texto: self.log.append(texto)
+        self.hechas = []  # (categoría, hilo, inicio, fin de la lectura)
+        self.compara = []  # (categoría, inicio, fin de la comparación)
+        reloj = time.monotonic
+
+        def leer(tiendas, navegador, urls, categoria, cfg, fuentes, turno):
+            ini = reloj()
+            time.sleep(0.05)
+            self.hechas.append((categoria, __import__("threading").current_thread().name, ini, reloj()))
+            return []
+
+        def comparar(con, cfg, lecturas):
+            ini = reloj()
+            time.sleep(0.12)
+            self.compara.append((v._CTX["categoria"], ini, reloj()))
+
+        v.leer_todas, v.vigilar_sesiones = leer, comparar
+
+    def tearDown(self):
+        import historico
+        for n, x in self.orig.items():
+            setattr(v, n, x)
+        historico.refrescar_enlaces = self.orig_hist
+        v._PRECARGA.clear()
+        v._SIGUIENTE.update(categoria=None, solo=None)
+        self.tmp.cleanup()
+
+    def test_lee_la_siguiente_mientras_compara_la_actual(self):
+        v.ronda_grupo("rapidas")
+        self.assertGreaterEqual(len(self.hechas), 3, self.log)
+        en_hilo = [h for h in self.hechas if h[1].startswith("precarga-")]
+        self.assertTrue(en_hilo, "alguna lectura se hizo en segundo plano")
+        # La lectura de la categoría k+1 empieza antes de que acabe la comparación de la k.
+        por_cat = {c: (i, f) for c, i, f in self.compara}
+        solapadas = 0
+        for cat, hilo, ini, fin in en_hilo:
+            previas = [(i, f) for c, (i, f) in por_cat.items() if i <= ini < f]
+            solapadas += bool(previas)
+        self.assertTrue(solapadas, "la lectura de fondo coincide en el tiempo con una comparación")
+        # Cada categoría se lee una sola vez.
+        cats = [h[0] for h in self.hechas]
+        self.assertEqual(len(cats), len(set(cats)))
+
+    def test_apagado_lee_en_fila(self):
+        import json
+        cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
+        cfg["filtros_codigo"]["leer_siguiente_mientras_compara"] = False
+        original = v.cargar_config
+        v.cargar_config = lambda: cfg
+        try:
+            v.ronda_grupo("rapidas")
+        finally:
+            v.cargar_config = original
+        self.assertTrue(self.hechas)
+        self.assertFalse([h for h in self.hechas if h[1].startswith("precarga-")])
+
+    def test_si_la_lectura_de_fondo_falla_la_hace_ronda(self):
+        import threading
+        llamadas = []
+        real = v.leer_todas
+
+        def inestable(tiendas, navegador, urls, categoria, cfg, fuentes, turno):
+            if threading.current_thread().name.startswith("precarga-"):
+                llamadas.append(categoria)
+                raise RuntimeError("fallo de fondo")
+            return real(tiendas, navegador, urls, categoria, cfg, fuentes, turno)
+
+        v.leer_todas = inestable
+        v.ronda_grupo("rapidas")
+        self.assertTrue(llamadas)
+        leidas = {h[0] for h in self.hechas}
+        self.assertTrue(set(llamadas) <= leidas, "la categoría cuya lectura de fondo falló se leyó igualmente")
+        self.assertTrue(any("precarga" in x and "se lee ahora" in x for x in self.log))
+
+    def test_roadmap_apunta_a_la_categoria_de_la_lectura_de_fondo(self):
+        v._CTX.update(ronda="r", grupo="rapidas", categoria="hogar")
+        try:
+            v._HILO.categoria = "moda"
+            v.roadmap("t.es", "https://t.es/", 1, 3, 3, 0.1, "descarga")
+            v._HILO.categoria = None
+            lineas = [__import__("json").loads(x) for x in (v.DATOS / "roadmap.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(lineas[-1]["categoria"], "moda")
+        finally:
+            v._CTX.update(ronda=None, grupo=None, categoria=None)
