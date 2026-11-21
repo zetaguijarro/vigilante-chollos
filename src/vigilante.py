@@ -1072,16 +1072,47 @@ def etiquetas_amazon(html):
     return salida
 
 
+RE_AMZ_MINIMO = re.compile(r"(?:precio\s+)?m(?:[aá]s\s+bajo|[ií]nimo)\s+(?:de\s+|en\s+)?(?:los\s+)?(?:[uú]ltimos\s+)?"
+                           r"(30|365)\s+d[ií]as|lowest\s+price\s+in\s+(30|365)\s+days", re.I)
+RE_AMZ_ASIN_POS = re.compile(r'data-asin="([A-Z0-9]{10})"|"asin"\s*:\s*"([A-Z0-9]{10})"|/dp/([A-Z0-9]{10})')
+
+
+def insignias_minimo_amazon(html):
+    """{ASIN: 30 | 365} de las tarjetas de Amazon con "Precio más bajo de los últimos 30 días" / "en 365 días". El texto
+    de cada tarjeta va desde la primera mención de su ASIN hasta la del siguiente ASIN."""
+    if not RE_AMZ_MINIMO.search(html or ""):
+        return {}
+    marcas, ultimo = [], None
+    for m in RE_AMZ_ASIN_POS.finditer(html):
+        a = next(g for g in m.groups() if g)
+        if a != ultimo:
+            marcas.append((m.start(), a))
+            ultimo = a
+    salida = {}
+    for k, (ini, a) in enumerate(marcas):
+        fin = marcas[k + 1][0] if k + 1 < len(marcas) else min(len(html), ini + 20000)
+        trozo = re.sub(r"<[^>]+>", " ", html[ini:fin])
+        for m in RE_AMZ_MINIMO.finditer(trozo):
+            dias = int(m.group(1) or m.group(2))
+            salida[a] = max(salida.get(a, 0), dias)
+    return salida
+
+
 def extraer(html, base_url, extra_json=()):
     """Productos de una página. extra_json: respuestas JSON capturadas por el navegador."""
     host = urlparse(base_url).netloc.lower()
     if "amazon." in host:
         productos = _extraer(html, base_url, extra_json)
         etiquetas = etiquetas_amazon(html) if '"basisPrice"' in html else {}
+        insignias = insignias_minimo_amazon(html)
         for p in productos:
             e = etiquetas.get(asin_de(p.get("url")) or "")
             if e and p.get("precio_antes") and abs(p["precio_antes"] - e[1]) < 0.015:
                 p["ref_tienda"] = e[0]
+            # Zeta, 21/11/2026: "precio más bajo de los últimos 30 días" o "en 365 días" sale siempre.
+            dias = insignias.get(asin_de(p.get("url")) or "")
+            if dias or p.get("ref_tienda") == "mas_bajo":
+                p["amz_minimo"] = max(dias or 0, 30)
         principal = ficha_amazon(html, base_url)
         if principal:  # en una ficha, el producto de la página va primero (no el primero del carrusel)
             productos = [principal]  # el carrusel de recomendados no es de esta página
@@ -6750,7 +6781,7 @@ def mensajes_candidato(n, p):
         datos.append(f"Ya fue chollo: {h['temp']}° a {h['precio']:g} € (hace {h['dias']} días)")
     avisos = []
     if p.get("tallas_aviso"):
-        avisos.append("Ojo, tallas sin comprobar: Chollometro pide 2 o más en ropa y 3 o más en calzado")
+        avisos.append("Ojo, tallas sin comprobar: hacen falta 3 o más en ropa y 4 o más en calzado, al precio de la oferta")
     avisos.append("Sin verificar: envío, stock y tallas (se miran al pulsar Verificar)")
     if p.get("_detectado"):
         avisos.append(f"Detectado {p['_detectado']} · avisado {datetime.now():%d/%m %H:%M}")
@@ -7472,21 +7503,33 @@ def variantes_de(ld, html):
             return None
         return "hay stock" if re.search(r"instock|limitedavailability|preorder", disp, re.I) else "agotada"
 
-    def poner(nombre, est):
+    def precio(of):
+        of = of[0] if isinstance(of, list) and of else of
+        if not isinstance(of, dict):
+            return None
+        try:
+            return float(str(of.get("price") or of.get("lowPrice") or "").replace(",", "."))
+        except ValueError:
+            return None
+
+    def poner(nombre, est, pr=None):
         nombre = " ".join(str(nombre).split())[:40]
         if nombre and nombre.lower() not in vistas:
             vistas.add(nombre.lower())
-            salida.append(f"{nombre}: {est}" if est else nombre)
+            # Zeta, 21/11/2026: el precio de cada talla, para contar solo las que tienen el precio de la oferta.
+            texto = f"{nombre}: {est}" if est else nombre
+            salida.append(f"{texto} · {pr:g} €" if pr and est != "agotada" else texto)
 
     for o in ld:
         for var in o.get("hasVariant") or []:
             if isinstance(var, dict):
-                poner(var.get("size") or var.get("color") or var.get("name") or var.get("sku"), stock(var.get("offers")))
+                poner(var.get("size") or var.get("color") or var.get("name") or var.get("sku"), stock(var.get("offers")),
+                      precio(var.get("offers")))
         ofertas = o.get("offers")
         if isinstance(ofertas, list) and len(ofertas) > 1:
             for of in ofertas:
                 if isinstance(of, dict) and (of.get("name") or of.get("sku")):
-                    poner(of.get("name") or of.get("sku"), stock(of))
+                    poner(of.get("name") or of.get("sku"), stock(of), precio(of))
     if not salida:
         for sel in RE_SELECT_TALLA.findall(html):
             for attrs, texto in RE_OPTION.findall(sel):
@@ -7514,6 +7557,9 @@ def tallas_disponibles(p, ficha):
     salida = []
     for x in (ficha or {}).get("variantes") or []:
         nombre = x.split(":")[0].strip()
+        pr = precio_talla(x)
+        if pr is not None and p.get("precio") and pr > p["precio"] * 1.02:
+            continue  # a otro precio: no es la talla de la oferta
         if RE_TALLA.match(nombre) and not x.endswith(": agotada") and nombre not in salida:
             salida.append(re.sub(r"^talla\s+", "", nombre, flags=re.I))
     return salida[:25]
@@ -7533,10 +7579,22 @@ def regla_tallas(p, ficha):
     if any(re.sub(r"^talla\s+", "", x.split(":")[0].strip().lower()) in ("u", "única", "unica") for x in tallas):
         return True, "talla única"
     disponibles = [x for x in tallas if not x.endswith(": agotada")]
-    minimo = 3 if tipo == "calzado" else 2
-    if len(disponibles) < minimo:
-        return False, f"{tipo} con {len(disponibles)} tallas disponibles (Chollometro pide {minimo} o más)"
-    return True, f"{len(disponibles)} tallas disponibles"
+    # Zeta, 21/11/2026: "por lo menos 3 o 4 tallas con el mismo precio de ese descuento": ropa 3, calzado 4, y una
+    # talla con su precio solo cuenta si es el de la oferta (+2 %). Sin precio por talla, cuenta la que tiene stock.
+    f = cargar_config().get("filtros_codigo", {})
+    minimo = int(f.get("tallas_min_calzado", 4)) if tipo == "calzado" else int(f.get("tallas_min_ropa", 3))
+    al_precio = [x for x in disponibles if (pr := precio_talla(x)) is None or pr <= p["precio"] * 1.02]
+    if len(al_precio) < minimo:
+        caras = len(disponibles) - len(al_precio)
+        extra = f" ({caras} más a otro precio)" if caras else ""
+        return False, f"{tipo} con {len(al_precio)} tallas al precio de la oferta{extra}; hacen falta {minimo} o más"
+    return True, f"{len(al_precio)} tallas disponibles al precio de la oferta"
+
+
+def precio_talla(variante):
+    """"42: hay stock · 39.99 €" -> 39.99; None si la variante no trae precio."""
+    m = re.search(r"·\s*([\d.]+)\s*€$", variante or "")
+    return float(m.group(1)) if m else None
 
 
 RE_CUPON = re.compile(r"(?:c[oó]digo|cup[oó]n|code)(?:\s+(?:promocional|descuento|de descuento))?\s*[:\-«\"']?\s*"
@@ -9079,15 +9137,17 @@ def ronda(categoria, solo=None):
             if err:
                 p["error_precio"] = True
                 d = max(d or 0, 1 - p["precio"] / p["_min_previo"])
-            if d is not None and d < r["descuento_min"]:
+            # Zeta, 21/11/2026: en Amazon, "precio más bajo en 30 o 365 días" sale siempre (sin mínimos de tienda).
+            siempre = bool(p.get("amz_minimo")) and tienda == "amazon.es"
+            if d is not None and d < r["descuento_min"] and not siempre:
                 continue
-            if r["exigir_descuento"] and d is None:
+            if r["exigir_descuento"] and d is None and not siempre:
                 continue  # juegos: sin % visible no se puede saber si llega al 80 %
-            if r["antes_min"] and not p.get("gratis") and (p["precio_antes"] or 0) < r["antes_min"]:
+            if r["antes_min"] and not p.get("gratis") and (p["precio_antes"] or 0) < r["antes_min"] and not siempre:
                 continue
-            if r["min_resenas"] and p.get("resenas") is not None and p["resenas"] < r["min_resenas"]:
+            if r["min_resenas"] and p.get("resenas") is not None and p["resenas"] < r["min_resenas"] and not siempre:
                 continue  # poco popular / tienda con pocas ventas
-            if r["min_valoracion"] and p.get("valoracion") is not None and \
+            if r["min_valoracion"] and p.get("valoracion") is not None and not siempre and \
                     normalizar_nota(p["valoracion"]) < r["min_valoracion"]:
                 continue
             previos.append({**p, "tienda": tienda, "estado": estado, "d": d,
@@ -9370,6 +9430,14 @@ def ronda(categoria, solo=None):
             ok = dto is not None and dto >= dto_min
             if ok:
                 p["dto_real"], p["ref_real"] = round(dto, 3), ref
+        if not ok and p.get("amz_minimo") and p["tienda"] == "amazon.es":
+            # Zeta, 21/11/2026: "siempre en Amazon saca ficha cuando ponga precio más bajo de los últimos 30 días o
+            # precio más bajo en 365 días". Pasa aunque no haya contraste ni descuento mínimo (sigue lo excluido,
+            # reacondicionados, que venda o envíe Amazon y los duplicados de Chollometro).
+            ok = True
+            p["_sin_contraste"] = False
+            p.setdefault("_hist", {"habitual": None, "minimo": p.get("precio_antes"),
+                                   "fuente_corta": f"Amazon: precio más bajo en {p['amz_minimo']} días"})
         if ok:
             p["idealo"] = mejor
             # Ordena por lo bueno que es: descuento + ventaja frente al mercado + error + demanda en Chollometro.
@@ -9380,6 +9448,7 @@ def ronda(categoria, solo=None):
             p["peso"] = peso_de(pesos_t[p["tienda"]], p["nombre"])
             p["score"] = ((d or 0) + ((mejor - p["precio"]) / mejor if mejor else 0)
                           + (1 if p.get("error_precio") else 0) + min(hot, 3000) / 3000
+                          + (1 if p.get("amz_minimo") else 0)  # Zeta: siempre salen
                           + max(-0.35, min(1.0, (p["peso"] - 1) * 0.5)))
             finales.append(p)
         elif p.get("_sin_contraste") and not p.get("gratis") and not es_accesorio(p["nombre"]):
@@ -9430,7 +9499,7 @@ def ronda(categoria, solo=None):
         if p.get("estado") != "vuelve" and \
                 repetido_reciente(p, recientes + [(x["tienda"], x["nombre"], x["precio"]) for x in enviar]):
             continue  # 'vuelve' (oferta caducada que regresa) se reenvía a propósito
-        if por_tienda[p["tienda"]] < max_tienda and len(enviar) < hueco:
+        if (por_tienda[p["tienda"]] < max_tienda or p.get("amz_minimo")) and len(enviar) < hueco:
             if (p.get("_precio_comparador") or p["tienda"] == "amazon.es") and not p.get("gratis"):
                 # Precio de comparador: solo vale si la propia tienda lo confirma, con Chrome normal. Si la tienda no se
                 # deja leer (reto, sin precio), no se avisa.

@@ -1815,7 +1815,7 @@ class Rondas(Base):
         f = v.analizar_ficha(html, "https://x.es/nike")
         self.assertEqual(f["fotos"], ["https://x.es/a.jpg", "https://x.es/b.jpg"])
         self.assertEqual(f["referencia"], "FD2722-002")
-        self.assertEqual(f["variantes"], ["42: hay stock", "43: agotada"])
+        self.assertEqual(f["variantes"], ["42: hay stock · 89.99 €", "43: agotada"])
         # Sin datos: el desplegable de tallas (sin stock declarado: "seleccionable").
         dom = ('<select name="talla"><option value="">Elige talla</option><option value="1">S</option>'
                '<option value="2" disabled>M - Agotado</option></select>')
@@ -4671,9 +4671,11 @@ class ReglasPublicacionChollometro(unittest.TestCase):
     def test_tallas(self):
         ropa, zapas = {"nombre": "Sudadera Nike Club con capucha"}, {"nombre": "Zapatillas adidas Samba OG"}
         self.assertEqual(v.regla_tallas(ropa, {"variantes": ["S: agotada", "M: hay stock", "L: agotada"]})[0], False)
-        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["M: hay stock", "L: seleccionable"]})[0], True)
+        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["M: hay stock", "L: seleccionable"]})[0], False)  # 21/11: 3 o más
+        self.assertEqual(v.regla_tallas(ropa, {"variantes": ["S: hay stock", "M: hay stock", "L: seleccionable"]})[0], True)
         self.assertEqual(v.regla_tallas(zapas, {"variantes": ["42: hay stock", "43: hay stock", "44: agotada"]})[0], False)
-        self.assertEqual(v.regla_tallas(zapas, {"variantes": ["40", "41", "42.5"]})[0], True)
+        self.assertEqual(v.regla_tallas(zapas, {"variantes": ["40", "41", "42.5"]})[0], False)  # 21/11: 4 o más
+        self.assertEqual(v.regla_tallas(zapas, {"variantes": ["40", "41", "42.5", "43"]})[0], True)
         self.assertEqual(v.regla_tallas(zapas, {}), (None, "calzado: tallas sin comprobar"))
         self.assertEqual(v.regla_tallas({"nombre": "Freidora de aire Cosori"}, {}), (None, ""))
         self.assertEqual(v.regla_tallas(ropa, {"variantes": ["Talla única: hay stock"]})[0], True)

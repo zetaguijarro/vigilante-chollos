@@ -257,3 +257,33 @@ class AmpliarCobertura(unittest.TestCase):
         import rutas
         for p in ("/supermercado/3x2/cat1/c", "/promociones/segunda-unidad-50", "/coupons", "/everydayessentials"):
             self.assertTrue(rutas.RE_CAMPANA.search(p), p)
+
+
+class AmazonMinimoYTallas(unittest.TestCase):
+    """Zeta, 21/11/2026: Amazon con "precio más bajo en 30/365 días" sale siempre; ropa y calzado con 3-4 tallas al
+    precio de la oferta."""
+
+    def test_insignia_por_tarjeta(self):
+        import vigilante as v
+        html = ('<div data-asin="B0AAAAAAA1"><a href="/dp/B0AAAAAAA1">Cafetera</a><span>Precio más bajo de los últimos '
+                '30 días</span></div><div data-asin="B0AAAAAAA2"><a href="/dp/B0AAAAAAA2">Tostadora</a></div>'
+                '<div data-asin="B0AAAAAAA3">Precio más bajo en 365 días</div>')
+        self.assertEqual(v.insignias_minimo_amazon(html), {"B0AAAAAAA1": 30, "B0AAAAAAA3": 365})
+
+    def test_tallas_al_precio_de_la_oferta(self):
+        import vigilante as v
+        p = {"nombre": "Zapatillas Nike Pegasus 41", "precio": 60.0}
+        ficha = {"variantes": ["42: hay stock · 60 €", "43: hay stock · 60 €", "44: hay stock · 89.99 €",
+                               "45: hay stock · 89.99 €", "41: agotada"]}
+        ok, motivo = v.regla_tallas(p, ficha)
+        self.assertFalse(ok)
+        self.assertIn("2 más a otro precio", motivo)
+        ficha["variantes"] += ["40: hay stock · 60 €", "39: hay stock · 59.5 €"]
+        self.assertTrue(v.regla_tallas(p, ficha)[0])
+        self.assertEqual(v.tallas_disponibles(p, ficha), ["42", "43", "40", "39"])
+
+    def test_variantes_traen_precio(self):
+        import vigilante as v
+        ld = [{"hasVariant": [{"size": "M", "offers": {"price": "19.99", "availability": "InStock"}},
+                              {"size": "L", "offers": {"price": "19.99", "availability": "OutOfStock"}}]}]
+        self.assertEqual(v.variantes_de(ld, ""), ["M: hay stock · 19.99 €", "L: agotada"])

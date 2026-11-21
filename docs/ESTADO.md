@@ -544,3 +544,13 @@ Sin hacer (trabajo grande): extracción declarativa por tienda en la configuraci
 - **Alertas:** cada pausa por bloqueo (reto, captcha, antibot, 403, fallos seguidos) avisa en ⚠️ Sistema (`alerta_sistema`, una por tienda cada 6 h); un error de una ronda del bucle también.
 - **Descartadas:** pestaña 🗑️ Descartadas (creada con `temas`): una ficha corta por descarte de la ronda con su motivo (`log_descarte`, `enviar_descartadas`, 25 por ronda; `entrega.descartadas`).
 - **Rondas automáticas:** `tareas/bucle_rondas.py` (no es una tarea programada): una ronda (rápidas + navegador) cada 30 min desde el inicio de la anterior, de 08:00 a 00:45; `data/bucle.log`; se para borrando `data/bucle.on`. Lanzado el 21/11 a las 00:23 con Start-Process oculto. Tras reiniciar el portátil hay que relanzarlo.
+
+## Cambios del 21/11/2026 (Zeta)
+
+- **Rondas automáticas:** `tareas/bucle_rondas.py`, una cada 30 min de 08:00 a 00:45 (`data/bucle.on`). Bloqueos a ⚠️ Sistema y descartes con su motivo a 🗑️ Descartadas.
+- **Ficha en 6 mensajes:** separador (🚨 NUEVA CANDIDATA, número, tienda y foto), título solo, precio final y PVP o referencia, enlace, info adicional y descripción (con el botón Verificar).
+- **Reacondicionados:** también por la ficha (título, URL, `itemCondition`, "Estado: ..."), no solo por el título del listado.
+- **Perfumes y líquidos:** `conflicto_liquido` dentro de `mismo_post`: volumen (con el total del pack), concentración (EDT/EDP/Parfum...), versión (Elixir, Intense, estuche...) y género distintos nunca son el mismo producto.
+- **Amazon, más cobertura (no quitar rutas):** lectura larga (más scroll y "Ver más") en Amazon y Carrefour (`navegador.por_tienda`), más vendidos con `?pg=` (2 páginas), 14 rutas nuevas, `/everydayessentials` y `/coupons`, hubs de promociones (Amazon, Carrefour, Alcampo) y promos por URL en `data/recorrido.txt`.
+- **Amazon, siempre sale:** "precio más bajo de los últimos 30 días" (insignia o tachado "Más bajo") o "en 365 días" pasa sin contraste, sin descuento mínimo, sin mínimo de reseñas y sin el tope por tienda. Siguen: lo excluido, reacondicionados, que venda o envíe Amazon, la ficha y los duplicados de Chollometro.
+- **Tallas:** ropa 3 o más y calzado 4 o más (`tallas_min_ropa`, `tallas_min_calzado`), contando solo las tallas con stock al precio de la oferta (+2 %).
