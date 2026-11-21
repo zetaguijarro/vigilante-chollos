@@ -119,7 +119,8 @@ class AlertasYDescartadas(unittest.TestCase):
         import json, tempfile
         from pathlib import Path
         tmp = Path(tempfile.mkdtemp())
-        orig = (v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id)
+        orig = (v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id, v.log)
+        v.log = lambda *a, **k: None  # no ensuciar data/log.txt de verdad
         cfg = json.loads(v.CONFIG.read_text(encoding="utf-8"))
         cfg["entrega"] = {"modo": "telegram", "chat_id": "1", "descartadas": True}
         (tmp / "t.json").write_text(json.dumps(cfg), encoding="utf-8")
@@ -137,7 +138,7 @@ class AlertasYDescartadas(unittest.TestCase):
             self.assertIn("Cafetera X", texto)
             self.assertIn("<b>Motivo:</b> ficha no confirma: t.es Cafetera X: la ficha marca 60 € y el listado 45 €", texto)
         finally:
-            v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id = orig
+            v.CONFIG, v.enviar_telegram, v.token_telegram, v.tema_id, v.log = orig
 
 
 class PalabrasDeModeloYTfidf(unittest.TestCase):
