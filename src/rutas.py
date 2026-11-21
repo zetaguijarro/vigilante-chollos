@@ -24,7 +24,10 @@ MAX_CANDIDATAS_POR_HUB = 4
 HUB_CADA_HORAS = 24
 # Un enlace del hub es candidato si su ruta habla de campaña u oferta y no es la ficha de un producto.
 RE_CAMPANA = re.compile(r"black-?friday|black-?days|blackweek|cyber|promoc|oferta|outlet|rebajas|campaign|/cp/|/event/|"
-                        r"/list/|/promotion|/sale|/deals|descuento|semanas-black", re.I)
+                        r"/list/|/promotion|/sale|/deals|descuento|semanas-black|"
+                        # 21/11/2026 (Zeta): promociones por cantidad y cupones
+                        r"[23]x[12]|segunda-unidad|2a-unidad|2-unidad|unidad-gratis|cupon|coupon|everydayessentials|"
+                        r"folleto", re.I)
 RE_PRODUCTO = re.compile(r"/(?:product|producto|productos|p|dp|item|articulo|art)/", re.I)
 # Rutas de lo que el proyecto excluye: moda y calzado infantil (los juguetes y el resto de cosas de niños sí), mascotas,
 # motor y neumáticos, y jardín salvo Lidl (y salvo juguetes de jardín). No se leen ni se siembran.

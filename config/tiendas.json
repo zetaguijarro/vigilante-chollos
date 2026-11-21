@@ -303,7 +303,20 @@
   "pestanas": 4,
   "paginas": 5,
   "bloquear_recursos": true,
-  "espera_red_ms": 8000
+  "espera_red_ms": 8000,
+  "por_tienda": {
+   "amazon.es": {
+    "scroll_max": 20,
+    "espera_ms": 3500,
+    "pulsar_mas": true
+   },
+   "carrefour.es": {
+    "scroll_max": 16,
+    "espera_ms": 3000,
+    "pulsar_mas": true
+   }
+  },
+  "_nota_por_tienda": "Zeta 21/11/2026: 'no quites, amplía; si acaso dale más tiempo de lectura'. Amazon y Carrefour bajan más, esperan más y pulsan 'Ver más' (hasta 6 veces) cuando la página deja de crecer."
  },
  "paginas": {
   "defecto": 5,
@@ -407,7 +420,7 @@
   },
   "amazon.es": {
    "cada_min": 15,
-   "por_ronda": 2,
+   "por_ronda": 4,
    "urls": [
     "https://www.amazon.es/gp/bestsellers/electronics",
     "https://www.amazon.es/gp/bestsellers/computers",
@@ -421,9 +434,24 @@
     "https://www.amazon.es/gp/bestsellers/baby",
     "https://www.amazon.es/gp/bestsellers/pet-supplies",
     "https://www.amazon.es/gp/bestsellers/fashion",
-    "https://www.amazon.es/gp/bestsellers/grocery"
+    "https://www.amazon.es/gp/bestsellers/grocery",
+    "https://www.amazon.es/gp/bestsellers/automotive",
+    "https://www.amazon.es/gp/bestsellers/office-products",
+    "https://www.amazon.es/gp/bestsellers/lighting",
+    "https://www.amazon.es/gp/bestsellers/musical-instruments",
+    "https://www.amazon.es/gp/bestsellers/handmade",
+    "https://www.amazon.es/gp/bestsellers/luggage",
+    "https://www.amazon.es/gp/bestsellers/watches",
+    "https://www.amazon.es/gp/bestsellers/shoes",
+    "https://www.amazon.es/gp/bestsellers/lawn-garden",
+    "https://www.amazon.es/gp/bestsellers/diy",
+    "https://www.amazon.es/gp/movers-and-shakers/electronics",
+    "https://www.amazon.es/gp/movers-and-shakers/kitchen",
+    "https://www.amazon.es/gp/movers-and-shakers/beauty",
+    "https://www.amazon.es/gp/movers-and-shakers/grocery"
    ],
-   "_nota": "17/11/2026: la portada de Amazon no da categorías (son /b?node=...). Lista fija de más vendidos por categoría: 47-50 productos cada una con navegador (~6 s). diy, shoes y home no existen con ese nombre. Amazon es el 46 % de los hilos de Chollometro."
+   "_nota": "17/11/2026: la portada de Amazon no da categorías (son /b?node=...). Lista fija de más vendidos por categoría: 47-50 productos cada una con navegador (~6 s). diy, shoes y home no existen con ese nombre. Amazon es el 46 % de los hilos de Chollometro.",
+   "_nota_21_11": "Zeta 21/11/2026: ampliar cobertura. Más vendidos se leen con ?pg=1-2 (100 productos); ?page=6 devolvía la primera. Categorías y movers nuevos sin probar: si no existen, la poda de rutas las quita sola."
   },
   "elcorteingles.es": {
    "cada_min": 15,
@@ -432,7 +460,7 @@
   },
   "carrefour.es": {
    "cada_min": 15,
-   "por_ronda": 5,
+   "por_ronda": 6,
    "_nota": "17/11/2026: 322 hilos en la copia de Chollometro; antes 1 categoría cada 60 min."
   },
   "lidl.es": {
@@ -507,7 +535,7 @@
   },
   "alcampo.es": {
    "cada_min": 20,
-   "por_ronda": 3,
+   "por_ronda": 4,
    "_nota": "18/11/2026: catálogo hecho con `mapa` (páginas probadas una a una)."
   },
   "privatesportshop.es": {

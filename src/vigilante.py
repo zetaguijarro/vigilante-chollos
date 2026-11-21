@@ -4853,6 +4853,7 @@ class Navegador:
         self.scroll_max = n.get("scroll_max", 8)
         self.bloquear = n.get("bloquear_recursos", True)  # sin imágenes ni fuentes: carga mucho más rápido
         self.espera_red_ms = n.get("espera_red_ms", 8000)
+        self.por_tienda = n.get("por_tienda") or {}
         self._pw = self._ctx = None
 
     def _cerrojo(self, espera_max=600):
@@ -4951,13 +4952,20 @@ class Navegador:
                 page.wait_for_load_state("networkidle", timeout=self.espera_red_ms * x)
             except Exception:
                 pass
-            # Scroll infinito: baja hasta que la página deja de crecer (con tope).
-            alto = 0
-            for _ in range(self.scroll_max * x):
+            # Scroll infinito: baja hasta que la página deja de crecer (con tope). Las tiendas con lectura larga
+            # (navegador.por_tienda) bajan más, esperan más y pulsan "Ver más" cuando la página deja de crecer.
+            scroll_max, espera, pulsar = ajuste_lectura({"scroll_max": self.scroll_max, "espera_ms": self.espera_ms,
+                                                         "por_tienda": self.por_tienda}, url)
+            alto, pulsados = 0, 0
+            for _ in range(scroll_max * x):
                 page.mouse.wheel(0, 3000)
-                page.wait_for_timeout(self.espera_ms * x // 3)
+                page.wait_for_timeout(espera * x // 3)
                 nuevo = page.evaluate("document.body ? document.body.scrollHeight : 0")
                 if nuevo <= alto:
+                    if pulsar and pulsados < PULSAR_MAS_MAX and page.evaluate(JS_PULSAR_MAS):
+                        pulsados += 1
+                        page.wait_for_timeout(espera * x)
+                        continue
                     break
                 alto = nuevo
             html, final = page.content(), page.url
@@ -4977,6 +4985,28 @@ class Navegador:
 
 
 RE_RETO_URL = re.compile(r"/punish|_____tmd_____|x5secdata|captcha|/login\.htm|baxia", re.I)
+
+
+PULSAR_MAS_MAX = 6
+# Botón de "cargar más" de un listado (no un enlace a otra página): se pulsa el primero visible.
+JS_PULSAR_MAS = r"""() => {
+  const rx = /^\s*(ver|mostrar|cargar|show|load|see)\s+m(á|a)s(\s+(productos|ofertas|resultados|art[ií]culos))?\s*$|^\s*(load|show|see)\s+more/i;
+  for (const b of document.querySelectorAll('button, [role=button], a[role=button]')) {
+    const t = (b.innerText || b.textContent || '').trim();
+    if (t.length < 40 && rx.test(t) && b.offsetParent !== null && !b.disabled) { b.scrollIntoView(); b.click(); return true; }
+  }
+  return false;
+}"""
+
+
+def ajuste_lectura(n, url):
+    """(scroll_max, espera_ms, pulsar "Ver más") para esta URL: la configuración del navegador y, si la tienda tiene
+    lectura larga en navegador.por_tienda (Zeta, 21/11/2026: "dale más tiempo de lectura"), la suya."""
+    n = n or {}
+    host = urlparse(url or "").netloc.lower()
+    propio = next((c for t, c in (n.get("por_tienda") or {}).items() if host.endswith(t.split("/")[0])), {})
+    return (int(propio.get("scroll_max", n.get("scroll_max", 8))), int(propio.get("espera_ms", n.get("espera_ms", 2500))),
+            bool(propio.get("pulsar_mas")))
 
 
 class NavegadorNormal(Navegador):
@@ -5039,6 +5069,15 @@ RE_PARAM_PAGINA = re.compile(r"([?&](?:page|p|pagina|pag|pg|dcp)=)(\d+)", re.I)
 RE_RUTA_PAGINA = re.compile(r"(/(?:page|pagina)/)(\d+)", re.I)
 
 
+RE_AMZ_LISTA_CORTA = re.compile(r"^/gp/(?:bestsellers|new-releases|movers-and-shakers|most-wished-for)/")
+
+
+def tope_paginas(url, defecto=20):
+    """Páginas que tiene como mucho un listado (los más vendidos de Amazon, 2)."""
+    u = urlparse(url or "")
+    return 2 if u.netloc.lower().endswith("amazon.es") and RE_AMZ_LISTA_CORTA.search(u.path) else defecto
+
+
 def pagina_siguiente_por_tienda(url):
     """Página siguiente de un listado por la forma de paginar de cada tienda (las que Zeta lee, 20/11/2026), incluso desde
     la primera página, que no lleva número: Carrefour ?offset=24 (de 24 en 24), Decathlon ?from=N&size=40, Coolmod
@@ -5057,6 +5096,11 @@ def pagina_siguiente_por_tienda(url):
             return int(q.get(clave, defecto))
         except ValueError:
             return defecto
+    if host.endswith("amazon.es") and RE_AMZ_LISTA_CORTA.search(u.path):
+        # Más vendidos de Amazon: 2 páginas de 50 con ?pg=N; ?page=6 devolvía la primera otra vez (21/11/2026).
+        q.pop("page", None)
+        pg = entero("pg", 1)
+        return con(pg=pg + 1) if pg < 2 else url
     if host.endswith("carrefour.es"):
         return con(offset=entero("offset", 0) + 24)
     if host.endswith("decathlon.es"):
@@ -5813,7 +5857,7 @@ _RUTA_BASE = {}  # url leída (con su página) -> (ruta del catálogo, página d
 def url_pagina(url, pagina):
     """La página `pagina` (1 = la misma) de un listado: con la paginación de la tienda si se conoce
     (`pagina_siguiente_por_tienda`), si no con ?page=N (el lector para solo si no trae nada nuevo)."""
-    if pagina <= 1:
+    if pagina <= 1 or pagina > tope_paginas(url, pagina):
         return url
     actual = url
     for _ in range(pagina - 1):
@@ -5839,6 +5883,7 @@ def apuntar_pagina(con, tienda, url, inicio, paginas, productos, tope=20):
     """Por dónde seguir la próxima vez (Zeta, 20/11/2026: "guardar por dónde te has quedado"): si la lectura trajo
     productos, la siguiente empieza tras las páginas leídas; si no trajo nada (fin del listado) o pasa de `tope`
     páginas, vuelve a la 1."""
+    tope = min(tope, tope_paginas(url))
     sig = inicio + paginas if productos and inicio + paginas <= tope else 1
     con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"pag_sig:{tienda}|{url}", str(sig)))
 
@@ -6382,12 +6427,17 @@ async def _pestanas(cfg, trabajos):
                     await page.wait_for_load_state("networkidle", timeout=red * x)
                 except Exception:
                     pass
-                alto = 0
-                for _ in range(scroll_max * x):
+                s_max, esp, pulsar = ajuste_lectura(n, url)
+                alto, pulsados = 0, 0
+                for _ in range(s_max * x):
                     await page.mouse.wheel(0, 3000)
-                    await page.wait_for_timeout(espera * x // 3)
+                    await page.wait_for_timeout(esp * x // 3)
                     nuevo = await page.evaluate("document.body ? document.body.scrollHeight : 0")
                     if nuevo <= alto:
+                        if pulsar and pulsados < PULSAR_MAS_MAX and await page.evaluate(JS_PULSAR_MAS):
+                            pulsados += 1
+                            await page.wait_for_timeout(esp * x)
+                            continue
                         break
                     alto = nuevo
                 html, final = await page.content(), page.url
@@ -9078,9 +9128,13 @@ def ronda(categoria, solo=None):
                           f"({', '.join(f'{k}: {v}' for k, v in motivos.items())}); p. ej. «{raros[0][0][:70]}»")
             con_antes = sum(1 for x in productos if x.get("precio_antes"))
             nota = "" if sembrada else " (primera lectura de esta página: solo memoriza)"
+            # 21/11/2026 (Zeta): qué páginas traen más 2x1, 3x2, segunda unidad...
+            promos = Counter(x["promo"] for x in productos if x.get("promo"))
+            nota_promo = (f", {sum(promos.values())} con promo ({', '.join(f'{k} {v}' for k, v in promos.most_common(3))})"
+                          if promos else "")
             recorrido(f"    {tienda} [{modo}] {(url_leida or '')[:90]} -> {len(productos)} productos, "
                       f"{con_antes} con precio anterior, {n_cambios} nuevos o más baratos, "
-                      f"{len(previos) - n_previos} pasan los filtros de tienda{nota}")
+                      f"{len(previos) - n_previos} pasan los filtros de tienda{nota_promo}{nota}")
     if rec and vigilados:
         recorrido(f"    amazon.es [vigilancia] {len(vigilados)} ASIN que ya triunfaron -> {n_vig_leidos} leídos, "
                   f"{n_vig_baratos} igual o más baratos que cuando triunfaron")

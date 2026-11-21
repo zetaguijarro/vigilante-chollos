@@ -224,3 +224,36 @@ class PerfumesYLiquidos(unittest.TestCase):
         self.assertIsNone(v.conflicto_liquido("Perfume Hugo Boss Bottled 3.4 fl oz", "Hugo Boss Bottled EDT 100 ml"))
         self.assertIsNone(v.conflicto_liquido("Cafetera Jocca 1,5 L", "Cafetera Jocca 1.5 l"))
         self.assertIsNone(v.conflicto_liquido("Auriculares Sony WH-1000XM5", "Sony WH-1000XM5 negros"))
+
+
+class AmpliarCobertura(unittest.TestCase):
+    """Zeta, 21/11/2026: ampliar Amazon y promociones; más tiempo de lectura en vez de quitar rutas."""
+
+    def test_mas_vendidos_de_amazon_solo_dos_paginas(self):
+        import vigilante as v
+        u = "https://www.amazon.es/gp/bestsellers/kitchen"
+        self.assertEqual(v.url_pagina(u, 6), u)  # antes ?page=6, que devolvía la primera otra vez
+        self.assertIn("pg=2", v.pagina_siguiente_por_tienda(u))
+        self.assertEqual(v.pagina_siguiente_por_tienda(u + "?pg=2"), u + "?pg=2")
+        self.assertEqual(v.tope_paginas(u), 2)
+        self.assertEqual(v.tope_paginas("https://www.amazon.es/deals"), 20)
+
+    def test_apuntar_pagina_vuelve_a_la_primera(self):
+        import sqlite3
+        import vigilante as v
+        con = sqlite3.connect(":memory:")
+        con.execute("CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT)")
+        u = "https://www.amazon.es/gp/bestsellers/kitchen"
+        v.apuntar_pagina(con, "amazon.es", u, 1, 5, 100)
+        self.assertEqual(v.pagina_de_inicio(con, "amazon.es", u), 1)
+
+    def test_lectura_larga_por_tienda(self):
+        import vigilante as v
+        n = {"scroll_max": 8, "espera_ms": 2500, "por_tienda": {"amazon.es": {"scroll_max": 20, "pulsar_mas": True}}}
+        self.assertEqual(v.ajuste_lectura(n, "https://www.amazon.es/deals"), (20, 2500, True))
+        self.assertEqual(v.ajuste_lectura(n, "https://www.miravia.es/x"), (8, 2500, False))
+
+    def test_hub_reconoce_promos_por_cantidad(self):
+        import rutas
+        for p in ("/supermercado/3x2/cat1/c", "/promociones/segunda-unidad-50", "/coupons", "/everydayessentials"):
+            self.assertTrue(rutas.RE_CAMPANA.search(p), p)
