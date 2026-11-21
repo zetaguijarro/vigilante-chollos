@@ -1110,8 +1110,10 @@ def extraer(html, base_url, extra_json=()):
             if e and p.get("precio_antes") and abs(p["precio_antes"] - e[1]) < 0.015:
                 p["ref_tienda"] = e[0]
             # Zeta, 21/11/2026: "precio más bajo de los últimos 30 días" o "en 365 días" sale siempre.
+            # Es la etiqueta del precio tachado (Omnibus: "El precio más bajo de los últimos 30 días: X €"): solo vale
+            # si hay tachado y el precio de ahora está por debajo.
             dias = insignias.get(asin_de(p.get("url")) or "")
-            if dias or p.get("ref_tienda") == "mas_bajo":
+            if (dias or p.get("ref_tienda") == "mas_bajo") and p.get("precio_antes") and p["precio"] < p["precio_antes"]:
                 p["amz_minimo"] = max(dias or 0, 30)
         principal = ficha_amazon(html, base_url)
         if principal:  # en una ficha, el producto de la página va primero (no el primero del carrusel)
@@ -1477,12 +1479,25 @@ RE_NXM_TECNICO = re.compile(r"split|multi\s*-?split|inverter|frigor|btu|\bkw\b|\
 RE_NXM_PROMO = re.compile(r"oferta|promo|ll[eé]vate|paga|regalo|gratis|en\s+toda|comprando|\bpack\s+ahorro", re.I)
 
 
+RE_AMZ_AL_COMPRAR = re.compile(r"ahorra\s+(?:un\s+)?(\d{1,3})\s*%\s*(?:en\s+(\d)\s+)?al\s+comprar\s+(\d)"
+                               r"|(\d{1,3})\s*%\s+de\s+descuento\s+en\s+(\d)\s+al\s+comprar\s+(\d)", re.I)
+
+
 def promo_multicompra(texto, nombre=False):
     """-> (descripción, unidades, factor del precio por unidad) o None.
     '2.ª unidad al -70 %' -> ('2.ª unidad al -70 %', 2, 0.65); '3x2' -> ('3x2', 3, 0.667).
     nombre=True: el texto es el nombre del producto, donde "2x1" suele ser una característica (Split 2x1,
     switch HDMI 2x1): solo cuenta si va con una palabra de promoción."""
     t = unescape(texto or "")
+    m = RE_AMZ_AL_COMPRAR.search(t)
+    if m:  # Amazon (21/11/2026, Scottex de Zeta): "Ahorra 70 % en 1 al comprar 2" = 2.ª unidad al -70 %
+        pct = int(m.group(1) or m.group(4))
+        en, n = int(m.group(2) or m.group(5) or 0), int(m.group(3) or m.group(6))
+        if 1 <= pct <= 100 and n >= 2:
+            if not en or en >= n:  # "Ahorra 10 % al comprar 2": en todas
+                return f"-{pct} % comprando {n}", n, round(1 - pct / 100, 4)
+            desc = f"2.ª unidad al -{pct} %" if (en, n) == (1, 2) else f"-{pct} % en {en} comprando {n}"
+            return desc, n, round((n - en * pct / 100) / n, 4)
     for m in RE_SEGUNDA_PCT.finditer(t):
         # "2.ª unidad -50 % acum. en tu tarjeta" (Alcampo): es saldo para otra compra, no descuento en caja.
         # Reglas de formato de Zeta: un reembolso nunca se resta del pago directo.
@@ -6755,6 +6770,9 @@ def mensajes_candidato(n, p):
     if p.get("promo") and p.get("precio_suelto"):
         socio += (f" por unidad comprando {p.get('unidades', 2)} ({p['precio_suelto']:g} € la unidad suelta; "
                   f"{p['promo']})")
+    elif p.get("promo") and p.get("precio_unidad"):
+        precio_extra.append(f"Promoción: {p['promo']} (sale a {p['precio_unidad']:g} € la unidad comprando "
+                            f"{p.get('unidades', 2)})")
     if p.get("cupon") and p.get("precio_sin_cupon"):
         socio += f" con {p['cupon']} (sin cupón: {p['precio_sin_cupon']:g} €)"
     elif p.get("cupon_posible"):
@@ -7199,6 +7217,9 @@ def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
         return False, f"la ficha es de otro producto ({titulo[:60]})"
     if ficha.get("reacondicionado"):
         return False, f"reacondicionado o usado: {ficha['reacondicionado']}"
+    if ficha.get("promo") and not p.get("promo"):  # promoción por cantidad que solo dice la ficha (Amazon)
+        p["promo"], p["unidades"] = ficha["promo"][0], ficha["promo"][1]
+        p["precio_unidad"] = round(p["precio"] * ficha["promo"][2], 2)
     if ficha.get("resumen") and not p.get("_descripcion"):
         p["_descripcion"] = unescape(ficha["resumen"])
     if ficha["precio_ahora"] > p["precio"] * (1 + tolerancia):
@@ -7386,6 +7407,9 @@ def analizar_ficha(html, final, datos=()):
         o = oferta_amazon(html)
         if o is not None:
             f["amazon_oferta"] = o
+        m = RE_AMZ_AL_COMPRAR.search(unescape(plano))  # bloque de promoción del producto ("Comprar artículos seleccionados")
+        if m:
+            f["promo"] = promo_multicompra(m.group(0))
     if "mediamarkt." in urlparse(final or "").netloc:
         t = vendedor_mediamarkt(plano)
         if t:

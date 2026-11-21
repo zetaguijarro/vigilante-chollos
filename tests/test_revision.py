@@ -287,3 +287,21 @@ class AmazonMinimoYTallas(unittest.TestCase):
         ld = [{"hasVariant": [{"size": "M", "offers": {"price": "19.99", "availability": "InStock"}},
                               {"size": "L", "offers": {"price": "19.99", "availability": "OutOfStock"}}]}]
         self.assertEqual(v.variantes_de(ld, ""), ["M: hay stock · 19.99 €", "L: agotada"])
+
+
+class PromoAmazonAlComprar(unittest.TestCase):
+    """Zeta, 21/11/2026 (Scottex de Amazon): "Ahorra 70 % en 1 al comprar 2" no se reconocía."""
+
+    def test_frases_de_amazon(self):
+        import vigilante as v
+        self.assertEqual(v.promo_multicompra("Ahorra 70 % en 1 al comprar 2 Comprar artículos seleccionados"),
+                         ("2.ª unidad al -70 %", 2, 0.65))
+        self.assertEqual(v.promo_multicompra("Ahorra 10 % al comprar 2"), ("-10 % comprando 2", 2, 0.9))
+        self.assertEqual(v.promo_multicompra("Ahorra 50 % en 1 al comprar 3")[1:], (3, round((3 - 0.5) / 3, 4)))
+
+    def test_ficha_de_amazon(self):
+        import vigilante as v
+        html = ('<span id="productTitle">Scottex Sensitive 42 rollos</span><div>20,93 €</div>'
+                '<div>Ahorra 70&nbsp;% en 1 al comprar 2 Comprar art&iacute;culos seleccionados</div>')
+        self.assertEqual(v.analizar_ficha(html, "https://www.amazon.es/dp/B07BQD5J18").get("promo"),
+                         ("2.ª unidad al -70 %", 2, 0.65))
