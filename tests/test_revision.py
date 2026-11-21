@@ -305,3 +305,20 @@ class PromoAmazonAlComprar(unittest.TestCase):
                 '<div>Ahorra 70&nbsp;% en 1 al comprar 2 Comprar art&iacute;culos seleccionados</div>')
         self.assertEqual(v.analizar_ficha(html, "https://www.amazon.es/dp/B07BQD5J18").get("promo"),
                          ("2.ª unidad al -70 %", 2, 0.65))
+
+
+class CabeceraYCantidades(unittest.TestCase):
+    """Zeta, 21/11/2026: el Hot Wheels Megagaraje del T-Rex del Radar ya estaba en Chollometro."""
+
+    def test_cabecera_corta_en_barra(self):
+        import vigilante as v
+        self.assertEqual(v.cabecera("Hot Wheels City Megagaraje del T-Rex y 2 coches | Incluye 2 vehículos, JHL98"),
+                         "Hot Wheels City Megagaraje del T-Rex y 2 coches")
+        self.assertEqual(v.cabecera("Official | Xiaomi Robot Vacuum S40, 10 000 Pa"), "Xiaomi Robot Vacuum S40")
+
+    def test_packs_con_otra_cantidad(self):
+        import vigilante as v
+        self.assertTrue(v.conflicto_cantidad("Dodot Toallitas Pure Aqua, 864 Toallitas (18 Packs x 48)",
+                                             "1800 TOALLITAS Dodot 99% Aqua Toallitas 30 Paquetes De 60"))
+        self.assertTrue(v.conflicto_cantidad("Scottex Original, 96 rollos", "Scottex Acolchado 63 rollos"))
+        self.assertFalse(v.conflicto_cantidad("Dodot Aqua 18 packs x 48 toallitas", "Dodot Aqua 864 toallitas"))

@@ -3488,7 +3488,64 @@ def cabecera(texto):
     t = RE_TODO_EN_UNO.sub("all-in-one", texto or "")
     for rx, es in EN_A_ES:
         t = rx.sub(es, t)
+    # 21/11/2026 (Hot Wheels Megagaraje de Amazon): "Nombre | Incluye 2 vehículos..." también separa la lista.
+    # Pero "Official | Xiaomi Robot Vacuum S40, ...": el primer trozo con 3 palabras o más es el nombre.
+    trozos = [x.strip() for x in re.split(r"\s\|\s", t) if x.strip()] or [t]
+    t = next((x for x in trozos if len(x.split(",")[0].split()) >= 3), trozos[0])
     return t.split(",")[0].strip()
+
+
+RARA_NOMBRE_DF = 12  # una palabra de nombre (sin números) en menos de 12 títulos de la copia identifica el producto
+
+
+def palabras_raras_nombre(texto):
+    """Palabras del nombre (cabecera, sin números, 6+ letras) que casi no salen en la copia de Chollometro:
+    "megagaraje", "transportador"... Identifican el producto aunque no tenga código de modelo."""
+    idx = _INDICE.get("idx") or {}
+    if len(idx) < 5000:  # sin la copia completa, la rareza no dice nada
+        return set()
+    marca = set().union(*(set(_tokens_er(m)) for m in (marca_y_modelo(texto)[0] or ())))
+    return {w for w in _tokens_er(cabecera(texto)) if w.isalpha() and len(w) >= 6 and len(idx.get(w, ())) < RARA_NOMBRE_DF
+            and w not in GENERICAS_POST and w not in COLORES and w not in marca and w not in RECLAMO}
+
+
+RECLAMO = {"precio", "minimo", "oferta", "ofertas", "chollo", "chollazo", "descuento", "rebaja", "rebajado", "gratis",
+           "envio", "historico", "black", "friday", "cupon", "codigo", "promocion", "barato", "baratisimo", "derribo",
+           "liquidacion", "outlet", "unidades", "disponible", "espana", "tienda", "oficial", "official", "original",
+           "nuevo", "nueva", "version", "europea", "garantia"}
+
+
+RE_CUENTA = re.compile(r"(?<![\d.,])(\d{2,5})\s*(?:x\s*)?(toallitas|rollos|pa[ñn]ales|c[aá]psulas|pastillas|bolsitas|"
+                       r"lavados|dosis|monodosis|sobres|discos|bolsas|servilletas|pa[ñn]uelos|hojas|piezas|comprimidos)",
+                       re.I)
+RE_CON_JUEGO = re.compile(r"\+\s*(?:juego|mario\s+kart|pok[eé]mon|donkey|zelda)|\bpack\b.*\bjuego\b|\bbundle\b", re.I)
+
+
+def conflicto_cantidad(a, b):
+    """Packs con otra cantidad (Dodot 864 frente a 1.800 toallitas; Scottex 96 frente a 63 rollos) y consola con juego
+    frente a consola sola: otro producto. Se compara también el total del pack (18 x 48 = 864)."""
+    def cuentas(t):
+        c = {}
+        for n, ud in RE_CUENTA.findall(sin_tildes(t.lower())):
+            c.setdefault(ud.rstrip("s")[:6], set()).add(int(n))
+        return c
+    ca, cb = cuentas(a or ""), cuentas(b or "")
+    for ud in set(ca) & set(cb):
+        ta = ca[ud] | {x * q for x in ca[ud] for q in _unidades_pack(sin_tildes((a or "").lower()))}
+        tb = cb[ud] | {x * q for x in cb[ud] for q in _unidades_pack(sin_tildes((b or "").lower()))}
+        if not ta & tb:
+            return True
+    return bool(RE_CON_JUEGO.search(a or "")) != bool(RE_CON_JUEGO.search(b or "")) \
+        and bool(familias_de(a or "") & {"consolas"}) and bool(familias_de(b or "") & {"consolas"})
+
+
+def conflicto_nombre_raro(a, b):
+    """Cada uno con su palabra rara de nombre y ninguna en común (Megagaraje frente a Transportador): otro producto."""
+    ra, rb = palabras_raras_nombre(a), palabras_raras_nombre(b)
+    if not (ra and rb) or ra & rb:
+        return False
+    # Con faltas o plurales ("megagarage", "transportadores") no es conflicto.
+    return not any(_palabra_parecida(x, y) for x in ra for y in rb)
 
 
 def _sin_codigo(texto):
@@ -3594,8 +3651,8 @@ def mismo_por_palabras_modelo(nombre, titulo, marca=None):
     idx = _INDICE.get("idx") or {}
     rara = lambda w: _es_palabra_modelo(w) and len(w) >= 3 and len(idx.get(w, ())) < 300
     mwa, mwb = {w for w in ta if rara(w)}, {w for w in tb if rara(w)}
-    if not (mwa & mwb):
-        return False  # sin una palabra de modelo rara en común (S40, UX3480) esta vía no decide
+    if not (mwa & mwb) and not (palabras_raras_nombre(nombre) & palabras_raras_nombre(titulo)):
+        return False  # sin una palabra de modelo rara en común (S40, UX3480) ni de nombre (Megagaraje) esta vía no decide
     if (mwa - mwb) and (mwb - mwa):
         return False  # cada uno con su propio modelo (TQ65S95H frente a TQ65S85F; V3607VM-TK150 frente a -TK265)
     # Misma forma y otro número, aunque sea una palabra corriente: DDR4 frente a DDR5, Gen4 frente a Gen5.
@@ -3699,8 +3756,10 @@ def mismo_post(nombre, titulo, marca=None):
     20/11/2026 (#294, Braun All-in-One Series 7 de Miravia con un nombre larguísimo en inglés): si el producto no tiene
     código de modelo y no casa con el nombre entero, se compara la cabecera (antes de la primera coma) de los dos.
     21/11/2026: perfumes y líquidos con volumen, concentración, versión o género distintos nunca son el mismo."""
-    if conflicto_liquido(nombre, titulo):
+    if conflicto_liquido(nombre, titulo) or conflicto_nombre_raro(nombre, titulo) or conflicto_cantidad(nombre, titulo):
         return False
+    if len(_tokens_er(nombre or "")) >= 3 and sorted(_tokens_er(nombre or "")) == sorted(_tokens_er(titulo or "")):
+        return True  # las mismas palabras ("PS5 Marvel's Spiderman 2" = "Marvel's Spiderman 2 ps5")
     if mismo_producto(nombre, titulo, marca):
         return True
     cn, ct = cabecera(nombre), cabecera(titulo)
