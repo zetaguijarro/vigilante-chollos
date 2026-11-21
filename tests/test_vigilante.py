@@ -1935,7 +1935,8 @@ class Rondas(Base):
             self.assertIn(t, siempre)
         # Repaso del 18/11/2026 con Zeta: de 183 tiendas a 63 (62 desde que PrecioReal dejó de leerse como tienda, 18/11). Se apartan las que no se pueden leer (antibot, Worten
         # sin venta online) y las que no tienen demanda; quedan en "apartadas" con su motivo.
-        self.assertEqual(len(leidas), 61)  # 20/11/2026: Lefties apartada (0 productos siempre)
+        self.assertEqual(len(leidas), 60)  # 20/11/2026: Lefties apartada (0 productos siempre); 21/11: Alcampo (Zeta)
+        self.assertIn("alcampo.es", apartadas)
         for t in ("fnac.es", "adidas.es", "worten.es", "www.aeg.com.es"):
             self.assertIn(t, apartadas)
             self.assertNotIn(t, siempre)
