@@ -195,11 +195,32 @@ class FichaReacoYCincoMensajes(unittest.TestCase):
         import vigilante as v
         partes = v.mensajes_candidato(9, {"tienda": "t.es", "nombre": "Cafetera X", "precio": 50, "precio_antes": 80,
                                           "url": "https://t.es/x", "ch": "no", "_descripcion": "Cafetera de 15 bares"})
-        self.assertEqual(len(partes), 5)
+        self.assertEqual(len(partes), 6)
         self.assertIn("NUEVA CANDIDATA", partes[0])
-        self.assertIn("Cafetera X", partes[0])
-        self.assertIn("50 €", partes[1])
-        self.assertIn("80 €", partes[1])
-        self.assertIn("https://t.es/x", partes[2])
-        self.assertIn("Chollometro", partes[3])
-        self.assertIn("15 bares", partes[4])
+        self.assertEqual(partes[1], "<b>Cafetera X</b>")  # el título solo, sin enlace ni nada
+        self.assertIn("50 €", partes[2])
+        self.assertIn("80 €", partes[2])
+        self.assertIn("https://t.es/x", partes[3])
+        self.assertIn("Chollometro", partes[4])
+        self.assertIn("15 bares", partes[5])
+
+
+class PerfumesYLiquidos(unittest.TestCase):
+    """Zeta, 21/11/2026: perfumes, colonias y líquidos, sin falsos positivos al comparar con Chollometro."""
+
+    def test_distintos(self):
+        import vigilante as v
+        a = "Dior Sauvage Eau de Toilette 100 ml"
+        self.assertFalse(v.mismo_post(a, "Dior Sauvage Eau de Toilette 200 ml"))
+        self.assertFalse(v.mismo_post(a, "Dior Sauvage Eau de Parfum 100 ml"))
+        self.assertFalse(v.mismo_post(a, "Dior Sauvage Elixir 100 ml"))
+        self.assertFalse(v.mismo_post("Paco Rabanne 1 Million EDT 100ml", "Paco Rabanne 1 Million EDT 100ml estuche"))
+        self.assertFalse(v.mismo_post("Carolina Herrera 212 VIP EDP mujer 80 ml", "Carolina Herrera 212 VIP EDP hombre 80 ml"))
+        self.assertFalse(v.mismo_post("Aceite de oliva virgen extra Carbonell 1 L", "Aceite de oliva virgen extra Carbonell 5 L"))
+
+    def test_iguales(self):
+        import vigilante as v
+        self.assertIsNone(v.conflicto_liquido("Dior Sauvage EDT 100 ml", "Dior Sauvage Eau de Toilette 100ml"))
+        self.assertIsNone(v.conflicto_liquido("Perfume Hugo Boss Bottled 3.4 fl oz", "Hugo Boss Bottled EDT 100 ml"))
+        self.assertIsNone(v.conflicto_liquido("Cafetera Jocca 1,5 L", "Cafetera Jocca 1.5 l"))
+        self.assertIsNone(v.conflicto_liquido("Auriculares Sony WH-1000XM5", "Sony WH-1000XM5 negros"))

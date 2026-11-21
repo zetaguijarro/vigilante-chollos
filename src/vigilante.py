@@ -3575,10 +3575,86 @@ def mismo_por_palabras_modelo(nombre, titulo, marca=None):
     return sim >= 50
 
 
+RE_VOLUMEN = re.compile(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(ml|cl|l|litros?|fl\.?\s?oz|oz)(?![a-z])", re.I)
+RE_PERFUME = re.compile(r"perfume|colonia|eau\s+de|\bedt\b|\bedp\b|parfum|body\s+mist|after\s*shave|fragancia|"
+                        r"\bextrait\b|\bcologne\b|toilette", re.I)
+# Concentración del perfume: EDT y EDP del mismo nombre son productos (y precios) distintos.
+CONCENTRACIONES = (("extrait", r"\bextrait\b|extracto\s+de\s+perfume"),
+                   ("parfum", r"(?<!eau de )(?<!eau du )\bparfum\b(?!\s*de\s+toilette)|\bperfume\s+puro\b"),
+                   ("edp", r"\bedp\b|eau\s+de\s+parfum|eau\s+du\s+parfum"),
+                   ("edt", r"\bedt\b|eau\s+de\s+toilette"),
+                   ("edc", r"\bedc\b|eau\s+de\s+cologne|agua\s+de\s+colonia"),
+                   ("mist", r"body\s+mist|bruma"), ("aftershave", r"after\s*shave"))
+# Versiones ("flankers") de una misma fragancia: Sauvage y Sauvage Elixir son perfumes distintos.
+RE_FLANKER = re.compile(r"\b(elixir|intense|intensa|intenso|absolu|absolute|extreme|sport|noir|nuit|night|fraiche|"
+                        r"aqua|acqua|le\s+parfum|platinum|prive|privee|summer|limited|tester|recarga|refill|"
+                        r"estuche|set|coffret|lote|pack)\b", re.I)
+RE_GENERO_P = (("hombre", r"\b(hombre|homme|men|man|uomo|pour\s+homme|masculin[oa]?)\b"),
+               ("mujer", r"\b(mujer|femme|women|woman|donna|pour\s+femme|femenin[oa]?)\b"))
+
+
+def _volumenes(texto):
+    """Volúmenes del título en ml (redondeados): "100 ml", "10cl", "1,5 L", "3.4 fl oz"."""
+    salida = set()
+    for num, ud in RE_VOLUMEN.findall(texto or ""):
+        x = float(num.replace(",", "."))
+        ud = ud.lower().replace(" ", "")
+        ml = x * (10 if ud == "cl" else 1000 if ud.startswith("l") else 29.57 if "oz" in ud else 1)
+        salida.add(round(ml))
+    return salida
+
+
+def _unidades_pack(texto):
+    """Unidades de un pack: "pack de 4", "caja de 24 latas", "3x5L", "2 x", "6 botellas"."""
+    uds = set(_cantidades(texto))
+    for m in re.finditer(r"(?:pack|paquetes?|caja|lote)\s+de\s+(\d{1,3})\b|(?<![\d.,])(\d{1,3})\s*(?:x|botellas|latas|"
+                         r"botes|garrafas|unidades|uds?|paquetes|packs)(?![a-z])", texto):
+        uds.add(int(m.group(1) or m.group(2)))
+    return {q for q in uds if 1 < q <= 200}
+
+
+def conflicto_liquido(a, b):
+    """Zeta, 21/11/2026: "los perfumes, colonias y cosas de líquido tienes que mirar bien que coincida con las búsquedas
+    de Chollometro para no dar falsos positivos". -> motivo si son productos distintos, None si no hay conflicto.
+    Volumen distinto (con un 3 % de margen por oz), y en perfumes: concentración, versión (Elixir, Intense,
+    estuche...) y género distintos."""
+    a, b = sin_tildes((a or "").lower()), sin_tildes((b or "").lower())
+    va, vb = _volumenes(a), _volumenes(b)
+    perfume = bool(RE_PERFUME.search(a) or RE_PERFUME.search(b))
+    if not (va or vb or perfume):
+        return None
+    # También el total del pack: "3x5L" es "15L" y "4 botellas de 5 litros", "20 L".
+    ta = va | {x * q for x in va for q in _unidades_pack(a)}
+    tb = vb | {x * q for x in vb for q in _unidades_pack(b)}
+    if va and vb and not any(abs(x - y) <= max(2, 0.03 * max(x, y)) for x in ta for y in tb):
+        return f"volumen distinto ({sorted(va)} ml / {sorted(vb)} ml)"
+    if not perfume:
+        return None
+    ca = {k for k, rx in CONCENTRACIONES if re.search(rx, a)}
+    cb = {k for k, rx in CONCENTRACIONES if re.search(rx, b)}
+    if ca and cb and not (ca & cb):
+        return f"concentración distinta ({'/'.join(sorted(ca))} frente a {'/'.join(sorted(cb))})"
+    fa = {re.sub(r"\s+", " ", x) for x in RE_FLANKER.findall(a)}
+    fb = {re.sub(r"\s+", " ", x) for x in RE_FLANKER.findall(b)}
+    norm = {"intensa": "intense", "intenso": "intense", "absolute": "absolu", "acqua": "aqua", "privee": "prive",
+            "refill": "recarga", "coffret": "estuche", "set": "estuche", "lote": "estuche", "pack": "estuche"}
+    fa, fb = {norm.get(x, x) for x in fa}, {norm.get(x, x) for x in fb}
+    if fa != fb:
+        return f"otra versión ({', '.join(sorted(fa ^ fb))})"
+    ga = {k for k, rx in RE_GENERO_P if re.search(rx, a)}
+    gb = {k for k, rx in RE_GENERO_P if re.search(rx, b)}
+    if len(ga) == 1 and len(gb) == 1 and ga != gb:
+        return "otro género"
+    return None
+
+
 def mismo_post(nombre, titulo, marca=None):
     """¿El post de Chollometro es este producto? Desde el 18/11/2026, por marca y modelo (mismo_producto).
     20/11/2026 (#294, Braun All-in-One Series 7 de Miravia con un nombre larguísimo en inglés): si el producto no tiene
-    código de modelo y no casa con el nombre entero, se compara la cabecera (antes de la primera coma) de los dos."""
+    código de modelo y no casa con el nombre entero, se compara la cabecera (antes de la primera coma) de los dos.
+    21/11/2026: perfumes y líquidos con volumen, concentración, versión o género distintos nunca son el mismo."""
+    if conflicto_liquido(nombre, titulo):
+        return False
     if mismo_producto(nombre, titulo, marca):
         return True
     cn, ct = cabecera(nombre), cabecera(titulo)
@@ -6659,8 +6735,10 @@ def mensajes_candidato(n, p):
     if precio_extra_v:
         precio_bloque += "\n" + "\n".join(precio_extra_v)
     desc = (p.get("_descripcion") or "").strip()
+    # Zeta, 21/11/2026: el separador en su propio mensaje (con el número, la tienda y la foto) y el título solo.
     return [
-        f"{SEPARADOR_FICHA}\n<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}\n\n📌 <b>{escape(p['nombre'])}</b>",
+        f"{SEPARADOR_FICHA}\n<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}",
+        f"<b>{escape(p['nombre'])}</b>",
         precio_bloque,
         f"🔗 <b>Enlace:</b>\n{escape(p.get('url') or '')}",
         "ℹ️ <b>Info adicional</b>\n" + "\n".join(info_v),
@@ -6672,7 +6750,7 @@ SEPARADOR_FICHA = "🟥🟧🟨🟩🟦🟪🟥🟧🟨🟩🟦🟪\n🚨 <b>NUE
 
 
 def mensaje_candidato(n, p):
-    """La ficha entera en un solo texto (para registros y pruebas); a Telegram va en 5 mensajes."""
+    """La ficha entera en un solo texto (para registros y pruebas); a Telegram va en 6 mensajes (separador + 5)."""
     return "\n\n".join(mensajes_candidato(n, p))
 
 

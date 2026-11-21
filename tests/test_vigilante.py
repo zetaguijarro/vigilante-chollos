@@ -1782,7 +1782,7 @@ class Rondas(Base):
                       texto)
         # 19/11/2026 (Zeta): título, precio y datos se distinguen (HTML: cabecera y título en negrita, precio aparte)
         self.assertIn("<b>#7 · ", texto)  # 21/11/2026: 5 mensajes (título, precio, enlace, info, descripción)
-        self.assertIn("📌 <b>JBL Charge 5 Negro</b>", texto)
+        self.assertIn("\n<b>JBL Charge 5 Negro</b>\n", texto)  # el título solo
         self.assertIn("<b>Precio final: 99 €</b>", texto)
         self.assertNotIn("search?q=", texto)
         p["_iguales"][0]["coincide"] = "coincide 92 %"
