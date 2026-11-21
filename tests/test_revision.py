@@ -175,3 +175,31 @@ class CompactoSinMercado(unittest.TestCase):
         c = v.compacto(p)
         self.assertEqual(c["p"], 176.01)
         self.assertNotIn("id", c)
+
+
+class FichaReacoYCincoMensajes(unittest.TestCase):
+    """Zeta, 21/11/2026: reacondicionados fuera mirando la ficha; la candidata en 5 mensajes con separador."""
+
+    def test_reacondicionado_en_ficha(self):
+        import vigilante as v
+        self.assertTrue(v.estado_no_nuevo('<h1>iPhone 14 128GB - Reacondicionado</h1>', "", "https://t.es/p/1"))
+        self.assertTrue(v.estado_no_nuevo('<h1>iPhone 14</h1>', "", "https://t.es/reacondicionados/iphone-14"))
+        self.assertTrue(v.estado_no_nuevo('<h1>iPhone 14</h1>{"itemCondition": "https://schema.org/RefurbishedCondition"}',
+                                          "", "https://t.es/p/1"))
+        self.assertTrue(v.estado_no_nuevo('<h1>iPhone 14</h1>', "Precio 500 € Estado: Como nuevo", "https://t.es/p/1"))
+        # Nuevo, con un enlace de menú a la sección de reacondicionados y una reseña: no cuenta.
+        self.assertIsNone(v.estado_no_nuevo('<h1>iPhone 14</h1>{"itemCondition": "https://schema.org/NewCondition"}',
+                                            "Menú Reacondicionados Ofertas · Llegó en estado excelente", "https://t.es/p/1"))
+
+    def test_cinco_mensajes(self):
+        import vigilante as v
+        partes = v.mensajes_candidato(9, {"tienda": "t.es", "nombre": "Cafetera X", "precio": 50, "precio_antes": 80,
+                                          "url": "https://t.es/x", "ch": "no", "_descripcion": "Cafetera de 15 bares"})
+        self.assertEqual(len(partes), 5)
+        self.assertIn("NUEVA CANDIDATA", partes[0])
+        self.assertIn("Cafetera X", partes[0])
+        self.assertIn("50 €", partes[1])
+        self.assertIn("80 €", partes[1])
+        self.assertIn("https://t.es/x", partes[2])
+        self.assertIn("Chollometro", partes[3])
+        self.assertIn("15 bares", partes[4])

@@ -342,6 +342,8 @@ class PrecargaHistorial(unittest.TestCase):
         v.time.sleep = lambda s: None
         self.telegram = []  # el token sale del .env de Hermes: sin esto, las pruebas mandarían mensajes de verdad
         v.enviar_telegram = lambda token, chat, texto, *a, **k: self.telegram.append(texto)
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
 
     def tearDown(self):
         v.DATOS, v.DB, v.descargar, v.time.sleep, v.enviar_telegram = self._orig
@@ -1779,13 +1781,14 @@ class Rondas(Base):
         self.assertIn("• 🔗 <b>Hilo:</b> 10/03/2026 · 110 € · 850° · Amazon · agotado\nhttps://www.chollometro.com/ofertas/jbl-charge-5-1",
                       texto)
         # 19/11/2026 (Zeta): título, precio y datos se distinguen (HTML: cabecera y título en negrita, precio aparte)
-        self.assertTrue(texto.startswith("<b>#7 · "), texto)
-        self.assertIn("<b>JBL Charge 5 Negro</b>\n\nhttps://x.es/jbl\n\n<b>99 €</b>", texto)  # título, enlace y precio
+        self.assertIn("<b>#7 · ", texto)  # 21/11/2026: 5 mensajes (título, precio, enlace, info, descripción)
+        self.assertIn("📌 <b>JBL Charge 5 Negro</b>", texto)
+        self.assertIn("<b>Precio final: 99 €</b>", texto)
         self.assertNotIn("search?q=", texto)
         p["_iguales"][0]["coincide"] = "coincide 92 %"
         self.assertIn("Amazon · agotado · coincide 92 %", v.mensaje_candidato(7, p))
         self.assertEqual(v.coincidencia("Sony WH-CH720N Azul Auriculares", "Sony WH-CH720N Auriculares Bluetooth"), 100)
-        self.assertIn("Referencia de la tienda: 179 €", texto)
+        self.assertIn("<b>Referencia de la tienda:</b> 179 €", texto)
         self.assertIn("<b>Descuento real:</b> -34 % sobre mercado", texto)
 
     def test_etiquetas_honestas(self):
@@ -2634,6 +2637,8 @@ class ModoTelegram(Base):
         self.enviados, self.teclados = [], []
         self._orig_tg = (v.enviar_telegram, v.token_telegram)
         v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: (self.enviados.append((chat, texto, foto)), self.teclados.append(teclado)) and True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         v.token_telegram = lambda: "123:ABC"
         self.red.tiendas = {"mediamarkt": [{"n": "Xiaomi Redmi Buds 6 Pro Negro", "m": "Xiaomi", "e": "6941812790000",
                                             "p": 39.99, "a": 79.99}],
@@ -3044,7 +3049,7 @@ class ModoTelegram(Base):
         self.ronda()
         self.assertEqual(len(self.enviados), 2)
         for (_, texto, _), teclado in zip(self.enviados, self.teclados):
-            n = re.match(r"<b>#(\d+)", texto).group(1)
+            n = re.search(r"<b>#(\d+)", texto).group(1)
             boton = json.loads(teclado)["inline_keyboard"]
             self.assertEqual(boton, [[{"text": f"Verificar #{n}", "callback_data": f"vg:verifica:{n}"}]])
         plugin = RAIZ / "hermes" / "plugins" / "vigilante-botones" / "__init__.py"
@@ -3084,7 +3089,7 @@ class ModoTelegram(Base):
         chat, texto, foto = self.enviados[0]
         self.assertEqual(chat, "456808276")
         self.assertIn("#1 · mediamarkt.es", texto)
-        self.assertIn("<b>34.99 €</b>. Referencia de la tienda: 79.99 €, -56 %.", texto)
+        self.assertIn("<b>Precio final: 34.99 €</b>\n🏷️ <b>Referencia de la tienda:</b> 79.99 €, -56 %", texto)
         self.assertIn("<b>Mercado:</b> 45 €", texto)
         self.assertEqual(json.loads(self.teclados[0])["inline_keyboard"][0][0]["callback_data"], "vg:verifica:1")
         self.assertTrue(foto.endswith("/img.jpg"))
@@ -3099,7 +3104,7 @@ class ModoTelegram(Base):
         # Una tienda "cambia sus enlaces": 12 productos nuevos de golpe (la tanda deja pasar 15).
         self.red.tiendas["mediamarkt"] += [{"n": f"JBL Charge {i}", "m": "JBL", "p": 50.0, "a": 150.0} for i in range(12)]
         self.ronda()
-        candidatos = [t for _, t, _ in self.enviados if t.startswith("<b>#")]
+        candidatos = [t for _, t, _ in self.enviados if "NUEVA CANDIDATA" in t]
         avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
         self.assertEqual(len(candidatos), 5, "solo hasta el límite por hora")
         self.assertEqual(len(avisos), 1, "un único aviso")
@@ -3117,7 +3122,7 @@ class ModoTelegram(Base):
         con.execute("UPDATE lista SET fecha=? WHERE enviado=1", (datetime.now().strftime("%Y-%m-%dT00:00"),))
         con.commit()
         self.ronda()
-        candidatos = [t for _, t, _ in self.enviados if t.startswith("<b>#")]
+        candidatos = [t for _, t, _ in self.enviados if "NUEVA CANDIDATA" in t]
         avisos = [t for _, t, _ in self.enviados if "Freno del vigilante" in t]
         self.assertEqual(len(candidatos), 8)
         self.assertEqual(len(avisos), 2)
@@ -3252,6 +3257,8 @@ class ReglasInstinct(Base):
         enviados = []
         orig = (v.enviar_telegram, v.token_telegram)
         v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: enviados.append((texto, foto)) or True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         v.token_telegram = lambda: "x"
         c = json.loads(v.CONFIG.read_text(encoding="utf-8"))
         c["entrega"] = {"modo": "telegram", "chat_id": "1"}
@@ -3345,6 +3352,8 @@ class SilencioYUltimaComprobacion(Base):
         self.enviados = []
         self._orig_sil = (v.enviar_telegram, v.token_telegram, v.ahora_madrid)
         v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: self.enviados.append(texto) or True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         v.token_telegram = lambda: "x"
         self.hora = "14:30"
         v.ahora_madrid = lambda: datetime.strptime(self.hora, "%H:%M")
@@ -3474,6 +3483,8 @@ class Sesiones(Base):
         self.avisos = []
         self._o = (v.enviar_telegram, v.token_telegram)
         v.enviar_telegram = lambda tok, chat, texto, foto=None, teclado=None, **k: self.avisos.append(texto) or True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         v.token_telegram = lambda: "x"
         self.red.tiendas = {"mediamarkt": [{"n": "JBL Flip 6", "m": "JBL", "p": 99, "a": 149}],
                             "pccomponentes": [{"n": "Sony WH-CH520", "m": "Sony", "p": 40, "a": 60}]}
@@ -4552,6 +4563,8 @@ class DestinoDeHilos(unittest.TestCase):
         orig = v.token_telegram, v.enviar_telegram, v.buscar_en_chollometro, v.actualizar_chollometro
         v.token_telegram = lambda: "t"
         v.enviar_telegram = lambda token, chat, texto, *a, **k: enviados.append(texto) or True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         v.buscar_en_chollometro = lambda con_, p_: buscadas.append(p_["nombre"]) or 1
         v.actualizar_chollometro = lambda con_: None
         try:
@@ -4705,6 +4718,8 @@ class PestanasTelegram(unittest.TestCase):
         enviados = []
         v.token_telegram = lambda: "t"
         v.enviar_telegram = lambda token, chat, texto, foto=None, *a, **k: enviados.append((texto, k.get("hilo"))) or True
+        self.addCleanup(setattr, v, "enviar_ficha", v.enviar_ficha)  # la ficha en un solo envío para contar avisos
+        v.enviar_ficha = lambda tok, chat, partes, foto, teclado, hilo: v.enviar_telegram(tok, chat, "\n\n".join(partes), foto, teclado, html=True, hilo=hilo)
         try:
             con = v.bd()
             cfg = {"entrega": {"modo": "telegram", "chat_id": "1"}}

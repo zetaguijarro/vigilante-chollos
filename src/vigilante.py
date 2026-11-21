@@ -6531,10 +6531,20 @@ def enviar_pendientes(con, entrega):
                 con.commit()
                 continue
             p["ch"] = d["ch"] = ch
-        if enviar_telegram(token, chat, mensaje_candidato(n, p or {}), (p or {}).get("imagen_url"),
-                           boton_verificar(n), html=True, hilo=f"cat:{d.get('cat')}"):  # pestaña de su categoría
+        if enviar_ficha(token, chat, mensajes_candidato(n, p or {}), (p or {}).get("imagen_url"), boton_verificar(n),
+                        f"cat:{d.get('cat')}"):  # pestaña de su categoría
             con.execute("UPDATE lista SET enviado=1, datos=? WHERE id=?", (json.dumps(d, ensure_ascii=False), n))
         con.commit()
+
+
+def enviar_ficha(token, chat, partes, foto, teclado, hilo):
+    """La ficha en mensajes seguidos (Zeta, 21/11/2026): el primero con la foto y el último con el botón.
+    -> True si salió el primero (el resto se intenta igual)."""
+    if not enviar_telegram(token, chat, partes[0], foto, teclado if len(partes) == 1 else None, html=True, hilo=hilo):
+        return False
+    for i, texto in enumerate(partes[1:], 1):
+        enviar_telegram(token, chat, texto, None, teclado if i == len(partes) - 1 else None, html=True, hilo=hilo)
+    return True
 
 
 def boton_verificar(n):
@@ -6552,7 +6562,7 @@ def _negrita_etiqueta(linea):
     return escape(linea)
 
 
-def mensaje_candidato(n, p):
+def mensajes_candidato(n, p):
     """Aviso de candidata antes de validar, en HTML de Telegram (Zeta, 19/11/2026: "me cuesta distinguir título,
     precio y descripción"): cabecera, título en negrita, precio aparte, y los datos en bloques con la etiqueta en
     negrita (comparación, Chollometro, avisos). Sin emojis (regla de Instinct)."""
@@ -6640,15 +6650,30 @@ def mensaje_candidato(n, p):
     for x in avisos:
         emoji = "🕒" if x.startswith("Detectado") else "⚠️"
         vinetas.append(f"• {emoji} {_negrita_etiqueta(x) if x.startswith('Ojo') else escape(x)}")
-    # Como las fichas de Instinct (Zeta, 19/11/2026): título, enlace, precio y las viñetas con un emoji cada una.
-    precio_linea = f"<b>{p['precio']:g} €</b>{escape(socio)}" + (f". {escape(antes)}." if antes else ".")
-    bloques = [
-        f"<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}\n<b>{escape(p['nombre'])}</b>",
-        escape(p.get("url") or ""),
-        precio_linea,
-        "\n".join(vinetas),
+    # Zeta, 21/11/2026: la ficha en 5 mensajes (título, precio final y referencia, enlace, info adicional y
+    # descripción) y un separador llamativo entre ficha y ficha (va encima del título).
+    precio_extra_v = [v for v in vinetas if v.startswith(("• 💰", "• 🎟️"))]
+    info_v = [v for v in vinetas if v not in precio_extra_v]
+    precio_bloque = f"💶 <b>Precio final: {p['precio']:g} €</b>{escape(socio)}"
+    precio_bloque += f"\n🏷️ {_negrita_etiqueta(antes)}" if antes else "\n🏷️ <b>PVP o referencia:</b> la tienda no enseña precio anterior"
+    if precio_extra_v:
+        precio_bloque += "\n" + "\n".join(precio_extra_v)
+    desc = (p.get("_descripcion") or "").strip()
+    return [
+        f"{SEPARADOR_FICHA}\n<b>#{n} · {escape(p['tienda'])}</b>{escape(baja)}\n\n📌 <b>{escape(p['nombre'])}</b>",
+        precio_bloque,
+        f"🔗 <b>Enlace:</b>\n{escape(p.get('url') or '')}",
+        "ℹ️ <b>Info adicional</b>\n" + "\n".join(info_v),
+        "📝 <b>Descripción</b>\n" + (escape(desc[:600]) if desc else "La ficha no trae descripción legible."),
     ]
-    return "\n\n".join(b for b in bloques if b.strip())
+
+
+SEPARADOR_FICHA = "🟥🟧🟨🟩🟦🟪🟥🟧🟨🟩🟦🟪\n🚨 <b>NUEVA CANDIDATA</b> 🚨\n🟥🟧🟨🟩🟦🟪🟥🟧🟨🟩🟦🟪"
+
+
+def mensaje_candidato(n, p):
+    """La ficha entera en un solo texto (para registros y pruebas); a Telegram va en 5 mensajes."""
+    return "\n\n".join(mensajes_candidato(n, p))
 
 
 # ------------------------------------------------------------------ alertas y descartes (Zeta, 21/11/2026)
@@ -6836,6 +6861,11 @@ def revisar_casi_en_ficha(con, cfg, casi, maximo=CASI_POR_RONDA):
                 log(f"casi chollo sin ficha, fuera: {p['tienda']} {p['nombre'][:50]}: {str(e)[:60]}")
                 continue
             ahora = ficha.get("precio_ahora")
+            if ficha.get("reacondicionado"):
+                log_descarte(p, f"reacondicionado o usado ({ficha['reacondicionado']}), no se envía: {p['tienda']} {p['nombre'][:60]}")
+                continue
+            if ficha.get("resumen"):
+                p["_descripcion"] = unescape(ficha["resumen"])
             if ficha.get("antibot") or not ahora:
                 log(f"casi chollo sin ficha legible, fuera: {p['tienda']} {p['nombre'][:60]}")
                 continue
@@ -7008,6 +7038,10 @@ def confirmar_en_ficha(p, tolerancia=0.02, nav=None):
     titulo = ficha.get("titulo") or ""
     if titulo and not mismo_post(p["nombre"], titulo) and parecido(titulo, p["nombre"]) < 0.5:
         return False, f"la ficha es de otro producto ({titulo[:60]})"
+    if ficha.get("reacondicionado"):
+        return False, f"reacondicionado o usado: {ficha['reacondicionado']}"
+    if ficha.get("resumen") and not p.get("_descripcion"):
+        p["_descripcion"] = unescape(ficha["resumen"])
     if ficha["precio_ahora"] > p["precio"] * (1 + tolerancia):
         return False, f"la ficha marca {ficha['precio_ahora']} € y el listado {p['precio']} €"
     if ficha.get("stock") == "no":
@@ -7136,6 +7170,36 @@ def vendedor_mediamarkt(plano):
     return m.group(1).strip()
 
 
+RE_LD_CONDICION = re.compile(r'"itemCondition"\s*:\s*"[^"]*?(Refurbished|Used|Damaged)Condition', re.I)
+# Etiqueta de estado junto a su valor ("Estado: Reacondicionado", "Condición: Como nuevo"); el menú de la web con un
+# enlace "Reacondicionados" no cuenta.
+RE_ESTADO_FICHA = re.compile(r"\b(?:estado|condici[oó]n)(?:\s+del\s+(?:producto|art[ií]culo))?\s*:\s*(reacondicionad\w*|usad[oa]|"
+                             r"segunda\s+mano|como\s+nuevo|seminuev\w*|renovad[oa]|refurbished|excelente|muy\s+bueno|"
+                             r"bueno|aceptable|grado\s+[abc]\b|open\s*box)", re.I)
+
+
+def estado_no_nuevo(html, plano, final):
+    """Zeta, 21/11/2026: "ten cuidado con los reacondicionados, mira en la ficha y si lo es no lo mandes".
+    Señales fiables de la ficha: el título (h1/og), la URL final, el itemCondition de schema.org o la etiqueta de
+    estado. -> motivo corto o None."""
+    for rx in (RE_AMZ_TITULO, RE_H1, RE_OG_TITULO):
+        m = rx.search(html)
+        if m and _texto(m.group(1)).strip():
+            t = unescape(_texto(m.group(1)))
+            if RE_REACONDICIONADO.search(t):
+                return f"el título de la ficha dice «{RE_REACONDICIONADO.search(t).group(0)}»"
+            break
+    if re.search(r"reacondicionad|refurbished|segunda-mano|/usados?/|renewed", urlparse(final or "").path, re.I):
+        return "la dirección de la ficha es de reacondicionados o usados"
+    m = RE_LD_CONDICION.search(html)
+    if m:
+        return f"la ficha declara estado {m.group(1)}"
+    m = RE_ESTADO_FICHA.search(plano)
+    if m:
+        return f"la ficha pone «{m.group(0)[:40]}»"
+    return None
+
+
 def analizar_ficha(html, final, datos=()):
     plano = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<[^>]+>", " ", html, flags=re.S | re.I)
     plano = " ".join(plano.split())
@@ -7167,6 +7231,9 @@ def analizar_ficha(html, final, datos=()):
         t = vendedor_mediamarkt(plano)
         if t:
             f["vendedor_tercero"] = t
+    reaco = estado_no_nuevo(html, plano, final)
+    if reaco:
+        f["reacondicionado"] = reaco
     if RE_UNA_UNIDAD.search(plano):
         f["una_unidad"] = True
     if RE_NO_ENVIA_ES.search(plano):
