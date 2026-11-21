@@ -3072,7 +3072,12 @@ def es_accesorio_de(texto):
     """¿Es un accesorio o pieza de otro producto? Por las primeras palabras ("Funda...", "Puntas Bosch") o por
     frases como "para Samsung", "compatible con". "Taladro Bosch (... 32 puntas)" no lo es."""
     texto = texto or ""
-    return bool(RE_ACCESORIO_INICIO.search(texto) or RE_ACCESORIO_FRASE.search(texto))
+    if RE_ACCESORIO_INICIO.search(texto):
+        return True
+    # 21/11/2026 (fuente MSI A850GLS de Amazon): "..., 80 Plus Gold, Compatible con GPU PCIe 5.1" es una característica
+    # del producto, no un accesorio: "compatible con" solo cuenta en el nombre (antes de la primera coma o " | ").
+    cab = cabecera(texto).lower()
+    return any(m.group(0).lower() != "compatible con" or "compatible con" in cab for m in RE_ACCESORIO_FRASE.finditer(texto))
 
 
 RE_JUEGO = re.compile(r"\bjuego\b|\bvideojuego\b|\bedition\b|\bedici[oó]n\b|\bf[ií]sico\b|\bc[oó]digo de descarga\b",

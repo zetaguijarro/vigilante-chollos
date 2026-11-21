@@ -322,3 +322,14 @@ class CabeceraYCantidades(unittest.TestCase):
                                              "1800 TOALLITAS Dodot 99% Aqua Toallitas 30 Paquetes De 60"))
         self.assertTrue(v.conflicto_cantidad("Scottex Original, 96 rollos", "Scottex Acolchado 63 rollos"))
         self.assertFalse(v.conflicto_cantidad("Dodot Aqua 18 packs x 48 toallitas", "Dodot Aqua 864 toallitas"))
+
+
+class CompatibleConEnCaracteristicas(unittest.TestCase):
+    """Zeta, 21/11/2026: la fuente MSI MAG A850GLS de Amazon tenía hilo activo y salió por "Compatible con GPU"."""
+
+    def test_no_es_accesorio_por_una_caracteristica(self):
+        import vigilante as v
+        a = "MSI mag A850GLS PCIE5, Fuente de alimentación, 850W, 80 Plus Gold, ATX 3.1, Compatible con GPU PCIe 5.1"
+        self.assertFalse(v.es_accesorio_de(a))
+        self.assertTrue(v.es_accesorio_de("Funda compatible con iPhone 15, silicona"))
+        self.assertTrue(v.mismo_post(a, "Fuente de Alimentación MSI MAG A850GLS PCIe 5 850W 80 Plus Gold, ATX 3.1"))
