@@ -1,7 +1,7 @@
 """Rondas automáticas cada 30 minutos dentro del horario (Zeta, 21/11/2026: "mañana las programas desde las 8, por cada
 ronda tiene que pasar 30 minutos").
 
-- Una ronda = rápidas y después navegador, cada una en su propio proceso (como las tareas antiguas).
+- Una ronda = rápidas y navegador a la vez, cada una en su propio proceso (desde el 21/11/2026 por la tarde).
 - Empieza a las 08:00 (o al momento, si ya es horario) y lanza una ronda cada 30 minutos contados desde que empezó la
   anterior; si una ronda tarda más de 30 minutos, la siguiente empieza al acabar.
 - Fuera del horario de la configuración (08:00-00:45) espera.
@@ -27,14 +27,34 @@ def apuntar(texto):
         fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {texto}\n")
 
 
+def rondas_vivas():
+    """Procesos de ronda (vig_rapidas / vig_navegador) que siguen en marcha: de un bucle anterior o lanzados a mano."""
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object "
+                            "{ $_.CommandLine -match 'vig_rapidas|vig_navegador' }).Count"],
+                           capture_output=True, text=True, timeout=60)
+        return int((r.stdout or "0").strip() or 0)
+    except Exception:
+        return 0
+
+
 def una_ronda():
-    for script in ("vig_rapidas.py", "vig_navegador.py"):
-        inicio = time.time()
-        r = subprocess.run([sys.executable, str(RAIZ / "tareas" / script)], cwd=str(RAIZ), capture_output=True, text=True)
-        apuntar(f"{script}: salida {r.returncode} en {round(time.time() - inicio)} s")
-        if r.returncode != 0:
-            apuntar((r.stderr or "")[-500:])
-            v.alerta_sistema(f"bucle:{script}", f"⛔ La ronda {script} terminó con error {r.returncode}. Mira data/bucle.log.")
+    """Rápidas y navegador A LA VEZ (Zeta, 21/11/2026): no compiten (una descarga, la otra usa Chrome; la rápida nunca
+    toca el Chrome del perfil) y la base admite escrituras simultáneas (WAL). La ronda dura lo que la más larga."""
+    inicio = time.time()
+    procesos = {}
+    for script in ("vig_navegador.py", "vig_rapidas.py"):
+        err = open(v.DATOS / f"bucle_{script}.err", "w", encoding="utf-8")
+        procesos[script] = (subprocess.Popen([sys.executable, str(RAIZ / "tareas" / script)], cwd=str(RAIZ),
+                                             stdout=subprocess.DEVNULL, stderr=err, text=True), err)
+    for script, (proc, err) in procesos.items():
+        codigo = proc.wait()
+        err.close()
+        apuntar(f"{script}: salida {codigo}, terminó a los {round(time.time() - inicio)} s de empezar la ronda")
+        if codigo != 0:
+            apuntar((v.DATOS / f"bucle_{script}.err").read_text(encoding="utf-8", errors="replace")[-500:])
+            v.alerta_sistema(f"bucle:{script}", f"⛔ La ronda {script} terminó con error {codigo}. Mira data/bucle.log.")
 
 
 def main(desde="08:00"):
@@ -47,6 +67,9 @@ def main(desde="08:00"):
     while ENCENDIDO.exists():
         ahora = datetime.now()
         if ahora < arranque or not v.en_horario(v.cargar_config()):
+            time.sleep(30)
+            continue
+        if rondas_vivas():  # otra ronda sigue en marcha: no se lanza una encima
             time.sleep(30)
             continue
         inicio = datetime.now()
