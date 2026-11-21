@@ -163,3 +163,15 @@ class PalabrasDeModeloYTfidf(unittest.TestCase):
         self.assertIn("10000pa", v._tokens_er("succión de 10 000 Pa"))
         self.assertIn("5200mah", v._tokens_er("batería 5.200 mAh"))
         self.assertGreater(v.similitud_idf("HP 305 negro 3YM61AE", "HP 305 Negro, 3YM61AE, cartucho"), 50)
+
+
+class CompactoSinMercado(unittest.TestCase):
+    """21/11/2026 08:40: un casi chollo subido por su ficha no traía 'idealo' y compacto() tumbaba los avisos."""
+
+    def test_compacto_sin_idealo_ni_ean(self):
+        import vigilante as v
+        p = {"nombre": "Braun Series 9", "tienda": "miravia.es", "url": "https://x", "precio": 176.01,
+             "estado": "nuevo"}
+        c = v.compacto(p)
+        self.assertEqual(c["p"], 176.01)
+        self.assertNotIn("id", c)

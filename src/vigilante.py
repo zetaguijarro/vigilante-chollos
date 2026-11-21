@@ -6855,6 +6855,7 @@ def revisar_casi_en_ficha(con, cfg, casi, maximo=CASI_POR_RONDA):
                 p["_hist"] = {"habitual": ref, "minimo": reb.get("minimo"), "min_30d": not reb.get("minimo"),
                               "fuente_corta": f"{fuente} que enseña la tienda"}
                 p.update(precio=ahora, score=d, peso=p.get("peso", 1))
+                p.setdefault("idealo", None)  # sin mercado: compacto() lo necesita (fallo del 21/11 08:40)
                 candidatas.append(p)
             else:
                 radar.append(p)
@@ -8642,8 +8643,8 @@ def informe(dias=7):
 def compacto(p):
     """Lo mínimo que necesita la IA, con claves cortas (ver prompt)."""
     c = {"n": p["nombre"], "t": p["tienda"], "u": p["url"], "p": p["precio"],
-         "a": p["precio_antes"], "id": p["idealo"], "e": p["ean"],
-         "img": p["imagen_url"], "ch": p["ch"], "val": p.get("valoracion"), "res": p.get("resenas"),
+         "a": p.get("precio_antes"), "id": p.get("idealo"), "e": p.get("ean"),
+         "img": p.get("imagen_url"), "ch": p.get("ch"), "val": p.get("valoracion"), "res": p.get("resenas"),
          "socio": 1 if p.get("socio") else None, "err": 1 if p.get("error_precio") else None,
          "gratis": 1 if p.get("gratis") else None, "h": p.get("historico_url"),
          "hot": (f"{p['_cm_hot']['temp']}° a {p['_cm_hot']['precio']:g} € hace {p['_cm_hot']['dias']} días"
@@ -9280,15 +9281,21 @@ def ronda(categoria, solo=None):
     if modo_telegram:
         # Modo mixto: el código te manda la lista (0 tokens); tú pides "verifica N" a Hermes.
         silencio = en_silencio_entregas(cfg)
-        for p in enviar:
-            con.execute("INSERT INTO lista (fecha, base, precio, datos, enviado) VALUES (?,?,?,?,0)",
-                        (datetime.now().isoformat(timespec="minutes"), p["base"], p["precio"],
-                         json.dumps({**compacto(p), "cat": categoria, "_p": p}, ensure_ascii=False, default=str)))
-        con.commit()
-        if not silencio:  # en 14:00-15:00 se guardan y salen en la primera ronda después
-            enviar_pendientes(con, entrega)
-            enviar_descartadas()
-        con.close()
+        try:  # pase lo que pase, la conexión se cierra: si no, la base queda bloqueada el resto de la ronda (21/11)
+            for p in enviar:
+                try:
+                    datos = json.dumps({**compacto(p), "cat": categoria, "_p": p}, ensure_ascii=False, default=str)
+                except Exception as e:  # un aviso mal formado no tumba a los demás
+                    log(f"aviso sin guardar {p.get('tienda')} {str(p.get('nombre'))[:50]}: {str(e)[:80]}")
+                    continue
+                con.execute("INSERT INTO lista (fecha, base, precio, datos, enviado) VALUES (?,?,?,?,0)",
+                            (datetime.now().isoformat(timespec="minutes"), p["base"], p["precio"], datos))
+            con.commit()
+            if not silencio:  # en 14:00-15:00 se guardan y salen en la primera ronda después
+                enviar_pendientes(con, entrega)
+                enviar_descartadas()
+        finally:
+            con.close()
         print(SILENCIO)  # Hermes no se despierta: coste 0
         return
 
